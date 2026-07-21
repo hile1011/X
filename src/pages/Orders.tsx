@@ -17,8 +17,13 @@ export default function Orders() {
 
   const fetchOrders = async () => {
     setLoading(true)
-    const data = await api.orders.getAll()
-    setOrders(data)
+    try {
+      const data = await api.orders.getAll()
+      setOrders(data)
+    } catch (error) {
+      console.error('获取订单列表失败:', error)
+      setOrders([])
+    }
     setLoading(false)
   }
 

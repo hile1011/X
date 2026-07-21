@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/auth'
 import Layout from './components/Layout'
@@ -16,9 +17,16 @@ import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import Reports from './pages/Reports'
 import BagQuote from './pages/BagQuote'
+import BagQuoteWps from './pages/BagQuoteWps'
+import BagQuoteOnline from './pages/BagQuoteOnline'
+import TestVTable from './pages/TestVTable'
 
 function App() {
-  const { isAuthenticated } = useAuthStore()
+  const { isAuthenticated, initAuth } = useAuthStore()
+
+  useEffect(() => {
+    initAuth()
+  }, [initAuth])
 
   return (
     <BrowserRouter>
@@ -31,6 +39,9 @@ function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/quotes" element={<BagQuote />} />
+              <Route path="/quotes-wps" element={<BagQuoteWps />} />
+              <Route path="/quotes-online" element={<BagQuoteOnline />} />
+              <Route path="/test-vtable" element={<TestVTable />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<OrderDetail />} />
               <Route path="/customers" element={<Customers />} />

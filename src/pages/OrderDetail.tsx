@@ -23,13 +23,19 @@ export default function OrderDetail() {
 
   const fetchData = async () => {
     setLoading(true)
-    const [orderData, productsData] = await Promise.all([
-      api.orders.getById(id || ''),
-      api.products.getAll(),
-    ])
-    setOrder(orderData)
-    setProducts(productsData)
-    setStatus((orderData as { status: string }).status || '')
+    try {
+      const [orderData, productsData] = await Promise.all([
+        api.orders.getById(id || ''),
+        api.products.getAll(),
+      ])
+      setOrder(orderData)
+      setProducts(productsData)
+      setStatus(orderData?.status || '')
+    } catch (error) {
+      console.error('获取订单数据失败:', error)
+      setOrder(null)
+      setStatus('')
+    }
     setLoading(false)
   }
 
@@ -126,7 +132,7 @@ export default function OrderDetail() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-500">订单号</label>
-                  <p className="font-medium text-gray-900">{(order as { order_number: string }).order_number}</p>
+                  <p className="font-medium text-gray-900">{order.order_number || '-'}</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-500">状态</label>
@@ -144,11 +150,11 @@ export default function OrderDetail() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-500">创建时间</label>
-                  <p className="text-gray-900">{new Date((order as { created_at: string }).created_at).toLocaleString()}</p>
+                  <p className="text-gray-900">{order.created_at ? new Date(order.created_at).toLocaleString() : '-'}</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-500">报价单号</label>
-                  <p className="text-gray-900">{(order as { quote_id: string }).quote_id ? `QT-${(order as { quote_id: string }).quote_id.slice(0, 8)}` : '直接创建'}</p>
+                  <p className="text-gray-900">{order.quote_id ? `QT-${order.quote_id.slice(0, 8)}` : '直接创建'}</p>
                 </div>
               </div>
             </div>
@@ -158,23 +164,23 @@ export default function OrderDetail() {
                 <Building className="text-primary-600" size={20} />
                 <h2 className="text-lg font-semibold text-gray-800">客户信息</h2>
               </div>
-              {((order as { customer: unknown }).customer) ? (
+              {order.customer ? (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm text-gray-500">客户名称</label>
-                    <p className="font-medium text-gray-900">{((order as { customer: { name: string } }).customer).name}</p>
+                    <p className="font-medium text-gray-900">{order.customer.name}</p>
                   </div>
                   <div>
                     <label className="block text-sm text-gray-500">联系人</label>
-                    <p className="text-gray-900">{((order as { customer: { contact_person: string } }).customer).contact_person || '-'}</p>
+                    <p className="text-gray-900">{order.customer.contact_person || '-'}</p>
                   </div>
                   <div>
                     <label className="block text-sm text-gray-500">电话</label>
-                    <p className="text-gray-900">{((order as { customer: { phone: string } }).customer).phone || '-'}</p>
+                    <p className="text-gray-900">{order.customer.phone || '-'}</p>
                   </div>
                   <div>
                     <label className="block text-sm text-gray-500">邮箱</label>
-                    <p className="text-gray-900">{((order as { customer: { email: string } }).customer).email || '-'}</p>
+                    <p className="text-gray-900">{order.customer.email || '-'}</p>
                   </div>
                 </div>
               ) : (
@@ -226,7 +232,7 @@ export default function OrderDetail() {
           <div className="space-y-6">
             <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl p-6 text-white">
               <h3 className="text-sm font-medium text-green-100 mb-2">订单总额</h3>
-              <p className="text-3xl font-bold">¥{(order as { total_amount: number }).total_amount.toLocaleString()}</p>
+              <p className="text-3xl font-bold">¥{(order.total_amount || 0).toLocaleString()}</p>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -234,7 +240,7 @@ export default function OrderDetail() {
                 <User className="text-primary-600" size={20} />
                 <h3 className="font-semibold text-gray-800">处理人</h3>
               </div>
-              <p className="text-gray-600">用户 #{(order as { user_id: string }).user_id.slice(0, 8)}</p>
+              <p className="text-gray-600">用户 #{order.user_id ? order.user_id.slice(0, 8) : '-'}</p>
             </div>
 
             <div className="bg-gray-50 rounded-xl p-6">
@@ -242,12 +248,12 @@ export default function OrderDetail() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="text-sm text-gray-600">创建于 {new Date((order as { created_at: string }).created_at).toLocaleString()}</span>
+                  <span className="text-sm text-gray-600">创建于 {order.created_at ? new Date(order.created_at).toLocaleString() : '-'}</span>
                 </div>
-                {((order as { updated_at: string }).updated_at !== (order as { created_at: string }).created_at) && (
+                {order.updated_at !== order.created_at && (
                   <div className="flex items-center gap-3">
                     <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                    <span className="text-sm text-gray-600">更新于 {new Date((order as { updated_at: string }).updated_at).toLocaleString()}</span>
+                    <span className="text-sm text-gray-600">更新于 {order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</span>
                   </div>
                 )}
               </div>

@@ -4,8 +4,8 @@ import { useAuthStore } from '../store/auth'
 import { Mail, Lock, LogIn } from 'lucide-react'
 
 export default function Login() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] = useState('517290808@qq.com')
+  const [password, setPassword] = useState('123456')
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
   const { login } = useAuthStore()
