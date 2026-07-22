@@ -46,3 +46,12 @@ body {
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+/* 修复 VTable 右键菜单在页面滚动时错位的问题 */
+/* 主菜单：CSS 直接设为 fixed（left/top 使用 clientX/clientY 视口坐标，fixed 匹配） */
+.vtable-context-menu-container:not(.vtable-context-submenu-container) {
+  position: fixed !important;
+}
+/* 子菜单：不能直接用 CSS fixed，因为 applyStyles 设置的 left:"100%" 在 fixed 下会渲染到视口外，
+   导致 getBoundingClientRect() 获取错误尺寸。子菜单的 position 由 JS MutationObserver 在
+   VTable 设置好 left/top 像素值后改为 fixed（微任务中执行，无闪烁） */

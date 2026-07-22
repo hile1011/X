@@ -6,7 +6,7 @@ const menuItems = [
   { icon: LayoutDashboard, path: '/', label: '仪表盘' },
   { icon: FileText, path: '/quotes', label: '报价管理' },
   { icon: FileText, path: '/quotes-wps', label: '报价管理-WPS版' },
-  { icon: FileText, path: '/quotes-online', label: '报价管理-在线表格' },
+  
   { icon: ShoppingCart, path: '/orders', label: '订单管理' },
   { icon: Users, path: '/customers', label: '客户管理' },
   { icon: Package, path: '/products', label: '产品管理' },

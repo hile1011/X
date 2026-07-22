@@ -1,91 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Calculator } from 'lucide-react'
-import { calculateBagQuote as calcBagQuote } from '../services/bagQuoteCalculator'
-import VTableWrapper, { VTableColumnDef } from '../components/VTableWrapper'
-
-interface FrontBackRowInput {
-  label: string
-  widthBleed: number
-  heightBleed: number
-  width: number
-  height: number
-  bottom: number
-  fabricWidth: number
-  gramWeight: number
-  processingFee: number
-  frontBackPrintCost: number
-  fabricPrice: number
-  extraCraftCost: number
-  packagingFee: number
-  lossRate: number
-}
-
-interface BagQuoteInput {
-  quantity: number
-  width: number
-  height: number
-  bottom: number
-  frontBackRows: FrontBackRowInput[]
-  handleWidth: number
-  handleHeight: number
-  handleCutWidth: number
-  handleWidthBleed: number
-  handleHeightBleed: number
-  handleProcessingFee: number
-  handlePrintCost: number
-  handleFabricPrice: number
-  handleFabricCost: number
-  handleExtraCraftCost: number
-  handlePackagingFee: number
-  profitRate: number
-  taxRate: number
-}
-
-interface SpecRow {
-  label: string
-  quantity: number | null
-  width: number | null
-  height: number | null
-  bottom: number | null
-  widthBleed: number | null
-  heightBleed: number | null
-  cutWidth: number | null
-  cutHeight: number | null
-  fabricWidth: number | null
-  gramWeight: number | null
-  fabricWaste: number | null
-  fabricMeters: number | null
-  maxPanels: number | null
-  totalWeight: number | null
-  unitGramWeight: number | null
-}
-
-interface CostRow {
-  label: string
-  processingFee: number | null
-  printDoubleSide: number | null
-  fabricPrice: number | null
-  fabricCost: number | null
-  extraCraftCost: number | null
-  packagingFee: number | null
-  freightUnit: number | null
-  lossRate: number | null
-  unitTotalPrice: number | null
-}
-
-interface QuoteResult {
-  input: BagQuoteInput
-  specTable: SpecRow[]
-  costTable: CostRow[]
-  summary: {
-    unitCost: number
-    refPriceNoTax: number
-    refPriceWithTax: number
-    totalProfit: number
-    unitProfit: number
-    totalUnitGramWeight: number
-  }
-}
+import { useState, useEffect, useRef } from 'react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2 } from 'lucide-react'
+import { VTableSheet } from '@visactor/vtable-sheet'
+import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 
 interface OrderInfo {
   unitPrice: string
@@ -94,9 +10,12 @@ interface OrderInfo {
   customerName: string
   shippingAddress: string
   productStyle: string
+  productSpec: string
   fabricMaterial: string
   process: string
   handleMaterial: string
+  handleSpec: string
+  quantity: string
   boxSpec: string
   remark: string
   sampleFee: string
@@ -113,9 +32,12 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   customerName: '',
   shippingAddress: '',
   productStyle: '无底无侧普通款',
+  productSpec: '',
   fabricMaterial: '10安涤棉新本色',
   process: '单面数码uv印刷',
   handleMaterial: '帆布手提',
+  handleSpec: '',
+  quantity: '',
   boxSpec: '',
   remark: '',
   sampleFee: '',
@@ -123,56 +45,177 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   massDays: '',
 }
 
-const DEFAULT_INPUT: BagQuoteInput = {
-  quantity: 7200,
-  width: 38,
-  height: 40,
-  bottom: 0,
-  frontBackRows: [{
-    label: '正反面',
-    widthBleed: 3,
-    heightBleed: 10,
-    width: 38,
-    height: 40,
-    bottom: 0,
-    fabricWidth: 154,
-    gramWeight: 280,
-    processingFee: 0.51,
-    frontBackPrintCost: 0,
-    fabricPrice: 4.4,
-    extraCraftCost: 0.05,
-    packagingFee: 0.1,
-    lossRate: 1.03,
-  }],
-  handleWidth: 2.5,
-  handleHeight: 70,
-  handleCutWidth: 6,
-  handleWidthBleed: 3,
-  handleHeightBleed: 10,
-  handleProcessingFee: 0,
-  handlePrintCost: 0,
-  handleFabricPrice: 4.4,
-  handleFabricCost: 0.05,
-  handleExtraCraftCost: 0,
-  handlePackagingFee: 0,
-  profitRate: 0.45,
-  taxRate: 1.1,
+// 在线表格初始数据（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
+const SHEET_DATA: (string | number | null)[][] = [
+  [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', '带刀手提条数'],
+  ['成品', 7200, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null],
+  ['正反面', 7200, 38, 40, 0, 3, 10, 41, 90, 154, 280, 31, 2160, 3.7561, 907.2, 12342.8571],
+  ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 403.2, 25.6667, 169.344, null],
+  [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '参考卖价', '含税价', '实际卖价', null, null, null, null],
+  ['正反面', 0.51, 0.4059, 4.4, 1.4058, 0.05, 0.1, 725.76, 1.03, 2.6467, null, null, null, null, null, null],
+  ['手提', null, 0, 4.4, 0.2968, null, null, 135.48, 1.03, 0.3251, null, null, null, null, null, null],
+  ['汇总', null, null, null, null, null, null, null, null, 2.97, null, null, null, null, null, null],
+  ['参考卖价', null, null, null, null, null, null, null, 0.45, 3.42, 3.76, null, null, null, null, null],
+  ['利润', null, null, null, null, null, null, null, null, 3240, null, null, null, null, null, null],
+]
+
+// 在线表格样式（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
+const SC = {
+  yellow: '#FFFF00', blue: '#91AADF', orange: '#F4B382',
+  darkOrange: '#EE822F', lightOrange: '#F8CBAD', red: '#FF0000', black: '#000000',
+}
+const BORDER = { borderColor: SC.black, borderLineWidth: 1 }
+
+// 单元格样式覆盖（右键菜单设置）：key = "col,row"，value = 样式属性
+const cellStyleOverrides = new Map<string, Record<string, unknown>>()
+// 单元格数字格式覆盖：key = "col,row"，value = 小数位数（-1=常规, 0=整数, 2=2位, 4=4位）
+const cellFormatOverrides = new Map<string, number>()
+
+// 辅助：构建单元格样式（字体默认加大4号）
+const cs = (
+  bg?: string, color = SC.black, size = 10, bold = false, border = true,
+): Record<string, unknown> => ({
+  bgColor: bg, color, fontSize: size + 4,
+  fontWeight: bold ? 'bold' : 'normal',
+  ...(border ? BORDER : {}),
+})
+
+// 按行+列返回 Excel 对应单元格样式（VTable 行列均为 0-based）
+const getCellStyle = (args: { row: number; col: number }): Record<string, unknown> => {
+  const { row, col } = args
+  let style: Record<string, unknown>
+  // 行0: 表头1（黄色填充）
+  if (row === 0) style = cs(SC.yellow, SC.black, 11, true)
+  // 行4: 表头2（深橙色填充）
+  else if (row === 4) style = cs(SC.darkOrange, SC.black, 11, true)
+  // 行1: 成品
+  else if (row === 1) {
+    if (col === 0) style = cs(undefined, SC.black, 10, false)
+    else if (col === 1) style = cs(SC.blue)
+    else if (col >= 2 && col <= 5) style = cs(SC.orange)
+    else if (col >= 6 && col <= 7) style = cs(SC.orange, SC.red)
+    else if (col >= 8 && col <= 9) style = cs(SC.orange)
+    else style = cs(SC.blue, SC.red)
+  }
+  // 行2: 正反面（规格试算）
+  else if (row === 2) {
+    if (col === 0) style = cs(undefined, SC.black, 10, false)
+    else if (col === 1) style = cs(SC.orange)
+    else if (col >= 2 && col <= 4) style = cs(SC.blue, SC.black, 12, true)
+    else if (col >= 5 && col <= 6) style = cs(SC.orange)
+    else if (col >= 7 && col <= 8) style = cs(SC.blue, SC.black, 12, true)
+    else if (col >= 9 && col <= 10) style = cs(SC.orange)
+    else style = cs(SC.blue, SC.black, 12, true)
+  }
+  // 行3: 手提（规格试算）
+  else if (row === 3) {
+    if (col === 0) style = cs(undefined, SC.black, 10, false)
+    else if (col >= 1 && col <= 3) style = cs(SC.orange)
+    else if (col === 4) style = cs(SC.blue, SC.black, 12, true)
+    else if (col >= 5 && col <= 6) style = cs(SC.orange)
+    else if (col >= 7 && col <= 8) style = cs(SC.blue, SC.black, 12, true)
+    else if (col >= 9 && col <= 10) style = cs(SC.orange)
+    else style = cs(SC.blue, SC.black, 12, true)
+  }
+  // 行5-6: 成本核算
+  else if (row === 5 || row === 6) {
+    if (col === 0) style = cs(undefined, SC.black, 10, false)
+    else if (col === 1) style = cs(SC.orange)
+    else if (col === 2) style = cs(SC.blue)
+    else if (col === 3) style = cs(SC.orange)
+    else if (col === 4) style = cs(SC.blue)
+    else if (col >= 5 && col <= 6) style = cs(SC.orange)
+    else if (col === 7) style = cs(SC.orange)
+    else if (col === 8) style = cs(SC.orange)
+    else if (col >= 9 && col <= 11) style = cs(SC.blue)
+    else style = cs(SC.lightOrange)
+  }
+  // 行7-9: 汇总 / 参考卖价 / 利润
+  else if (row >= 7 && row <= 9) {
+    if (col === 0) style = cs(undefined, SC.red, 10, false)
+    else if (col === 1) style = cs(SC.orange)
+    else if (col === 2) style = cs(SC.blue)
+    else if (col === 3) style = cs(SC.orange, SC.black, 11, false, false)
+    else if (col === 4) style = cs(SC.blue)
+    else if (col >= 5 && col <= 6) style = cs(SC.orange)
+    else if (col === 7) style = cs(SC.orange, row === 8 ? SC.black : SC.red)
+    else if (col >= 8 && col <= 9) style = cs(SC.blue, SC.red)
+    else if (col >= 10 && col <= 12) style = cs(SC.lightOrange, SC.red)
+    else style = cs(SC.lightOrange)
+  }
+  else style = cs()
+
+  // 合并用户通过右键菜单设置的样式覆盖
+  const override = cellStyleOverrides.get(`${col},${row}`)
+  return override ? { ...style, ...override } : style
 }
 
-function money(v: number): string {
-  return `¥${v.toFixed(2)}`
+const COL_WIDTHS = [100, 90, 80, 80, 80, 90, 90, 90, 90, 90, 80, 120, 110, 130, 100, 120]
+
+const SHEET_COLUMNS = COL_WIDTHS.map((width, field) => ({
+  field,
+  width,
+  style: getCellStyle,
+  // 数值类型单元格保留2位小数（可通过右键菜单覆盖；不影响公式计算，公式引擎直接读取 data 原始值）
+  fieldFormat: (record: any, col?: number, row?: number) => {
+    const value = record?.[field]
+    if (typeof value === 'number' && !isNaN(value)) {
+      const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
+      if (fmt === -1) return value              // 常规
+      if (fmt === 0) return Math.round(value)   // 整数
+      if (fmt === 4) return value.toFixed(4)    // 4位小数
+      return value.toFixed(2)                    // 默认2位小数
+    }
+    return value
+  },
+}))
+
+// 在线表格公式（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
+// 内容从第0行开始；公式采用 A1 记法，行号(1-based)映射到 VTable 0-based 行需 -1
+const SHEET_FORMULAS: Record<string, string> = {
+  // 行2 正反面（规格试算）
+  B3: '=B2', C3: '=C2', D3: '=D2', E3: '=E2',
+  H3: '=F3+C3',
+  I3: '=(D3*2+E3+G3)',
+  L3: '=MOD(J3,MIN(H3,I3))',
+  M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100',
+  N3: '=J3/(MIN(H3,I3))',
+  O3: '=M3*K3*1.5/1000',
+  P3: '=M3*4/(I4/100)',
+  // 行3 手提（规格试算）
+  B4: '=B2', I4: '=D4',
+  L4: '=MOD(J4,MIN(H4,I4))',
+  M4: '=I4/100*2*B4/INT(J4/H4)',
+  N4: '=J4/(MIN(H4,I4))',
+  O4: '=M4*K4*1.5/1000',
+  // 行5 正反面（成本核算）
+  A6: '=A3',
+  C6: '=H3*I3*1.1/10000',
+  E6: '=D6*M3/B3+CEILING(M3/100,1)*15/B3+0.04',
+  H6: '=O3*0.8',
+  J6: '=(B6+C6+F6+E6+H6/B3)*I6+G6',
+  // 行6 手提（成本核算）
+  A7: '=A4',
+  E7: '=D7*M4/B4+CEILING(M4/100,1)*15/B4+0.04',
+  H7: '=O4*0.8',
+  J7: '=(B7+C7+E7+F7+H7/B4)*I7+G7',
+  // 行7 汇总
+  J8: '=SUM(J6:J7)',
+  // 行8 参考卖价
+  J9: '=J8+I9',
+  K9: '=J9*1.1',
+  // 行9 利润
+  J10: '=(J9-J8)*B2',
 }
 
-interface TextFieldProps {
+function TextField({ label, value, onChange, placeholder, multiline, fullWidth }: {
   label: string
   value: string
   onChange: (v: string) => void
   placeholder?: string
   multiline?: boolean
   fullWidth?: boolean
-}
-
-function TextField({ label, value, onChange, placeholder, multiline, fullWidth }: TextFieldProps) {
+}) {
   return (
     <div className={fullWidth || multiline ? 'col-span-2' : ''}>
       <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
@@ -197,72 +240,117 @@ function TextField({ label, value, onChange, placeholder, multiline, fullWidth }
   )
 }
 
-function InfoItem({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
-  const isEmpty = value === '' || (value === 0 && label !== '底')
-  return (
-    <div>
-      <div className="text-xs text-gray-400 mb-0.5">{label}</div>
-      <div className="text-sm font-medium text-gray-800 break-words">
-        {isEmpty ? '-' : value}
-        {unit && !isEmpty && <span className="ml-0.5 text-xs text-gray-400">{unit}</span>}
-      </div>
-    </div>
-  )
-}
-
-const DEFAULT_FORMULAS: Record<string, string> = {
-  'spec_fb_cutWidth': '=F1+C1',
-  'spec_fb_cutHeight': '=D1*2+G1+E1',
-  'spec_fb_maxPanels': '=J1/MIN(H1,I1)',
-  'spec_fb_fabricWaste': '=J1-MIN(H1,I1)*INT(J1/MIN(H1,I1))',
-  'spec_fb_fabricMeters': '=CEILING(B1/INT(N1),1)*MAX(H1,I1)/100',
-  'spec_fb_totalWeight': '=M1*K1*1.5/1000',
-  'spec_fb_unitGramWeight': '=IF(B1>0,O1/B1*1000,0)',
-  'spec_handle_cutHeight': '=D1',
-  'spec_handle_maxPanels': '=J1/MIN(H1,I1)',
-  'spec_handle_fabricWaste': '=J1-MIN(H1,I1)*INT(J1/MIN(H1,I1))',
-  'spec_handle_fabricMeters': '=I1/100*2*B1/INT(J1/H1)',
-  'spec_handle_totalWeight': '=M1*K1*1.5/1000',
-  'spec_handle_unitGramWeight': '=IF(B1>0,O1/B1*1000,0)',
-  'cost_fb_printDoubleSide': '=H1*I1*1.1/10000',
-  'cost_fb_fabricCost': '=S1*M1/B1+CEILING(M1/100,1)*15/B1+0.04',
-  'cost_fb_freightUnit': '=O1*0.8',
-  'cost_fb_unitTotalPrice': '=(Q1+R1+U1+T1+W1/B1)*X1+V1',
-  'cost_handle_freightUnit': '=O1*0.8',
-  'cost_handle_unitTotalPrice': '=(Q1+R1+T1+U1+W1/B1)*X1+V1',
-}
-
-const FRONT_BACK_SPEC_EDITS: Record<string, { field: keyof FrontBackRowInput; step?: string }> = {
-  width: { field: 'width', step: '0.1' },
-  height: { field: 'height', step: '0.1' },
-  bottom: { field: 'bottom', step: '0.1' },
-  widthBleed: { field: 'widthBleed', step: '0.1' },
-  heightBleed: { field: 'heightBleed', step: '0.1' },
-  fabricWidth: { field: 'fabricWidth', step: '1' },
-  gramWeight: { field: 'gramWeight', step: '1' },
-}
-
-const FRONT_BACK_COST_EDITS: Record<string, { field: keyof FrontBackRowInput; step?: string }> = {
-  processingFee: { field: 'processingFee', step: '0.01' },
-  printDoubleSide: { field: 'frontBackPrintCost', step: '0.01' },
-  fabricPrice: { field: 'fabricPrice', step: '0.01' },
-  extraCraftCost: { field: 'extraCraftCost', step: '0.01' },
-  packagingFee: { field: 'packagingFee', step: '0.01' },
-  lossRate: { field: 'lossRate', step: '0.01' },
-}
-
 export default function BagQuote() {
-  const [input, setInput] = useState<BagQuoteInput>(DEFAULT_INPUT)
-  const [result, setResult] = useState<QuoteResult | null>(null)
-  const [loading, setLoading] = useState(false)
   const [orderInfo, setOrderInfo] = useState<OrderInfo>(DEFAULT_ORDER_INFO)
   const [productImages, setProductImages] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
-  const [selectedCell, setSelectedCell] = useState<string | null>(null)
-  const [formulaOverrides, setFormulaOverrides] = useState<Record<string, string>>({})
-  const [cellValueOverrides, setCellValueOverrides] = useState<Record<string, number>>({})
+
+  const sheetContainerRef = useRef<HTMLDivElement>(null)
+  const sheetInstanceRef = useRef<VTableSheet | null>(null)
+  // 表格对订单信息的联动：单个卖价(不含税)/单个卖价(含税)
+  const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
+
+  useEffect(() => {
+    if (!sheetContainerRef.current) return
+
+    const sheet = new VTableSheet(sheetContainerRef.current, {
+      undoRedo: { show: true },
+      VTablePluginModules: [
+        { module: TableExportPlugin },
+        { module: ExcelImportPlugin },
+      ],
+      sheets: [
+        {
+          sheetKey: 'sheet1',
+          sheetTitle: 'sheet1',
+          columns: SHEET_COLUMNS,
+          data: SHEET_DATA,
+          formulas: SHEET_FORMULAS,
+          showHeader: false,
+        },
+      ],
+    })
+    sheetInstanceRef.current = sheet
+
+    // 表格对订单信息的联动：
+    // 单个卖价(不含税) = 参考卖价行(row 8) 参考卖价列(col 9)
+    // 单个卖价(含税)   = 参考卖价行(row 8) 含税价列(col 10)
+    // 产品规格 = 成品行(row 1) 宽(CM, col 2) "*" 高(CM, col 3) "*" 底(CM, col 4)
+    // 数量     = 成品行(row 1) 数量(个, col 1)
+    // 直接通过 formulaManager 读取公式计算结果（构造时已载入引擎，编辑后由 WorkSheet 级联重算）
+    const SHEET_KEY = 'sheet1'
+    const FINISHED_ROW = 1          // 成品行
+    const REF_SELL_ROW = 8          // 参考卖价行
+    const syncFromTable = () => {
+      const fm = (sheet as any).formulaManager
+      if (!fm) return
+      try {
+        // 卖价（公式单元格，读取引擎计算结果）
+        const rNoTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 9 })
+        const rWithTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 10 })
+        setSellPrices({
+          noTax: rNoTax && typeof rNoTax.value === 'number' && !isNaN(rNoTax.value) ? rNoTax.value : null,
+          withTax: rWithTax && typeof rWithTax.value === 'number' && !isNaN(rWithTax.value) ? rWithTax.value : null,
+        })
+        // 产品规格 / 数量（成品行数据单元格）
+        const fmtVal = (v: any): string => (v == null || v === '') ? '' : String(v)
+        const width = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 2 })
+        const height = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 3 })
+        const base = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 4 })
+        const qty = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 1 })
+        const newSpec = [fmtVal(width?.value), fmtVal(height?.value), fmtVal(base?.value)].join('*')
+        const newQty = fmtVal(qty?.value)
+        setOrderInfo((prev) => {
+          if (prev.productSpec === newSpec && prev.quantity === newQty) return prev
+          return { ...prev, productSpec: newSpec, quantity: newQty }
+        })
+      } catch {
+        // 公式引擎未就绪时忽略，后续 change_cell_value 事件会重新读取
+      } 
+    }
+    // 初始读取（公式在构造时已载入引擎并完成计算）
+    syncFromTable()
+    // 监听单元格变更：WorkSheet 的 change_cell_value 监听器先于本监听器注册，
+    // 会同步完成依赖公式的级联重算，因此此处可直接读取最新结果
+    const activeWs = sheet.getActiveSheet()
+    const activeTable = activeWs?.tableInstance as any
+    const onCellChange = () => syncFromTable()
+    if (activeTable?.on) {
+      activeTable.on('change_cell_value', onCellChange)
+    }
+
+    // 监听容器尺寸变化（如收缩/展开左侧菜单栏），触发 VTable 重新布局
+    const resizeObserver = new ResizeObserver(() => {
+      sheet.resize()
+    })
+    resizeObserver.observe(sheetContainerRef.current)
+
+    // 修复子菜单位置：VTable 子菜单 position 为 absolute，但 left/top 使用视口坐标，
+    // 页面滚动时会错位。在子菜单添加到 DOM 后（VTable 已设置好 left/top 像素值），
+    // 将 position 改为 fixed，使 left/top 基于视口（MutationObserver 在微任务中执行，无闪烁）
+    const menuObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof HTMLElement && node.classList.contains('vtable-context-submenu-container')) {
+            node.style.position = 'fixed'
+          }
+        }
+      }
+    })
+    menuObserver.observe(document.body, { childList: true })
+
+    return () => {
+      if (activeTable?.off) activeTable.off('change_cell_value', onCellChange)
+      resizeObserver.disconnect()
+      menuObserver.disconnect()
+      sheet.release()
+      sheetInstanceRef.current = null
+      cellStyleOverrides.clear()
+      cellFormatOverrides.clear()
+    }
+  }, [])
 
   const processFiles = (files: File[]) => {
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
@@ -305,397 +393,13 @@ export default function BagQuote() {
     setProductImages((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const calculate = useCallback((data: BagQuoteInput) => {
-    setLoading(true)
-    try {
-      const calcResult = calcBagQuote(data)
-      const resultData = calcResult as unknown as QuoteResult
-      setResult(resultData)
-      
-      if (resultData?.summary?.totalUnitGramWeight) {
-        setOrderInfo((prev) => ({
-          ...prev,
-          boxSpec: resultData.summary.totalUnitGramWeight.toFixed(2) + 'g/个'
-        }))
-      }
-    } catch (err) {
-      console.error('计算失败:', err)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    calculate(input)
-  }, [])
-
-  const updateField = (field: keyof BagQuoteInput | keyof FrontBackRowInput, value: number, rowIndex?: number) => {
-    if (rowIndex !== undefined) {
-      setInput((prev) => ({
-        ...prev,
-        frontBackRows: prev.frontBackRows.map((row, i) =>
-          i === rowIndex ? { ...row, [field]: value } : row
-        ),
-      }))
-    } else {
-      setInput((prev) => {
-        const next = { ...prev, [field as keyof BagQuoteInput]: value }
-        if (field === 'bottom') {
-          next.frontBackRows = prev.frontBackRows.map((row) => ({ ...row, bottom: value }))
-        }
-        return next
-      })
-    }
-  }
-
-  const handleReset = () => {
-    setInput(DEFAULT_INPUT)
-    setSelectedCell(null)
-    setFormulaOverrides({})
-    setCellValueOverrides({})
-    setOrderInfo(DEFAULT_ORDER_INFO)
-    calculate(DEFAULT_INPUT)
-  }
-
-  const handleFormulaChange = (formulaKey: string, expr: string) => {
-    setFormulaOverrides((prev) => {
-      const next = { ...prev }
-      if (!expr || expr === DEFAULT_FORMULAS[formulaKey]) {
-        delete next[formulaKey]
-      } else {
-        next[formulaKey] = expr
-      }
-      return next
-    })
-  }
-
-  const getSelectedFormulaInfo = (): { expr: string | null; overridden: boolean; formulaKey: string | null } => {
-    if (!selectedCell) return { expr: null, overridden: false, formulaKey: null }
-    const idx = selectedCell.lastIndexOf('_')
-    if (idx === -1) return { expr: null, overridden: false, formulaKey: null }
-    const col = selectedCell.slice(idx + 1)
-    const rest = selectedCell.slice(0, idx)
-    const tableIdx = rest.indexOf('_')
-    if (tableIdx === -1) return { expr: null, overridden: false, formulaKey: null }
-    const tableTitle = rest.slice(0, tableIdx)
-    const label = rest.slice(tableIdx + 1)
-    const tableMap: Record<string, string> = { '规格计算表': 'spec', '成本计算表': 'cost' }
-    const table = tableMap[tableTitle] || tableTitle
-    const rowType = label === '印刷手提' ? 'handle' : 'fb'
-    const formulaKey = `${table}_${rowType}_${col}`
-    const overridden = !!formulaOverrides[formulaKey]
-    const expr = formulaOverrides[formulaKey] ?? DEFAULT_FORMULAS[formulaKey] ?? null
-    return { expr, overridden, formulaKey }
-  }
-
-  const formulaInfo = getSelectedFormulaInfo()
-
   const updateOrderField = (field: keyof OrderInfo, value: string) => {
     setOrderInfo((prev) => ({ ...prev, [field]: value }))
   }
 
-  const addFrontBackRow = () => {
-    const lastRow = input.frontBackRows[input.frontBackRows.length - 1] || {
-      label: '正反面',
-      widthBleed: 3,
-      heightBleed: 10,
-      width: 38,
-      height: 40,
-      bottom: 0,
-      fabricWidth: 154,
-      gramWeight: 280,
-      processingFee: 0.51,
-      frontBackPrintCost: 0,
-      fabricPrice: 4.4,
-      extraCraftCost: 0.05,
-      packagingFee: 0.1,
-      lossRate: 1.03,
-    }
-    const newIndex = input.frontBackRows.length + 1
-    setInput((prev) => ({
-      ...prev,
-      frontBackRows: [...prev.frontBackRows, { ...lastRow, label: `正反面${newIndex}` }],
-    }))
-    setTimeout(() => {
-      calculate(input)
-    }, 100)
-  }
-
-  const s = result?.summary
-
-  const specGetCellValue = (rowIndex: number, field: VTableColumnDef): number | null => {
-    const cellKey = `${rowIndex}_${field.key}`
-    if (cellValueOverrides[cellKey] !== undefined) {
-      return cellValueOverrides[cellKey]
-    }
-    if (!result) return null
-    if (rowIndex >= result.specTable.length) return null
-    const row = result.specTable[rowIndex]
-    if (field.key === 'unitGramWeight' && row.label === '成品' && s) {
-      return s.totalUnitGramWeight
-    }
-    return row[field.key as keyof SpecRow] as number | null
-  }
-
-  const specGetCellType = (rowIndex: number, field: VTableColumnDef): 'input' | 'formula' | 'readonly' => {
-    const cellKey = `${rowIndex}_${field.key}`
-    if (cellValueOverrides[cellKey] !== undefined) return 'input'
-    
-    if (!result) return 'readonly'
-    if (rowIndex >= result.specTable.length) return 'readonly'
-    const row = result.specTable[rowIndex]
-    if (row.label === '汇总') return 'readonly'
-    if (row.label === '成品') {
-      const inputEdits = ['quantity', 'width', 'height', 'bottom']
-      return inputEdits.includes(field.key) ? 'input' : 'readonly'
-    }
-    if (row.label === '印刷手提') {
-      const inputEdits = ['quantity', 'width', 'height', 'cutWidth', 'widthBleed', 'heightBleed']
-      if (inputEdits.includes(field.key)) return 'input'
-      const formulaCols = ['cutHeight', 'maxPanels', 'fabricWaste', 'fabricMeters', 'totalWeight', 'unitGramWeight']
-      if (formulaCols.includes(field.key)) return 'formula'
-    }
-    const rowIndexInInput = input.frontBackRows.findIndex((r) => r.label === row.label)
-    if (rowIndexInInput !== -1) {
-      if (field.key === 'quantity') return 'input'
-      if (FRONT_BACK_SPEC_EDITS[field.key]) return 'input'
-      const formulaCols = ['cutWidth', 'cutHeight', 'maxPanels', 'fabricWaste', 'fabricMeters', 'totalWeight', 'unitGramWeight']
-      if (formulaCols.includes(field.key)) return 'formula'
-    }
-    return 'readonly'
-  }
-
-  const specGetFormulaExpr = (rowIndex: number, field: VTableColumnDef): string | null => {
-    if (!result) return null
-    if (rowIndex >= result.specTable.length) return null
-    const row = result.specTable[rowIndex]
-    const label = row.label
-    const col = field.key
-    const rowType = label === '印刷手提' ? 'handle' : 'fb'
-    const formulaKey = `spec_${rowType}_${col}`
-    return formulaOverrides[formulaKey] ?? DEFAULT_FORMULAS[formulaKey] ?? null
-  }
-
-  const specIsFormulaOverridden = (rowIndex: number, field: VTableColumnDef): boolean => {
-    if (!result) return false
-    if (rowIndex >= result.specTable.length) return false
-    const row = result.specTable[rowIndex]
-    const label = row.label
-    const col = field.key
-    const rowType = label === '印刷手提' ? 'handle' : 'fb'
-    const formulaKey = `spec_${rowType}_${col}`
-    return !!formulaOverrides[formulaKey]
-  }
-
-  const specOnCellChange = (rowIndex: number, field: VTableColumnDef, value: number) => {
-    if (!result) return
-    const row = result.specTable[rowIndex]
-    if (!row) return
-    const cellKey = `${rowIndex}_${field.key}`
-    
-    if (row.label === '成品') {
-      const inputEdits: Record<string, keyof BagQuoteInput> = {
-        quantity: 'quantity',
-        width: 'width',
-        height: 'height',
-        bottom: 'bottom',
-      }
-      const edit = inputEdits[field.key]
-      if (edit) {
-        updateField(edit, value)
-        setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-        setTimeout(() => {
-          calculate(input)
-        }, 100)
-      } else {
-        setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-      }
-    } else if (row.label === '印刷手提') {
-      const inputEdits: Record<string, keyof BagQuoteInput> = {
-        width: 'handleWidth',
-        height: 'handleHeight',
-        cutWidth: 'handleCutWidth',
-        widthBleed: 'handleWidthBleed',
-        heightBleed: 'handleHeightBleed',
-        quantity: 'quantity',
-      }
-      const edit = inputEdits[field.key]
-      if (edit) {
-        updateField(edit, value)
-        setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-        setTimeout(() => {
-          calculate(input)
-        }, 100)
-      } else {
-        setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-      }
-    } else {
-      const rowIndexInInput = input.frontBackRows.findIndex((r) => r.label === row.label)
-      if (rowIndexInInput !== -1) {
-        if (field.key === 'quantity') {
-          updateField('quantity', value)
-          setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-          setTimeout(() => {
-            calculate(input)
-          }, 100)
-        } else {
-          const edit = FRONT_BACK_SPEC_EDITS[field.key]
-          if (edit) {
-            updateField(edit.field, value, rowIndexInInput)
-            setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-            setTimeout(() => {
-              calculate(input)
-            }, 100)
-          } else {
-            setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-          }
-        }
-      } else {
-        setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-      }
-    }
-  }
-
-  const specFields: VTableColumnDef[] = [
-    { key: 'quantity', label: '数量(个)', type: 'number', digits: 0 },
-    { key: 'width', label: '宽(CM)', type: 'number' },
-    { key: 'height', label: '高(CM)', type: 'number' },
-    { key: 'bottom', label: '底(CM)', type: 'number' },
-    { key: 'widthBleed', label: '宽出血', type: 'number' },
-    { key: 'heightBleed', label: '高出血', type: 'number' },
-    { key: 'cutWidth', label: '切片宽', type: 'formula' },
-    { key: 'cutHeight', label: '切片高', type: 'formula' },
-    { key: 'fabricWidth', label: '布料门幅', type: 'number', digits: 0 },
-    { key: 'gramWeight', label: '克重', type: 'number', digits: 0 },
-    { key: 'fabricWaste', label: '门幅最大废料', type: 'formula' },
-    { key: 'fabricMeters', label: '布料米数', type: 'formula' },
-    { key: 'maxPanels', label: '门幅最大面数', type: 'formula', digits: 4 },
-    { key: 'totalWeight', label: '总重量', type: 'formula' },
-    { key: 'unitGramWeight', label: '单个克重', type: 'formula' },
-  ]
-
-  const costFields: VTableColumnDef[] = [
-    { key: 'processingFee', label: '加工费(元/个)', type: 'number' },
-    { key: 'printDoubleSide', label: '印刷双面(元/个)', type: 'formula' },
-    { key: 'fabricPrice', label: '布料价格', type: 'number' },
-    { key: 'fabricCost', label: '布料成本(元)', type: 'formula' },
-    { key: 'extraCraftCost', label: '额外工艺成本-中包价打包', type: 'number' },
-    { key: 'packagingFee', label: '包装费', type: 'number' },
-    { key: 'freightUnit', label: '运费单价', type: 'formula' },
-    { key: 'lossRate', label: '损耗系数', type: 'number' },
-    { key: 'unitTotalPrice', label: '单个布袋总价(元)', type: 'formula' },
-  ]
-
-  const combinedFields = [...specFields, ...costFields]
-
-  const costGetCellValue = (rowIndex: number, field: VTableColumnDef): number | null => {
-    const specRowIndex = rowIndex + 1
-    const cellKey = `${specRowIndex}_${field.key}`
-    if (cellValueOverrides[cellKey] !== undefined) {
-      return cellValueOverrides[cellKey]
-    }
-    if (!result) return null
-    if (rowIndex >= result.costTable.length) return null
-    const row = result.costTable[rowIndex]
-    return row[field.key as keyof CostRow] as number | null
-  }
-
-  const costGetCellType = (rowIndex: number, field: VTableColumnDef): 'input' | 'formula' | 'readonly' => {
-    const specRowIndex = rowIndex + 1
-    const cellKey = `${specRowIndex}_${field.key}`
-    if (cellValueOverrides[cellKey] !== undefined) return 'input'
-    
-    if (!result) return 'readonly'
-    if (rowIndex >= result.costTable.length) return 'readonly'
-    const row = result.costTable[rowIndex]
-    if (row.label === '汇总') return 'readonly'
-    if (row.label === '印刷手提') {
-      const inputEdits = ['processingFee', 'printDoubleSide', 'fabricPrice', 'fabricCost', 'extraCraftCost', 'packagingFee', 'lossRate']
-      if (inputEdits.includes(field.key)) return 'input'
-      const formulaCols = ['freightUnit', 'unitTotalPrice']
-      if (formulaCols.includes(field.key)) return 'formula'
-    } else {
-      const rowIndexInInput = input.frontBackRows.findIndex((r) => r.label === row.label)
-      if (rowIndexInInput !== -1) {
-        if (FRONT_BACK_COST_EDITS[field.key]) return 'input'
-        const formulaCols = ['printDoubleSide', 'fabricCost', 'freightUnit', 'unitTotalPrice']
-        if (formulaCols.includes(field.key)) return 'formula'
-      }
-    }
-    return 'readonly'
-  }
-
-  const costGetFormulaExpr = (rowIndex: number, field: VTableColumnDef): string | null => {
-    if (!result) return null
-    if (rowIndex >= result.costTable.length) return null
-    const row = result.costTable[rowIndex]
-    const label = row.label
-    const col = field.key
-    const rowType = label === '印刷手提' ? 'handle' : 'fb'
-    const formulaKey = `cost_${rowType}_${col}`
-    return formulaOverrides[formulaKey] ?? DEFAULT_FORMULAS[formulaKey] ?? null
-  }
-
-  const costIsFormulaOverridden = (rowIndex: number, field: VTableColumnDef): boolean => {
-    if (!result) return false
-    if (rowIndex >= result.costTable.length) return false
-    const row = result.costTable[rowIndex]
-    const label = row.label
-    const col = field.key
-    const rowType = label === '印刷手提' ? 'handle' : 'fb'
-    const formulaKey = `cost_${rowType}_${col}`
-    return !!formulaOverrides[formulaKey]
-  }
-
-  const costOnCellChange = (rowIndex: number, field: VTableColumnDef, value: number) => {
-    if (!result) return
-    const row = result.costTable[rowIndex]
-    if (!row) return
-    const specRowIndex = rowIndex + 1
-    const cellKey = `${specRowIndex}_${field.key}`
-    
-    if (row.label === '印刷手提') {
-      const inputEdits: Record<string, keyof BagQuoteInput> = {
-        processingFee: 'handleProcessingFee',
-        printDoubleSide: 'handlePrintCost',
-        fabricPrice: 'handleFabricPrice',
-        fabricCost: 'handleFabricCost',
-        extraCraftCost: 'handleExtraCraftCost',
-        packagingFee: 'handlePackagingFee',
-      }
-      const edit = inputEdits[field.key]
-      if (edit) {
-        updateField(edit, value)
-        setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-        setTimeout(() => {
-          calculate(input)
-        }, 100)
-      } else if (field.key === 'lossRate') {
-        updateField('lossRate', value, 0)
-        setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-        setTimeout(() => {
-          calculate(input)
-        }, 100)
-      } else {
-        setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-      }
-    } else {
-      const rowIndexInInput = input.frontBackRows.findIndex((r) => r.label === row.label)
-      if (rowIndexInInput !== -1) {
-        const edit = FRONT_BACK_COST_EDITS[field.key]
-        if (edit) {
-          updateField(edit.field, value, rowIndexInInput)
-          setCellValueOverrides((prev) => { delete prev[cellKey]; return { ...prev } })
-          setTimeout(() => {
-            calculate(input)
-          }, 100)
-        } else {
-          setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-        }
-      } else {
-        setCellValueOverrides((prev) => ({ ...prev, [cellKey]: value }))
-      }
-    }
+  const handleReset = () => {
+    setOrderInfo(DEFAULT_ORDER_INFO)
+    setProductImages([])
   }
 
   return (
@@ -708,90 +412,36 @@ export default function BagQuote() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-gray-800">报价管理</h1>
-              <p className="text-sm text-gray-500">基于帆布袋价格试算表的报价规则，表格修改驱动订单信息更新</p>
+              <p className="text-sm text-gray-500">订单信息管理</p>
             </div>
           </div>
           <div className="flex gap-3">
-            {Object.keys(formulaOverrides).length > 0 && (
-              <button
-                onClick={() => setFormulaOverrides({})}
-                className="flex items-center gap-2 px-4 py-2 text-purple-600 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors"
-                title="清除所有自定义公式，恢复默认"
-              >
-                <RotateCcw size={18} />
-                重置公式 ({Object.keys(formulaOverrides).length})
-              </button>
-            )}
             <button onClick={handleReset} className="flex items-center gap-2 px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
               <RotateCcw size={18} />
               重置
             </button>
-            {loading && (
-              <span className="flex items-center gap-2 px-4 py-2 text-blue-600">
-                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                计算中...
-              </span>
-            )}
           </div>
         </div>
 
         {/* 汇总卡片 */}
-        {s && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-              <div className="flex items-center gap-2 mb-2">
-                <DollarSign className="text-gray-400" size={18} />
-                <span className="text-xs text-gray-400">单个卖价(不含税)</span>
-              </div>
-              <p className="text-2xl font-bold text-gray-800">{money(s.refPriceNoTax)}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="text-gray-400" size={18} />
+              <span className="text-xs text-gray-400">单个卖价(不含税)</span>
             </div>
-            <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-sm p-5 text-white">
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp size={18} className="text-blue-100" />
-                <span className="text-xs text-blue-100">单个卖价(含税)</span>
-              </div>
-              <p className="text-2xl font-bold">{money(s.refPriceWithTax)}</p>
-            </div>
+            <p className="text-2xl font-bold text-gray-800">{sellPrices.noTax !== null ? `¥${sellPrices.noTax.toFixed(2)}` : '-'}</p>
           </div>
-        )}
-
-        {/* 编辑提示 */}
-        <div className="flex items-center gap-2 mb-4 text-xs text-gray-400">
-          <Calculator size={14} className="text-gray-400" />
-          <span>蓝色单元格=输入参数 · 灰色单元格=公式（双击编辑公式表达式，实时求值）· 紫色=已修改公式 · 修改表格自动更新订单信息</span>
+          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-sm p-5 text-white">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp size={18} className="text-blue-100" />
+              <span className="text-xs text-blue-100">单个卖价(含税)</span>
+            </div>
+            <p className="text-2xl font-bold">{sellPrices.withTax !== null ? `¥${sellPrices.withTax.toFixed(2)}` : '-'}</p>
+          </div>
         </div>
 
-        {/* 公式编辑栏 */}
-        {selectedCell && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-6">
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-medium text-gray-500">公式:</span>
-              <input
-                type="text"
-                value={formulaInfo.expr || ''}
-                onChange={(e) => formulaInfo.formulaKey && handleFormulaChange(formulaInfo.formulaKey, e.target.value)}
-                placeholder="输入公式表达式..."
-                className="flex-1 px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              {formulaInfo.overridden && (
-                <button
-                  onClick={() => formulaInfo.formulaKey && handleFormulaChange(formulaInfo.formulaKey, '')}
-                  className="px-3 py-2 text-xs font-medium text-purple-600 bg-purple-100 rounded-lg hover:bg-purple-200 transition-colors"
-                >
-                  恢复默认
-                </button>
-              )}
-              <button
-                onClick={() => setSelectedCell(null)}
-                className="px-3 py-2 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 主体：订单信息 - 紧凑2列布局，一屏展示 */}
+        {/* 主体：订单信息 */}
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <ClipboardList size={18} className="text-gray-400" />
@@ -833,7 +483,6 @@ export default function BagQuote() {
               </div>
               <div className="p-3 space-y-3">
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-2">
-                  <InfoItem label="数量" value={input.quantity} unit="个" />
                   <div>
                     <label className="block text-xs text-gray-400 mb-0.5">款式</label>
                     <input type="text" value={orderInfo.productStyle} onChange={(e) => updateOrderField('productStyle', e.target.value)}
@@ -841,17 +490,10 @@ export default function BagQuote() {
                       className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-0.5">规格(cm)：宽×高×底</label>
-                    <div className="flex items-center gap-1">
-                      <input type="number" value={input.width} step="0.1" onChange={(e) => updateField('width', parseFloat(e.target.value) || 0)}
-                        className="w-14 px-1.5 py-0.5 text-xs font-medium text-center text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                      <span className="text-gray-400 text-xs">×</span>
-                      <input type="number" value={input.height} step="0.1" onChange={(e) => updateField('height', parseFloat(e.target.value) || 0)}
-                        className="w-14 px-1.5 py-0.5 text-xs font-medium text-center text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                      <span className="text-gray-400 text-xs">×</span>
-                      <input type="number" value={input.bottom} step="0.1" onChange={(e) => updateField('bottom', parseFloat(e.target.value) || 0)}
-                        className="w-14 px-1.5 py-0.5 text-xs font-medium text-center text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                    </div>
+                    <label className="block text-xs text-gray-400 mb-0.5">产品规格</label>
+                    <input type="text" value={orderInfo.productSpec ? `${orderInfo.productSpec}CM` : ''} onChange={(e) => updateOrderField('productSpec', e.target.value.replace(/CM$/, ''))}
+                      placeholder="产品规格"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-0.5">面料材质</label>
@@ -864,22 +506,20 @@ export default function BagQuote() {
                       className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
                   <div className="col-span-2 md:col-span-1">
-                    <label className="block text-xs text-gray-400 mb-0.5">手提材质 / 宽×高 (cm)</label>
-                    <div className="flex items-center gap-1">
-                      <input type="text" value={orderInfo.handleMaterial} onChange={(e) => updateOrderField('handleMaterial', e.target.value)}
-                        placeholder="材质"
-                        className="flex-1 px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                      <span className="text-gray-400 text-xs">/</span>
-                      <input type="number" value={input.handleWidth} step="0.1" onChange={(e) => updateField('handleWidth', parseFloat(e.target.value) || 0)}
-                        className="w-12 px-1 py-1 text-sm font-medium text-center text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                      <span className="text-gray-400 text-xs">×</span>
-                      <input type="number" value={input.handleHeight} step="0.1" onChange={(e) => updateField('handleHeight', parseFloat(e.target.value) || 0)}
-                        className="w-12 px-1 py-1 text-sm font-medium text-center text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                    </div>
+                    <label className="block text-xs text-gray-400 mb-0.5">手提材质</label>
+                    <input type="text" value={orderInfo.handleMaterial} onChange={(e) => updateOrderField('handleMaterial', e.target.value)}
+                      placeholder="材质"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                  </div>
+                  <div className="col-span-2 md:col-span-1">
+                    <label className="block text-xs text-gray-400 mb-0.5">手提规格</label>
+                    <input type="text" value={orderInfo.handleSpec} onChange={(e) => updateOrderField('handleSpec', e.target.value)}
+                      placeholder="手提规格"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-400 mb-0.5">打样费（元）</label>
-                    <input type="number" value={orderInfo.sampleFee} onChange={(e) => updateOrderField('sampleFee', e.target.value)}
+                    <label className="block text-xs text-gray-400 mb-0.5">打样费</label>
+                    <input type="text" value={orderInfo.sampleFee ? `${orderInfo.sampleFee}元` : ''} onChange={(e) => updateOrderField('sampleFee', e.target.value.replace(/元$/, ''))}
                       placeholder="0"
                       className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
@@ -892,6 +532,12 @@ export default function BagQuote() {
                   <div>
                     <label className="block text-xs text-gray-400 mb-0.5">大货天数</label>
                     <input type="number" value={orderInfo.massDays} onChange={(e) => updateOrderField('massDays', e.target.value)}
+                      placeholder="0"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-0.5">数量</label>
+                    <input type="text" value={orderInfo.quantity ? `${orderInfo.quantity}个` : ''} onChange={(e) => updateOrderField('quantity', e.target.value.replace(/个$/, ''))}
                       placeholder="0"
                       className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                   </div>
@@ -977,13 +623,9 @@ export default function BagQuote() {
                       ))}
                       <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
                         isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
-                      }`}
-                        onDragOver={(e) => { e.stopPropagation(); handleDragOver(e); }}
-                        onDragLeave={(e) => { e.stopPropagation(); handleDragLeave(e); }}
-                        onDrop={(e) => { e.stopPropagation(); handleDrop(e); }}
-                      >
-                        <Upload size={18} className={isDragging ? 'text-blue-600 mb-1' : 'text-gray-400 mb-1'} />
-                        <span className={isDragging ? 'text-xs text-blue-600' : 'text-xs text-gray-400'}>添加</span>
+                      }`}>
+                        <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
+                        <span className={`text-xs ${isDragging ? 'text-blue-600' : 'text-gray-500'}`}>添加</span>
                         <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
                       </label>
                     </div>
@@ -994,79 +636,15 @@ export default function BagQuote() {
           </div>
         </div>
 
-        <div className="flex items-center justify-center mb-6">
-          <div className="flex-1 h-0.5 bg-yellow-400"></div>
-          <span className="px-4 text-sm font-medium text-yellow-600 bg-yellow-100 rounded-full py-1">
-            黄色分割线 · 以上为订单信息，以下为在线计算表（双击编辑数值或公式表达式）
-          </span>
-          <div className="flex-1 h-0.5 bg-yellow-400"></div>
+        {/* 在线表格 — 全宽，不受订单信息的 max-w-7xl 限制 */}
+      </div>
+      <div className="px-6 pb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Table2 size={18} className="text-gray-400" />
+          <h3 className="text-sm font-semibold text-gray-700">在线表格</h3>
         </div>
-
-        {/* 价格试算表（合并规格计算和成本计算） */}
-        <div className="grid grid-cols-1 gap-6">
-          {result && (
-            <VTableWrapper
-              title="价格试算表"
-              fields={combinedFields}
-              rowCount={Math.max(result.specTable.length, 30)}
-              getRowLabel={(i) => i < result.specTable.length ? result.specTable[i].label : ''}
-              isHighlightRow={(i) => i < result.specTable.length && result.specTable[i].label === '成品'}
-              getCellValue={(rowIndex, field) => {
-                if (rowIndex >= result.specTable.length) return null
-                const specFieldKeys = specFields.map(f => f.key)
-                if (specFieldKeys.includes(field.key)) {
-                  return specGetCellValue(rowIndex, field)
-                }
-                const costRowIndex = rowIndex - 1
-                if (costRowIndex < 0 || costRowIndex >= result.costTable.length) return null
-                return costGetCellValue(costRowIndex, field)
-              }}
-              getCellType={(rowIndex, field) => {
-                if (rowIndex >= result.specTable.length) return 'readonly'
-                const specFieldKeys = specFields.map(f => f.key)
-                if (specFieldKeys.includes(field.key)) {
-                  return specGetCellType(rowIndex, field)
-                }
-                const costRowIndex = rowIndex - 1
-                if (costRowIndex < 0 || costRowIndex >= result.costTable.length) return 'readonly'
-                return costGetCellType(costRowIndex, field)
-              }}
-              getFormulaExpr={(rowIndex, field) => {
-                if (rowIndex >= result.specTable.length) return null
-                const specFieldKeys = specFields.map(f => f.key)
-                if (specFieldKeys.includes(field.key)) {
-                  return specGetFormulaExpr(rowIndex, field)
-                }
-                const costRowIndex = rowIndex - 1
-                if (costRowIndex < 0 || costRowIndex >= result.costTable.length) return null
-                return costGetFormulaExpr(costRowIndex, field)
-              }}
-              isFormulaOverridden={(rowIndex, field) => {
-                if (rowIndex >= result.specTable.length) return false
-                const specFieldKeys = specFields.map(f => f.key)
-                if (specFieldKeys.includes(field.key)) {
-                  return specIsFormulaOverridden(rowIndex, field)
-                }
-                const costRowIndex = rowIndex - 1
-                if (costRowIndex < 0 || costRowIndex >= result.costTable.length) return false
-                return costIsFormulaOverridden(costRowIndex, field)
-              }}
-              onCellChange={(rowIndex, field, value) => {
-                if (rowIndex >= result.specTable.length) return
-                const specFieldKeys = specFields.map(f => f.key)
-                if (specFieldKeys.includes(field.key)) {
-                  specOnCellChange(rowIndex, field, value)
-                } else {
-                  const costRowIndex = rowIndex - 1
-                  if (costRowIndex >= 0 && costRowIndex < result.costTable.length) {
-                    costOnCellChange(costRowIndex, field, value)
-                  }
-                }
-              }}
-              onAddRow={addFrontBackRow}
-              showContextMenu={false}
-            />
-          )}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div ref={sheetContainerRef} style={{ height: 'calc(100vh - 260px)', minHeight: 400 }} />
         </div>
       </div>
 
@@ -1085,7 +663,7 @@ export default function BagQuote() {
             <img 
               src={previewImageSrc} 
               alt="预览" 
-              className="max-w-full max-h-[90vh] object-contain rounded-lg"
+              className="max-w-full max-h-[90vh] object-contain" 
             />
           </div>
         </div>

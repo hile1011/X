@@ -258,10 +258,23 @@ export function calculateBagQuote(input: BagQuoteInput): BagQuoteResult {
     unitTotalPrice: totalUnitTotalPrice,
   }
 
+  const productCostRow: CostCalcRow = {
+    label: '成品',
+    processingFee: null,
+    printDoubleSide: null,
+    fabricPrice: null,
+    fabricCost: null,
+    extraCraftCost: null,
+    packagingFee: null,
+    freightUnit: null,
+    lossRate: null,
+    unitTotalPrice: null,
+  }
+
   return {
     input,
     specTable: [productRow, ...frontBackSpecRows, handleSpecRow, summarySpecRow],
-    costTable: [...frontBackCostRows, handleCostRow, summaryCostRow],
+    costTable: [productCostRow, ...frontBackCostRows, handleCostRow, summaryCostRow],
     summary: {
       unitCost,
       refPriceNoTax,

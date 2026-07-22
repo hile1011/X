@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
-import { BarChart3, ShoppingCart, Users, DollarSign, Calendar } from 'lucide-react'
+import { BarChart3, ShoppingCart, Users, DollarSign, Calendar, RefreshCw } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
 
 export default function Reports() {
+  const location = useLocation()
   const [stats, setStats] = useState({
     totalOrders: 0,
     totalCustomers: 0,
@@ -14,7 +16,7 @@ export default function Reports() {
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [location.pathname])
 
   const fetchData = async () => {
     setLoading(true)
@@ -96,9 +98,18 @@ export default function Reports() {
             <h1 className="text-2xl font-bold text-gray-800">报表统计</h1>
             <p className="text-gray-500 mt-1">查看业务数据统计</p>
           </div>
-          <div className="flex items-center gap-2 text-gray-500">
-            <Calendar size={20} />
-            <span>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={fetchData}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+              <span>刷新数据</span>
+            </button>
+            <div className="flex items-center gap-2 text-gray-500">
+              <Calendar size={20} />
+              <span>{new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+            </div>
           </div>
         </div>
 

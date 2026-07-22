@@ -18,8 +18,6 @@ import TaskDetail from './pages/TaskDetail'
 import Reports from './pages/Reports'
 import BagQuote from './pages/BagQuote'
 import BagQuoteWps from './pages/BagQuoteWps'
-import BagQuoteOnline from './pages/BagQuoteOnline'
-import TestVTable from './pages/TestVTable'
 
 function App() {
   const { isAuthenticated, initAuth } = useAuthStore()
@@ -40,8 +38,6 @@ function App() {
               <Route path="/" element={<Dashboard />} />
               <Route path="/quotes" element={<BagQuote />} />
               <Route path="/quotes-wps" element={<BagQuoteWps />} />
-              <Route path="/quotes-online" element={<BagQuoteOnline />} />
-              <Route path="/test-vtable" element={<TestVTable />} />
               <Route path="/orders" element={<Orders />} />
               <Route path="/orders/:id" element={<OrderDetail />} />
               <Route path="/customers" element={<Customers />} />
