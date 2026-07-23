@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { ArrowLeft, Building2, User, Phone, Mail, MapPin, Briefcase, ShoppingCart } from 'lucide-react'
-import type { Customer, Order } from '../types'
+import type { Customer, Quote } from '../types'
 
 export default function CustomerDetail() {
   const { id } = useParams()
   const [customer, setCustomer] = useState<Customer | null>(null)
-  const [orders, setOrders] = useState<Order[]>([])
+  const [quotes, setQuotes] = useState<Quote[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
@@ -17,12 +17,13 @@ export default function CustomerDetail() {
 
   const fetchData = async () => {
     setLoading(true)
-    const [customerData, ordersData] = await Promise.all([
+    const [customerData, quotesData] = await Promise.all([
       api.customers.getById(id || '') as Promise<Customer>,
-      api.orders.getAll() as Promise<Order[]>,
+      api.quotes.getAll() as Promise<Quote[]>,
     ])
     setCustomer(customerData)
-    setOrders(ordersData.filter((o) => o.customer_id === id))
+    // 根据客户名称筛选报价单
+    setQuotes(quotesData.filter((q) => q.customerName === customerData.name))
     setLoading(false)
   }
 
@@ -81,7 +82,7 @@ export default function CustomerDetail() {
             </div>
           </div>
           <button
-            onClick={() => navigate('/customers/new')}
+            onClick={() => navigate(`/customers/${customer.id}/edit`)}
             className="text-primary-600 hover:text-primary-700 font-medium"
           >
             编辑客户
@@ -139,24 +140,24 @@ export default function CustomerDetail() {
                 <ShoppingCart className="text-primary-600" size={20} />
                 <h2 className="text-lg font-semibold text-gray-800">历史订单</h2>
               </div>
-              {orders.length === 0 ? (
+              {quotes.length === 0 ? (
                 <p className="text-gray-500 text-center py-8">暂无订单记录</p>
               ) : (
                 <div className="space-y-3">
-                  {orders.map((order) => (
+                  {quotes.map((quote) => (
                     <div
-                      key={order.id}
+                      key={quote.id}
                       className="flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors"
-                      onClick={() => navigate(`/orders/${order.id}`)}
+                      onClick={() => navigate(`/quotes/${quote.id}`)}
                     >
                       <div>
-                        <p className="font-medium text-gray-800">{order.order_number}</p>
-                        <p className="text-sm text-gray-500">{new Date(order.created_at).toLocaleDateString()}</p>
+                        <p className="font-medium text-gray-800">{quote.quote_number}</p>
+                        <p className="text-sm text-gray-500">{new Date(quote.created_at).toLocaleDateString()}</p>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium text-gray-800">¥{order.total_amount.toLocaleString()}</p>
-                        <span className={`text-xs ${order.status === 'completed' ? 'text-green-600' : order.status === 'cancelled' ? 'text-red-600' : 'text-blue-600'}`}>
-                          {order.status === 'completed' ? '已完成' : order.status === 'cancelled' ? '已取消' : '处理中'}
+                        <p className="font-medium text-gray-800">¥{quote.sellPriceWithTax.toLocaleString()}</p>
+                        <span className={`text-xs ${quote.status === 6 ? 'text-green-600' : quote.status === 5 ? 'text-blue-600' : 'text-gray-600'}`}>
+                          {quote.status === 6 ? '已结束' : quote.status === 5 ? '已收款' : quote.status === 4 ? '已发货' : quote.status === 3 ? '做货中' : quote.status === 2 ? '打样中' : '报价中'}
                         </span>
                       </div>
                     </div>
@@ -171,11 +172,11 @@ export default function CustomerDetail() {
               <h3 className="text-sm font-medium text-blue-100 mb-2">客户统计</h3>
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div>
-                  <p className="text-2xl font-bold">{orders.length}</p>
+                  <p className="text-2xl font-bold">{quotes.length}</p>
                   <p className="text-blue-100 text-sm">订单数量</p>
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">¥{orders.reduce((sum, o) => sum + o.total_amount, 0).toLocaleString()}</p>
+                  <p className="text-2xl font-bold">¥{quotes.reduce((sum, q) => sum + q.sellPriceWithTax, 0).toLocaleString()}</p>
                   <p className="text-blue-100 text-sm">订单总额</p>
                 </div>
               </div>
@@ -185,14 +186,14 @@ export default function CustomerDetail() {
               <h3 className="font-semibold text-gray-800 mb-4">快捷操作</h3>
               <div className="space-y-2">
                 <button
-                  onClick={() => navigate('/quotes')}
+                  onClick={() => navigate(`/quotes/new?customerId=${customer.id}`)}
                   className="w-full flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   <Briefcase size={18} />
                   创建报价
                 </button>
                 <button
-                  onClick={() => navigate('/customers/new')}
+                  onClick={() => navigate(`/customers/${customer.id}/edit`)}
                   className="w-full flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
                 >
                   <Building2 size={18} />

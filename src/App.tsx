@@ -5,8 +5,6 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
-import Orders from './pages/Orders'
-import OrderDetail from './pages/OrderDetail'
 import Customers from './pages/Customers'
 import CustomerDetail from './pages/CustomerDetail'
 import CreateCustomer from './pages/CreateCustomer'
@@ -16,8 +14,10 @@ import CreateProduct from './pages/CreateProduct'
 import Tasks from './pages/Tasks'
 import TaskDetail from './pages/TaskDetail'
 import Reports from './pages/Reports'
+import Quotes from './pages/Quotes'
 import BagQuote from './pages/BagQuote'
 import BagQuoteWps from './pages/BagQuoteWps'
+import ProcessCost from './pages/ProcessCost'
 
 function App() {
   const { isAuthenticated, initAuth } = useAuthStore()
@@ -36,12 +36,15 @@ function App() {
           <Route path="*" element={<Layout>
             <Routes>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/quotes" element={<BagQuote />} />
+              <Route path="/quotes" element={<Quotes />} />
+              <Route path="/quotes/new" element={<BagQuote />} />
+              <Route path="/quotes/:id" element={<BagQuote />} />
+              <Route path="/quotes/:id/edit" element={<BagQuote />} />
               <Route path="/quotes-wps" element={<BagQuoteWps />} />
-              <Route path="/orders" element={<Orders />} />
-              <Route path="/orders/:id" element={<OrderDetail />} />
+              <Route path="/process-costs" element={<ProcessCost />} />
               <Route path="/customers" element={<Customers />} />
               <Route path="/customers/new" element={<CreateCustomer />} />
+              <Route path="/customers/:id/edit" element={<CreateCustomer />} />
               <Route path="/customers/:id" element={<CustomerDetail />} />
               <Route path="/products" element={<Products />} />
               <Route path="/products/new" element={<CreateProduct />} />

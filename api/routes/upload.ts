@@ -10,14 +10,14 @@ export const uploadRouter = express.Router()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (_req, _file, cb) => {
     const uploadDir = path.join(__dirname, '../uploads')
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true })
     }
     cb(null, uploadDir)
   },
-  filename: (req, file, cb) => {
+  filename: (_req, file, cb) => {
     cb(null, `${Date.now()}-${file.originalname}`)
   },
 })

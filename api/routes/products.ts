@@ -3,7 +3,7 @@ import { db } from '../db'
 
 export const productsRouter = express.Router()
 
-productsRouter.get('/', async (req, res) => {
+productsRouter.get('/', async (_req, res) => {
   const data = await db.products.getAll()
   res.json(data)
 })

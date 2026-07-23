@@ -69,3 +69,49 @@ export interface OrderWithDetails extends Order {
   customer?: Customer
   items?: OrderItem[]
 }
+
+export interface Quote {
+  id: string
+  user_id: string
+  customer_id: string
+  quote_number: string
+  customerName: string
+  shippingAddress: string
+  productStyle: string
+  productSpec: string
+  fabricMaterial: string
+  process: string
+  handleMaterial: string
+  handleSpec: string
+  quantity: string
+  boxSpec: string
+  remark: string
+  sampleFee: string
+  sampleDays: string
+  massDays: string
+  unitPrice: string
+  productionTimeStart: string
+  productionTimeEnd: string
+  sellPriceNoTax: number
+  sellPriceWithTax: number
+  status: 1 | 2 | 3 | 4 | 5 | 6
+  // 状态流转时间节点
+  quoteTime: string
+  sampleTime: string
+  productionStartTime: string
+  shippingTime: string
+  paymentTime: string
+  endTime: string
+  images: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface ProcessCost {
+  id: string
+  name: string
+  cost: number
+  formula: string
+  created_at: string
+  updated_at: string
+}

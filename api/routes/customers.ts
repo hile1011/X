@@ -3,7 +3,7 @@ import { db } from '../db'
 
 export const customersRouter = express.Router()
 
-customersRouter.get('/', async (req, res) => {
+customersRouter.get('/', async (_req, res) => {
   const data = await db.customers.getAll()
   res.json(data)
 })
@@ -14,6 +14,12 @@ customersRouter.get('/:id', async (req, res) => {
   if (!data) {
     return res.status(404).json({ error: '客户不存在' })
   }
+  res.json(data)
+})
+
+customersRouter.get('/name/:name', async (req, res) => {
+  const { name } = req.params
+  const data = await db.customers.getByName(decodeURIComponent(name))
   res.json(data)
 })
 

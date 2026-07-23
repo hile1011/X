@@ -1,9 +1,12 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { ArrowLeft, Save, Building2, User, Phone, Mail, MapPin, Briefcase } from 'lucide-react'
+import type { Customer } from '../types'
 
 export default function CreateCustomer() {
+  const { id } = useParams<{ id: string }>()
+  const isEditMode = !!id
   const [name, setName] = useState('')
   const [contactPerson, setContactPerson] = useState('')
   const [phone, setPhone] = useState('')
@@ -13,23 +16,54 @@ export default function CreateCustomer() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
+  useEffect(() => {
+    if (isEditMode) {
+      loadCustomer()
+    }
+  }, [isEditMode, id])
+
+  const loadCustomer = async () => {
+    try {
+      const customer = await api.customers.getById(id!) as Customer
+      setName(customer.name)
+      setContactPerson(customer.contact_person || '')
+      setPhone(customer.phone || '')
+      setEmail(customer.email || '')
+      setAddress(customer.address || '')
+      setIndustry(customer.industry || '')
+    } catch (error) {
+      console.error('加载客户信息失败:', error)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
-      await api.customers.create({
-        name,
-        contact_person: contactPerson,
-        phone,
-        email,
-        address,
-        industry,
-      })
+      if (isEditMode) {
+        await api.customers.update(id!, {
+          name,
+          contact_person: contactPerson,
+          phone,
+          email,
+          address,
+          industry,
+        })
+      } else {
+        await api.customers.create({
+          name,
+          contact_person: contactPerson,
+          phone,
+          email,
+          address,
+          industry,
+        })
+      }
 
       navigate('/customers')
     } catch (error) {
-      console.error('创建客户失败:', error)
+      console.error('保存客户失败:', error)
     } finally {
       setLoading(false)
     }
@@ -46,8 +80,8 @@ export default function CreateCustomer() {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-gray-800">添加客户</h1>
-              <p className="text-gray-500 mt-1">填写客户基本信息</p>
+              <h1 className="text-2xl font-bold text-gray-800">{isEditMode ? '编辑客户' : '添加客户'}</h1>
+              <p className="text-gray-500 mt-1">{isEditMode ? '修改客户基本信息' : '填写客户基本信息'}</p>
             </div>
           </div>
           <button

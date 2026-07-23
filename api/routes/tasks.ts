@@ -4,7 +4,7 @@ import type { Task } from '../types'
 
 export const tasksRouter = express.Router()
 
-tasksRouter.get('/', async (req, res) => {
+tasksRouter.get('/', async (_req, res) => {
   const data = await db.tasks.getAll()
   res.json(data)
 })

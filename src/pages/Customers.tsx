@@ -113,7 +113,7 @@ export default function Customers() {
                       <Eye size={18} />
                     </button>
                     <button
-                      onClick={() => navigate(`/customers/${customer.id}`)}
+                      onClick={() => navigate(`/customers/${customer.id}/edit`)}
                       className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                       title="编辑"
                     >

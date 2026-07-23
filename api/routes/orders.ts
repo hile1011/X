@@ -4,7 +4,7 @@ import type { Order } from '../types'
 
 export const ordersRouter = express.Router()
 
-ordersRouter.get('/', async (req, res) => {
+ordersRouter.get('/', async (_req, res) => {
   const data = await db.orders.getAll()
   res.json(data)
 })

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Calculator, FileSpreadsheet, AlertCircle } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, Image as ImageIcon, Upload, X, ClipboardList, Calculator, FileSpreadsheet, AlertCircle } from 'lucide-react'
 import { calculateBagQuote as calcBagQuote } from '../services/bagQuoteCalculator'
 
 interface FrontBackRowInput {
@@ -59,13 +59,27 @@ interface OrderInfo {
 
 const today = new Date().toISOString().split('T')[0]
 
+const PRODUCT_STYLE_OPTIONS = [
+  { value: '1', label: '无底无侧普通袋' },
+  { value: '2', label: '有底无侧普通袋' },
+  { value: '3', label: '有底有侧普通袋' },
+  { value: '4', label: '手提连底普通拼接袋' },
+  { value: '5', label: '手提连底高级拼接袋' },
+  { value: '6', label: '手提无连底拼接袋' },
+]
+
+const getStyleLabel = (value: string): string => {
+  const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
+  return option ? option.label : value
+}
+
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
   productionTimeStart: today,
   productionTimeEnd: '',
   customerName: '',
   shippingAddress: '',
-  productStyle: '无底无侧普通款',
+  productStyle: '1',
   fabricMaterial: '10安涤棉新本色',
   process: '单面数码uv印刷',
   handleMaterial: '帆布手提',
@@ -369,9 +383,17 @@ export default function BagQuoteWps() {
                   <InfoItem label="数量" value={input.quantity} unit="个" />
                   <div>
                     <label className="block text-xs text-gray-400 mb-0.5">款式</label>
-                    <input type="text" value={orderInfo.productStyle} onChange={(e) => updateOrderField('productStyle', e.target.value)}
-                      placeholder="款式"
-                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                    <select
+                      value={orderInfo.productStyle}
+                      onChange={(e) => updateOrderField('productStyle', e.target.value)}
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
+                    >
+                      {PRODUCT_STYLE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs text-gray-400 mb-0.5">规格(cm)：宽×高×底</label>

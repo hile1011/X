@@ -1,13 +1,12 @@
-import { LayoutDashboard, FileText, ShoppingCart, Users, Package, ClipboardList, BarChart3, LogOut, ChevronLeft, ChevronRight } from 'lucide-react'
+import { LayoutDashboard, FileText, Users, Package, ClipboardList, BarChart3, LogOut, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuthStore } from '../store/auth'
 import { useNavigate, useLocation } from 'react-router-dom'
 
 const menuItems = [
   { icon: LayoutDashboard, path: '/', label: '仪表盘' },
-  { icon: FileText, path: '/quotes', label: '报价管理' },
-  { icon: FileText, path: '/quotes-wps', label: '报价管理-WPS版' },
-  
-  { icon: ShoppingCart, path: '/orders', label: '订单管理' },
+  { icon: FileText, path: '/quotes', label: '订单管理' },
+  { icon: FileText, path: '/quotes-wps', label: '订单管理-WPS版' },
+  { icon: ClipboardList, path: '/process-costs', label: '工艺成本管理' },
   { icon: Users, path: '/customers', label: '客户管理' },
   { icon: Package, path: '/products', label: '产品管理' },
   { icon: ClipboardList, path: '/tasks', label: '跟单任务' },
