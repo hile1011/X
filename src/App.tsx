@@ -16,6 +16,7 @@ import TaskDetail from './pages/TaskDetail'
 import Reports from './pages/Reports'
 import Quotes from './pages/Quotes'
 import BagQuote from './pages/BagQuote'
+import BagQuoteTable from './pages/BagQuoteTable'
 import BagQuoteWps from './pages/BagQuoteWps'
 import ProcessCost from './pages/ProcessCost'
 
@@ -40,6 +41,9 @@ function App() {
               <Route path="/quotes/new" element={<BagQuote />} />
               <Route path="/quotes/:id" element={<BagQuote />} />
               <Route path="/quotes/:id/edit" element={<BagQuote />} />
+              <Route path="/quotes-table/new" element={<BagQuoteTable />} />
+              <Route path="/quotes-table/:id" element={<BagQuoteTable />} />
+              <Route path="/quotes-table/:id/edit" element={<BagQuoteTable />} />
               <Route path="/quotes-wps" element={<BagQuoteWps />} />
               <Route path="/process-costs" element={<ProcessCost />} />
               <Route path="/customers" element={<Customers />} />

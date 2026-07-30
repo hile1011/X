@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag } from 'lucide-react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, Save, ArrowLeft, CheckCircle, ChevronLeft, ChevronRight, Flag } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
-import CustomerSelect from '../components/CustomerSelect'
 
 interface OrderInfo {
   unitPrice: string
@@ -27,15 +26,6 @@ interface OrderInfo {
 }
 
 const today = new Date().toISOString().split('T')[0]
-
-// 日期加天数：返回 YYYY-MM-DD 格式
-const addDaysToDate = (dateStr: string, days: number): string => {
-  if (!dateStr || !days || isNaN(days)) return ''
-  const date = new Date(dateStr)
-  if (isNaN(date.getTime())) return ''
-  date.setDate(date.getDate() + days)
-  return date.toISOString().split('T')[0]
-}
 
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
@@ -73,15 +63,6 @@ const PRODUCT_STYLE_OPTIONS = [
   { value: '4', label: '手提连底普通拼接袋' },
   { value: '5', label: '手提连底高级拼接袋' },
   { value: '6', label: '手提无连底拼接袋' },
-]
-
-const PRODUCTION_STEPS = [
-  { id: 1, name: '面料采购', description: '采购所需面料' },
-  { id: 2, name: '裁剪', description: '根据规格裁剪面料' },
-  { id: 3, name: '印刷', description: '进行图案印刷' },
-  { id: 4, name: '缝纫', description: '缝制袋子' },
-  { id: 5, name: '质检', description: '质量检查' },
-  { id: 6, name: '包装', description: '包装入库' },
 ]
 
 // 在线表格初始数据（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
@@ -615,12 +596,10 @@ const SHEET_COLUMNS = COL_WIDTHS.map((width, field) => ({
   },
 }))
 
-export default function BagQuote() {
+export default function BagQuoteTable() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const isEditMode = !!id
-  const customerId = searchParams.get('customerId')
   const [orderInfo, setOrderInfo] = useState<OrderInfo>(DEFAULT_ORDER_INFO)
   const [productImages, setProductImages] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
@@ -644,7 +623,6 @@ export default function BagQuote() {
     paymentTime: '',
     endTime: '',
   })
-  const [productionStepStatus, setProductionStepStatus] = useState<Record<number, 'pending' | 'in_progress' | 'completed'>>({})
 
   const sheetContainerRef = useRef<HTMLDivElement>(null)
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
@@ -654,33 +632,15 @@ export default function BagQuote() {
   useEffect(() => {
     if (isEditMode) {
       loadQuote()
-    } else if (customerId) {
-      // 从客户详情跳转过来，预填充客户信息
-      loadCustomerInfo()
     }
-  }, [isEditMode, customerId])
-
-  const loadCustomerInfo = async () => {
-    try {
-      const customer = await api.customers.getById(customerId!)
-      if (customer) {
-        setOrderInfo(prev => ({
-          ...prev,
-          customerName: customer.name || '',
-          shippingAddress: customer.address || '',
-        }))
-      }
-    } catch (error) {
-      console.error('加载客户信息失败:', error)
-    }
-  }
+  }, [isEditMode])
 
   const loadQuote = async () => {
     setLoading(true)
     try {
       const data = await api.quotes.getById(id!)
       if (data) {
-        setOrderInfo(prev => ({
+        setOrderInfo({
           unitPrice: data.unitPrice || '',
           productionTimeStart: data.productionTimeStart || today,
           productionTimeEnd: data.productionTimeEnd || '',
@@ -691,14 +651,14 @@ export default function BagQuote() {
           fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
           process: data.process || '单面数码uv印刷',
           handleMaterial: data.handleMaterial || '帆布手提',
-          handleSpec: prev.handleSpec,  // 保留表格联动设置的值，不被loadQuote覆盖
+          handleSpec: data.handleSpec || '',
           quantity: data.quantity || '',
           boxSpec: data.boxSpec || '',
           remark: data.remark || '',
           sampleFee: data.sampleFee || '',
           sampleDays: data.sampleDays || '',
           massDays: data.massDays || '',
-        }))
+        })
         setSellPrices({
           noTax: data.sellPriceNoTax || null,
           withTax: data.sellPriceWithTax || null,
@@ -723,24 +683,6 @@ export default function BagQuote() {
   const handleSave = async () => {
     setLoading(true)
     try {
-      // 同步客户名称和地址到客户管理
-      const customerName = orderInfo.customerName.trim()
-      if (customerName) {
-        const existingCustomer = await api.customers.getByName(customerName)
-        if (existingCustomer) {
-          // 更新现有客户的地址
-          await api.customers.update(existingCustomer.id, {
-            address: orderInfo.shippingAddress || existingCustomer.address,
-          })
-        } else {
-          // 创建新客户
-          await api.customers.create({
-            name: customerName,
-            address: orderInfo.shippingAddress || '',
-          })
-        }
-      }
-
       const quoteData = {
         ...orderInfo,
         sellPriceNoTax: sellPrices.noTax || 0,
@@ -797,8 +739,6 @@ export default function BagQuote() {
     const SHEET_KEY = 'sheet1'
     const FINISHED_ROW = 1          // 成品行
     const REF_SELL_ROW = 8          // 参考卖价行
-    const activeWs = sheet.getActiveSheet()
-    const activeTable = activeWs?.tableInstance as any
     const syncFromTable = () => {
       const fm = (sheet as any).formulaManager
       if (!fm) return
@@ -818,39 +758,20 @@ export default function BagQuote() {
         const qty = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 1 })
         const newSpec = [fmtVal(width?.value), fmtVal(height?.value), fmtVal(base?.value)].join('*')
         const newQty = fmtVal(qty?.value)
-
-        // 手提规格联动：找到第一个叫"手提"的行，拼接成品尺寸和切片尺寸
-        let handleSpec = ''
-        const rowCount = activeTable?.rowCount ?? 0
-        for (let r = 0; r < rowCount; r++) {
-          const rowLabel = activeTable.getCellOriginValue?.(0, r) ?? activeTable.getCellValue?.(0, r)
-          if (rowLabel === '手提') {
-            const hw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 2 })
-            const hh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 3 })
-            const sw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 7 })
-            const sh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 8 })
-            const w = fmtVal(hw?.value), h = fmtVal(hh?.value)
-            const sW = fmtVal(sw?.value), sH = fmtVal(sh?.value)
-            const parts: string[] = []
-            if (w && h) parts.push(`成品尺寸：${w}*${h}`)
-            if (sW && sH) parts.push(`切片尺寸${sW}*${sH}`)
-            handleSpec = parts.join('，')
-            break
-          }
-        }
-
         setOrderInfo((prev) => {
-          if (prev.productSpec === newSpec && prev.quantity === newQty && prev.handleSpec === handleSpec) return prev
-          return { ...prev, productSpec: newSpec, quantity: newQty, handleSpec }
+          if (prev.productSpec === newSpec && prev.quantity === newQty) return prev
+          return { ...prev, productSpec: newSpec, quantity: newQty }
         })
       } catch {
         // 公式引擎未就绪时忽略，后续 change_cell_value 事件会重新读取
-      }
+      } 
     }
     // 初始读取（公式在构造时已载入引擎并完成计算）
     syncFromTable()
     // 监听单元格变更：WorkSheet 的 change_cell_value 监听器先于本监听器注册，
     // 会同步完成依赖公式的级联重算，因此此处可直接读取最新结果
+    const activeWs = sheet.getActiveSheet()
+    const activeTable = activeWs?.tableInstance as any
     const onCellChange = () => syncFromTable()
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
@@ -965,11 +886,6 @@ export default function BagQuote() {
     setOrderInfo((prev) => ({ ...prev, [field]: value }))
   }
 
-  const handleReset = () => {
-    setOrderInfo(DEFAULT_ORDER_INFO)
-    setProductImages([])
-  }
-
   const handleNextStatus = async () => {
     if (!isEditMode || status === 6) return
     setLoading(true)
@@ -1042,478 +958,142 @@ export default function BagQuote() {
     setLoading(false)
   }
 
-  const handleProductionStepChange = (stepId: number, newStatus: 'pending' | 'in_progress' | 'completed') => {
-    setProductionStepStatus(prev => ({ ...prev, [stepId]: newStatus }))
-  }
-
   const canGoNext = status >= 1 && status <= 5
   const canGoPrev = status >= 2 && status <= 6
   const canEnd = status >= 1 && status <= 5
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* 顶部悬浮栏（sticky 使其限定在 main 内容区内，不覆盖左侧菜单栏） */}
-      <div className="shrink-0 sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100">
-        <div className="px-4 py-2 max-w-7xl mx-auto">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center">
-                <ShoppingBag className="text-blue-600" size={20} />
-              </div>
-              <div>
-                <h1 className="text-lg font-bold text-gray-800 leading-tight">订单管理</h1>
-                <p className="text-[11px] text-gray-500 leading-tight">订单信息管理</p>
-              </div>
+    <div className="h-screen flex flex-col overflow-hidden">
+      {/* 顶部信息栏 */}
+      <div className="shrink-0 bg-white border-b border-gray-100 px-4 py-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button onClick={() => navigate('/quotes')} className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors shrink-0">
+            <ArrowLeft size={16} />
+            返回
+          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <ShoppingBag className="text-blue-600" size={18} />
+            <span className="text-sm font-bold text-gray-800">订单管理-表格版</span>
+          </div>
+          {/* 款式选择 */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <label className="text-xs text-gray-400">款式</label>
+            <select
+              value={orderInfo.productStyle}
+              onChange={(e) => updateOrderField('productStyle', e.target.value)}
+              className="px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
+            >
+              {PRODUCT_STYLE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {/* 备注 */}
+          <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+            <label className="text-xs text-gray-400 shrink-0">备注</label>
+            <input
+              type="text"
+              value={orderInfo.remark}
+              onChange={(e) => updateOrderField('remark', e.target.value)}
+              placeholder="请输入备注信息"
+              className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
+            />
+          </div>
+          {/* 卖价显示 */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-1">
+              <DollarSign className="text-gray-400" size={14} />
+              <span className="text-xs text-gray-400">不含税</span>
+              <span className="text-sm font-bold text-gray-800">{sellPrices.noTax !== null ? `¥${sellPrices.noTax.toFixed(2)}` : '-'}</span>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
-                <ArrowLeft size={16} />
-                返回列表
-              </button>
-              <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50">
-                <Save size={16} />
-                {showSaveSuccess ? '保存成功' : '保存'}
-              </button>
-              <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
-                <RotateCcw size={16} />
-                重置
-              </button>
+            <div className="flex items-center gap-1">
+              <TrendingUp className="text-blue-400" size={14} />
+              <span className="text-xs text-blue-400">含税</span>
+              <span className="text-sm font-bold text-blue-600">{sellPrices.withTax !== null ? `¥${sellPrices.withTax.toFixed(2)}` : '-'}</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* 主内容区域（shrink-0：订单信息区按内容高度，不压缩） */}
-      <div className="shrink-0 px-4 pt-4 pb-0 max-w-7xl mx-auto w-full">
-        {/* 状态流转（位于卖价上方） */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
-          <div className="flex items-center justify-between gap-3 mb-2">
-            <div className="flex items-center gap-1.5">
-              <Flag className="text-gray-400" size={15} />
-              <h3 className="text-xs font-semibold text-gray-700">订单状态流转</h3>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {isEditMode && canGoPrev && (
-                <button
-                  onClick={handlePrevStatus}
-                  disabled={loading}
-                  className="flex items-center gap-0.5 px-2 py-1 text-xs border border-gray-300 text-gray-600 rounded hover:bg-gray-50 transition-colors disabled:opacity-50"
-                >
-                  <ChevronLeft size={13} />
+          {/* 状态流转 */}
+          {isEditMode && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <span className={`px-2 py-1 text-xs font-bold rounded ${
+                status === 6 ? 'bg-gray-200 text-gray-600' :
+                status === 5 ? 'bg-green-100 text-green-700' :
+                status === 4 ? 'bg-yellow-100 text-yellow-700' :
+                status === 3 ? 'bg-orange-100 text-orange-700' :
+                status === 2 ? 'bg-purple-100 text-purple-700' :
+                'bg-blue-100 text-blue-700'
+              }`} title={`报价: ${statusTimeNodes.quoteTime || '-'} | 打样: ${statusTimeNodes.sampleTime || '-'} | 做货: ${statusTimeNodes.productionStartTime || '-'} | 发货: ${statusTimeNodes.shippingTime || '-'} | 收款: ${statusTimeNodes.paymentTime || '-'} | 结束: ${statusTimeNodes.endTime || '-'}`}>
+                {STATUS_OPTIONS.find(s => s.value === status)?.label || '未知'}
+              </span>
+              {canGoPrev && (
+                <button onClick={handlePrevStatus} disabled={loading} className="flex items-center gap-0.5 px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition-colors disabled:opacity-50" title="退回上一节点">
+                  <ChevronLeft size={14} />
                   退回
                 </button>
               )}
-              {isEditMode && canGoNext && (
-                <button
-                  onClick={handleNextStatus}
-                  disabled={loading}
-                  className="flex items-center gap-0.5 px-2 py-1 text-xs bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors disabled:opacity-50"
-                >
+              {canGoNext && (
+                <button onClick={handleNextStatus} disabled={loading} className="flex items-center gap-0.5 px-2 py-1 text-xs text-white bg-blue-500 rounded hover:bg-blue-600 transition-colors disabled:opacity-50" title="进入下一节点">
                   下一节点
-                  <ChevronRight size={13} />
+                  <ChevronRight size={14} />
                 </button>
               )}
-              {isEditMode && canEnd && (
-                <button
-                  onClick={handleEndQuote}
-                  disabled={loading}
-                  className="flex items-center gap-0.5 px-2 py-1 text-xs border border-red-300 text-red-600 rounded hover:bg-red-50 transition-colors disabled:opacity-50"
-                >
-                  <Square size={11} />
+              {canEnd && (
+                <button onClick={handleEndQuote} disabled={loading} className="flex items-center gap-0.5 px-2 py-1 text-xs text-white bg-gray-700 rounded hover:bg-gray-900 transition-colors disabled:opacity-50" title="直接结束">
+                  <Flag size={12} />
                   结束
                 </button>
               )}
             </div>
+          )}
+          <button onClick={handleSave} disabled={loading} className="flex items-center gap-1 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 shrink-0">
+            <Save size={16} />
+            {showSaveSuccess ? '保存成功' : '保存'}
+          </button>
+        </div>
+        {/* 产品图片栏 */}
+        <div className="flex items-center gap-2 mt-2">
+          <div className="flex items-center gap-1 shrink-0">
+            <ImageIcon size={16} className="text-gray-400" />
+            <span className="text-xs font-medium text-gray-700">产品图片</span>
           </div>
-
-          <div className="flex items-center px-1">
-            {STATUS_OPTIONS.map((option, index) => {
-              const isCurrent = option.value === status
-              const isPast = option.value < status
-              const nodeTime = statusTimeNodes[
-                option.value === 1 ? 'quoteTime' :
-                option.value === 2 ? 'sampleTime' :
-                option.value === 3 ? 'productionStartTime' :
-                option.value === 4 ? 'shippingTime' :
-                option.value === 5 ? 'paymentTime' : 'endTime'
-              ] as string
-
-              return (
-                <div key={option.value} className="flex items-center">
-                  <div className="flex flex-col items-center text-center" title={`${option.label}：${nodeTime || '-'}`}>
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-                      isCurrent ? 'bg-primary-500 text-white ring-2 ring-primary-100' :
-                      isPast ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-400'
-                    }`}>
-                      {isCurrent ? (
-                        <CircleDot size={13} />
-                      ) : isPast ? (
-                        <CheckCircle size={12} />
-                      ) : (
-                        <Circle size={12} />
-                      )}
-                    </div>
-                    <p className={`text-[10px] font-medium mt-1 ${
-                      isCurrent ? 'text-primary-600' : 'text-gray-600'
-                    }`}>{option.label}</p>
-                  </div>
-                  {index < STATUS_OPTIONS.length - 1 && (
-                    <div className="flex items-center px-1 flex-1">
-                      <div className={`flex-1 h-0.5 ${isPast ? 'bg-primary-500' : 'bg-gray-200'}`}></div>
-                      <ChevronRight size={14} className={isPast ? 'text-primary-500' : 'text-gray-300'} />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+          <div
+            className="flex items-center gap-2 flex-wrap"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {productImages.map((img, index) => (
+              <div key={index} className="relative w-12 h-12 shrink-0">
+                <img
+                  src={img}
+                  alt={`产品图片 ${index + 1}`}
+                  className="w-full h-full object-cover rounded-lg border border-gray-200 cursor-zoom-in"
+                  onClick={() => { setPreviewImageSrc(img); setIsPreviewOpen(true); }}
+                />
+                <button
+                  onClick={(e) => { e.stopPropagation(); handleImageRemove(index); }}
+                  className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm z-10"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+            <label className={`w-12 h-12 flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer shrink-0 ${
+              isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
+            }`}>
+              <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
+              <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+            </label>
           </div>
         </div>
-
-        {/* 做货流程（状态为做货中时显示） */}
-        {status === 3 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Play className="text-gray-400" size={15} />
-              <h3 className="text-xs font-semibold text-gray-700">订单做货流程</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {PRODUCTION_STEPS.map((step, index) => {
-                const stepStatus = productionStepStatus[step.id] || 'pending'
-                return (
-                  <div key={step.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                      stepStatus === 'completed' ? 'bg-green-500 text-white' :
-                      stepStatus === 'in_progress' ? 'bg-primary-500 text-white' : 'bg-gray-300 text-gray-500'
-                    }`}>
-                      {stepStatus === 'completed' ? (
-                        <CheckCircle size={13} />
-                      ) : stepStatus === 'in_progress' ? (
-                        <Play size={11} />
-                      ) : (
-                        <span className="text-[11px] font-medium">{index + 1}</span>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-medium ${
-                        stepStatus === 'completed' ? 'text-green-700' :
-                        stepStatus === 'in_progress' ? 'text-primary-700' : 'text-gray-700'
-                      }`}>{step.name}</p>
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'pending')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'pending' ? 'bg-gray-200 text-gray-700' : 'bg-white text-gray-500 hover:bg-gray-100'
-                        }`}
-                      >
-                        待处理
-                      </button>
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'in_progress')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'in_progress' ? 'bg-primary-200 text-primary-700' : 'bg-white text-gray-500 hover:bg-primary-50'
-                        }`}
-                      >
-                        进行中
-                      </button>
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'completed')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'completed' ? 'bg-green-200 text-green-700' : 'bg-white text-gray-500 hover:bg-green-50'
-                        }`}
-                      >
-                        已完成
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 主体：订单信息 + 在线表格 （合并标题节省一行空间） */}
-        <div className="mb-0">
-          <div className="flex items-center gap-1.5 mb-1.5">
-            <ClipboardList size={15} className="text-gray-400" />
-            <h3 className="text-xs font-semibold text-gray-700">订单信息</h3>
-            <span className="text-gray-300">·</span>
-            <Table2 size={14} className="text-gray-400" />
-            <h3 className="text-xs font-semibold text-gray-700">在线表格</h3>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-            <div className="p-3 pb-1 space-y-2">
-              {/* 单个卖价 - 订单信息最上方单独一行 */}
-              <div className="flex items-center gap-4 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
-                <div className="flex items-center gap-1.5">
-                  <DollarSign className="text-gray-400" size={15} />
-                  <span className="text-xs text-gray-500">单个卖价</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-[11px] text-red-400">不含税</span>
-                  <span className="text-xs text-red-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={sellPrices.noTax ?? ''}
-                    onChange={(e) => setSellPrices(prev => ({ ...prev, noTax: e.target.value === '' ? null : Number(e.target.value) }))}
-                    placeholder="0.00"
-                    className="w-20 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
-                  />
-                </div>
-                <div className="flex items-center gap-1">
-                  <TrendingUp className="text-blue-400" size={14} />
-                  <span className="text-[11px] text-blue-400">含税</span>
-                  <span className="text-xs text-blue-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={sellPrices.withTax ?? ''}
-                    onChange={(e) => setSellPrices(prev => ({ ...prev, withTax: e.target.value === '' ? null : Number(e.target.value) }))}
-                    placeholder="0.00"
-                    className="w-20 px-1.5 py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
-                  />
-                </div>
-              </div>
-
-              {/* 表单字段 - 密集网格。LG:5列 MD:4列 SM:2列
-              同行规则：客户+地址 / 款式+数量 / 手提材质+规格 / 打样天数+大货天数+箱规 */}
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-x-3 gap-y-1.5">
-                {/* 行1：客户名称 + 收货地址 同行 */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
-                  <CustomerSelect
-                    value={orderInfo.customerName}
-                    onChange={(v) => updateOrderField('customerName', v)}
-                    address={orderInfo.shippingAddress}
-                    onAddressChange={(v) => updateOrderField('shippingAddress', v)}
-                    placeholder="请选择或输入客户名称"
-                  />
-                </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs text-gray-400 mb-0.5">收货地址</label>
-                  <textarea
-                    value={orderInfo.shippingAddress}
-                    onChange={(e) => updateOrderField('shippingAddress', e.target.value)}
-                    placeholder="请输入收货地址"
-                    rows={1}
-                    className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                  />
-                </div>
-
-                {/* 行2：做货日期 + 款式 + 数量 + 产品规格（款式+数量相邻同行） */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">做货日期</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={orderInfo.productionTimeStart}
-                      onChange={(e) => {
-                        const newStart = e.target.value
-                        updateOrderField('productionTimeStart', newStart)
-                        // 联动：大货天数有值时，自动计算结束日期 = 开始日期 + 大货天数
-                        const days = Number(orderInfo.massDays)
-                        if (newStart && days) {
-                          updateOrderField('productionTimeEnd', addDaysToDate(newStart, days))
-                        }
-                      }}
-                      className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
-                    />
-                    <span className="text-xs text-gray-500 shrink-0">到</span>
-                    <input
-                      type="date"
-                      value={orderInfo.productionTimeEnd}
-                      onChange={(e) => updateOrderField('productionTimeEnd', e.target.value)}
-                      className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-0.5">款式</label>
-                  <select
-                    value={orderInfo.productStyle}
-                    onChange={(e) => updateOrderField('productStyle', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
-                  >
-                    {PRODUCT_STYLE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-0.5">数量(个)</label>
-                  <input type="text" value={orderInfo.quantity} onChange={(e) => updateOrderField('quantity', e.target.value)}
-                    placeholder="0"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-0.5">产品规格(CM)</label>
-                  <input type="text" value={orderInfo.productSpec} onChange={(e) => updateOrderField('productSpec', e.target.value)}
-                    placeholder="产品规格"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-
-                {/* 行3：面料材质 + 工艺 + 手提（材质：规格合并） + 打样费 */}
-                <div>
-                  <label className="block text-xs text-gray-400 mb-0.5">面料材质</label>
-                  <input type="text" value={orderInfo.fabricMaterial} onChange={(e) => updateOrderField('fabricMaterial', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-0.5">工艺</label>
-                  <input type="text" value={orderInfo.process} onChange={(e) => updateOrderField('process', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                {/* 手提材质与手提规格合并为单字段，格式：手提材质：手提规格 */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">手提（材质：规格）</label>
-                  <input
-                    type="text"
-                    value={[orderInfo.handleMaterial, orderInfo.handleSpec].filter(Boolean).join('：')}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      const idx = v.indexOf('：')
-                      if (idx >= 0) {
-                        updateOrderField('handleMaterial', v.slice(0, idx))
-                        updateOrderField('handleSpec', v.slice(idx + 1))
-                      } else {
-                        updateOrderField('handleMaterial', v)
-                        updateOrderField('handleSpec', '')
-                      }
-                    }}
-                    placeholder="材质：规格"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">打样费</label>
-                  <input type="text" value={orderInfo.sampleFee ? `${orderInfo.sampleFee}元` : ''} onChange={(e) => updateOrderField('sampleFee', e.target.value.replace(/元$/, ''))}
-                    placeholder="0"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-
-                {/* 行4：打样天数+大货天数（合并缩短） + 箱规（加大） + 备注 */}
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">打样/大货天数</label>
-                  <div className="flex items-center gap-1">
-                    <input type="number" value={orderInfo.sampleDays} onChange={(e) => updateOrderField('sampleDays', e.target.value)}
-                      placeholder="打样"
-                      className="w-full px-1.5 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                    <span className="text-xs text-gray-400 shrink-0">/</span>
-                    <input type="number" value={orderInfo.massDays} onChange={(e) => {
-                      const newDays = e.target.value
-                      updateOrderField('massDays', newDays)
-                      // 联动：开始日期有值时，自动计算结束日期 = 开始日期 + 大货天数
-                      const days = Number(newDays)
-                      if (orderInfo.productionTimeStart && days) {
-                        updateOrderField('productionTimeEnd', addDaysToDate(orderInfo.productionTimeStart, days))
-                      }
-                    }}
-                      placeholder="大货"
-                      className="w-full px-1.5 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                  </div>
-                </div>
-                <div className="col-span-2 md:col-span-1 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">箱规</label>
-                  <input type="text" value={orderInfo.boxSpec} onChange={(e) => updateOrderField('boxSpec', e.target.value)}
-                    placeholder="箱规"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">备注</label>
-                  <textarea
-                    value={orderInfo.remark}
-                    onChange={(e) => updateOrderField('remark', e.target.value)}
-                    placeholder="请输入备注信息"
-                    rows={1}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none"
-                  />
-                </div>
-              </div>
-
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <ImageIcon size={14} className="text-gray-400" />
-                    <span className="text-xs font-medium text-gray-700">产品图片</span>
-                  </div>
-                  <label className="cursor-pointer flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 transition-colors">
-                    <Upload size={12} />
-                    上传图片
-                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                  </label>
-                </div>
-                {productImages.length === 0 ? (
-                  <label
-                    className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg py-3 transition-colors cursor-pointer ${
-                      isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
-                    }`}
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                  >
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-1 ${isDragging ? 'bg-blue-200' : 'bg-gray-100'}`}>
-                      <Upload size={15} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
-                    </div>
-                    <p className={`text-[11px] mb-0.5 ${isDragging ? 'text-blue-600' : 'text-gray-600'}`}>
-                      {isDragging ? '释放鼠标上传图片' : '点击或拖拽上传产品图片'}
-                    </p>
-                    <p className="text-[11px] text-gray-400">支持多选 · JPG / PNG / GIF / WebP</p>
-                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                  </label>
-                ) : (
-                  <div 
-                    className="w-full px-2"
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
-                  >
-                    <div className={`grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 rounded-lg transition-colors ${
-                      isDragging ? 'bg-blue-100/30 p-1' : ''
-                    }`}>
-                      {productImages.map((img, index) => (
-                        <div key={index} className="relative aspect-square">
-                          <div 
-                            className="w-full h-full cursor-zoom-in"
-                            onClick={() => { setPreviewImageSrc(img); setIsPreviewOpen(true); }}
-                          >
-                            <img 
-                              src={img} 
-                              alt={`产品图片 ${index + 1}`} 
-                              className="w-full h-full object-cover rounded-lg border border-gray-200" 
-                            />
-                          </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleImageRemove(index); }}
-                            className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm z-10"
-                          >
-                            <X size={12} />
-                          </button>
-                          <span className="absolute bottom-1 left-1 text-xs text-white bg-black/50 px-1 py-0.5 rounded">
-                            {index + 1}
-                          </span>
-                        </div>
-                      ))}
-                      <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
-                        isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
-                      }`}>
-                        <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
-                        <span className={`text-xs ${isDragging ? 'text-blue-600' : 'text-gray-500'}`}>添加</span>
-                        <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                      </label>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-        </div>
-
-        {/* 在线表格 — 全宽，不受订单信息的 max-w-7xl 限制 */}
       </div>
-      <div className="flex-1 min-h-0 px-4 pt-1 pb-4 max-w-7xl mx-auto w-full flex flex-col">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0">
-          <div ref={sheetContainerRef} className="h-full w-full" style={{ minHeight: 400 }} />
+
+      {/* 在线表格 - 最大化 */}
+      <div className="flex-1 min-h-0 p-3">
+        <div className="h-full bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div ref={sheetContainerRef} className="h-full w-full" />
         </div>
       </div>
 

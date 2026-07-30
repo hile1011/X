@@ -11,7 +11,7 @@ interface CustomerSelectProps {
   placeholder?: string
 }
 
-export default function CustomerSelect({ value, onChange, address, onAddressChange, placeholder = '请选择或输入客户名称' }: CustomerSelectProps) {
+export default function CustomerSelect({ value, onChange, onAddressChange, placeholder = '请选择或输入客户名称' }: CustomerSelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -55,8 +55,10 @@ export default function CustomerSelect({ value, onChange, address, onAddressChan
 
   const handleSelect = useCallback((customer: Customer) => {
     onChange(customer.name)
-    if (onAddressChange && customer.address) {
-      onAddressChange(customer.address)
+    if (onAddressChange) {
+      // 收货地址显示：客户名称 电话 地址
+      const parts = [customer.name, customer.phone, customer.address].filter(Boolean)
+      onAddressChange(parts.join(' '))
     }
     handleClose()
   }, [onChange, onAddressChange, handleClose])
@@ -82,8 +84,6 @@ export default function CustomerSelect({ value, onChange, address, onAddressChan
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [handleClose])
-
-  const selectedCustomer = customers.find((c) => c.name === value)
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -159,12 +159,6 @@ export default function CustomerSelect({ value, onChange, address, onAddressChan
         </div>
       )}
 
-      {selectedCustomer && !isOpen && (
-        <div className="mt-1 text-xs text-gray-500">
-          {selectedCustomer.phone && <span className="mr-2">{selectedCustomer.phone}</span>}
-          {selectedCustomer.address && <span>{selectedCustomer.address}</span>}
-        </div>
-      )}
     </div>
   )
 }
