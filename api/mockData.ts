@@ -1,4 +1,4 @@
-import type { Customer, Product, Order, OrderItem, Task, Quote, ProcessCost } from './types'
+import type { Customer, Product, Order, OrderItem, Task, Quote, ProcessCost } from './types/index.js'
 
 export const mockCustomers: Customer[] = [
   {
@@ -199,6 +199,8 @@ export const mockQuotes: Quote[] = [
     productionTimeEnd: '2024-08-06',
     sellPriceNoTax: 3.42,
     sellPriceWithTax: 3.76,
+    costPrice: 2.97,
+    priceWithTax: 3.27,
     status: 3,
     quoteTime: '2024-07-22T10:00:00Z',
     sampleTime: '2024-07-25T09:00:00Z',
@@ -234,6 +236,8 @@ export const mockQuotes: Quote[] = [
     productionTimeEnd: '2024-08-04',
     sellPriceNoTax: 4.25,
     sellPriceWithTax: 4.68,
+    costPrice: 3.68,
+    priceWithTax: 4.05,
     status: 1,
     quoteTime: '2024-07-22T11:00:00Z',
     sampleTime: '',
@@ -269,6 +273,8 @@ export const mockQuotes: Quote[] = [
     productionTimeEnd: '2024-08-10',
     sellPriceNoTax: 5.12,
     sellPriceWithTax: 5.63,
+    costPrice: 4.42,
+    priceWithTax: 4.86,
     status: 2,
     quoteTime: '2024-07-22T13:00:00Z',
     sampleTime: '2024-07-23T10:00:00Z',

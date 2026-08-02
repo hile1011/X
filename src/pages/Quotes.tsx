@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronRight, ChevronLeft, Square, ChevronDown, ChevronUp, Image } from 'lucide-react'
+import { api, downloadBlob } from '../api'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
 
 export interface Quote {
   id: string
@@ -25,6 +25,8 @@ export interface Quote {
   unitPrice: string
   productionTimeStart: string
   productionTimeEnd: string
+  costPrice: number
+  priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
   status: 1 | 2 | 3 | 4 | 5 | 6
@@ -77,6 +79,9 @@ export default function Quotes() {
   const [styleFilter, setStyleFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [showExportDialog, setShowExportDialog] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState('')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -158,31 +163,50 @@ export default function Quotes() {
     setShowDeleteConfirm(null)
   }
 
-  const handleNextStatus = async (id: string) => {
+  const handleCopy = async (id: string) => {
     try {
-      const data = await api.quotes.nextStatus(id)
-      setQuotes((prev) => prev.map((q) => (q.id === id ? data : q)))
+      const source = await api.quotes.getById(id)
+      if (!source) return
+      const { id: _, quote_number: __, status: ___, created_at: ____, updated_at: _____, ...rest } = source
+      const copyData = {
+        ...rest,
+        status: 1 as const,
+        quoteTime: new Date().toISOString().split('T')[0],
+        sampleTime: '',
+        productionStartTime: '',
+        shippingTime: '',
+        paymentTime: '',
+        endTime: '',
+      }
+      await api.quotes.create(copyData)
+      fetchQuotes()
     } catch (error) {
-      console.error('状态流转失败:', error)
+      console.error('复制订单失败:', error)
     }
   }
 
-  const handlePrevStatus = async (id: string) => {
+  // 导出当前筛选结果到 Excel
+  const handleExport = async () => {
+    setExporting(true)
+    setExportError('')
     try {
-      const data = await api.quotes.prevStatus(id)
-      setQuotes((prev) => prev.map((q) => (q.id === id ? data : q)))
+      // 收集当前筛选后的所有订单 ID
+      const orderIds = groupedQuotes.flatMap((g) => g.quotes.map((q) => q.id))
+      if (orderIds.length === 0) {
+        setExportError('没有可导出的订单')
+        setExporting(false)
+        return
+      }
+      const blob = await api.export.orders(orderIds)
+      const now = new Date()
+      const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
+      downloadBlob(blob, `OrderExport_${ts}.xlsx`)
+      setShowExportDialog(false)
     } catch (error) {
-      console.error('状态退回失败:', error)
+      console.error('导出失败:', error)
+      setExportError(error instanceof Error ? error.message : '导出失败，请重试')
     }
-  }
-
-  const handleEndQuote = async (id: string) => {
-    try {
-      const data = await api.quotes.endQuote(id)
-      setQuotes((prev) => prev.map((q) => (q.id === id ? data : q)))
-    } catch (error) {
-      console.error('结束订单失败:', error)
-    }
+    setExporting(false)
   }
 
   const getStatusColor = (status: number) => {
@@ -216,11 +240,6 @@ export default function Quotes() {
     return names.sort()
   }
 
-  const getStyleNames = () => {
-    const styles = [...new Set(quotes.map((q) => q.productStyle))]
-    return styles.sort()
-  }
-
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -228,13 +247,23 @@ export default function Quotes() {
           <h1 className="text-2xl font-bold text-gray-800">订单管理</h1>
           <p className="text-gray-500 mt-1">管理所有订单</p>
         </div>
-        <button
-          onClick={() => navigate('/quotes/new')}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus size={20} />
-          新增订单
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { setExportError(''); setShowExportDialog(true) }}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 border border-primary-200 text-primary-700 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+            导出 Excel
+          </button>
+          <button
+            onClick={() => navigate('/quotes/new')}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus size={20} />
+            新增订单
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-[calc(100vh-200px)]">
@@ -300,7 +329,7 @@ export default function Quotes() {
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
-            <div className="min-w-[1200px]">
+            <div className="min-w-[1700px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                 <div className="flex">
@@ -309,13 +338,16 @@ export default function Quotes() {
                   <div className="w-40 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">款式</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">产品规格</div>
                   <div className="w-24 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">数量</div>
+                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">成本价</div>
+                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(不含税)</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(含税)</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(不含税)</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(含税)</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">做货到期时间</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单状态</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">创建日期</div>
-                  <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">状态操作</div>
-                  <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">操作</div>
+                  <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0 sticky right-0 bg-gray-50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">操作</div>
                 </div>
               </div>
 
@@ -344,17 +376,12 @@ export default function Quotes() {
                           <span className="text-sm text-gray-500">({group.quotes.length}个订单)</span>
                         </div>
                       </div>
-                      <div className="w-56 px-4 py-4 flex-shrink-0"></div>
-                      <div className="w-56 px-4 py-4 flex-shrink-0"></div>
+                      <div className="w-56 px-4 py-4 flex-shrink-0 sticky right-0 bg-gray-50/50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]"></div>
                     </div>
 
                     {/* 子行 - 订单详情 */}
                     {group.expanded &&
                       group.quotes.map((quote) => {
-                        const canGoNext = quote.status >= 1 && quote.status <= 5
-                        const canGoPrev = quote.status >= 2 && quote.status <= 6
-                        const canEnd = quote.status >= 1 && quote.status <= 5
-
                         return (
                           <div
                             key={quote.id}
@@ -398,17 +425,45 @@ export default function Quotes() {
                               {quote.quantity}{quote.quantity ? '个' : ''}
                             </div>
 
+                            {/* 成本价 */}
+                            <div className="w-28 px-4 py-4 flex-shrink-0">
+                              <span className="text-gray-600 font-medium text-sm">
+                                ¥{(quote.costPrice || 0).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 含税价 */}
+                            <div className="w-28 px-4 py-4 flex-shrink-0">
+                              <span className="text-gray-700 font-medium text-sm">
+                                ¥{(quote.priceWithTax || 0).toFixed(2)}
+                              </span>
+                            </div>
+
                             {/* 卖价(不含税) */}
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
-                                ¥{quote.sellPriceNoTax.toFixed(2)}
+                                ¥{(quote.sellPriceNoTax || 0).toFixed(2)}
                               </span>
                             </div>
 
                             {/* 卖价(含税) */}
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
-                                ¥{quote.sellPriceWithTax.toFixed(2)}
+                                ¥{(quote.sellPriceWithTax || 0).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 利润(不含税) = 卖价不含税 - 成本价 */}
+                            <div className="w-32 px-4 py-4 flex-shrink-0">
+                              <span className={`font-semibold text-sm ${((quote.sellPriceNoTax || 0) - (quote.costPrice || 0)) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ¥{((quote.sellPriceNoTax || 0) - (quote.costPrice || 0)).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 利润(含税) = 卖价含税 - 含税价 */}
+                            <div className="w-32 px-4 py-4 flex-shrink-0">
+                              <span className={`font-semibold text-sm ${((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0)) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ¥{((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0)).toFixed(2)}
                               </span>
                             </div>
 
@@ -441,50 +496,8 @@ export default function Quotes() {
                               </div>
                             </div>
 
-                            {/* 状态操作 - 固定列 */}
-                            <div className="w-56 px-4 py-4 flex-shrink-0">
-                              <div className="flex items-center gap-1">
-                                {canGoPrev && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handlePrevStatus(quote.id)
-                                    }}
-                                    className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                                    title="退回上一节点"
-                                  >
-                                    <ChevronLeft size={16} />
-                                  </button>
-                                )}
-                                {canGoNext && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleNextStatus(quote.id)
-                                    }}
-                                    className="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded transition-colors"
-                                    title="进入下一节点"
-                                  >
-                                    <ChevronRight size={16} />
-                                  </button>
-                                )}
-                                {canEnd && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleEndQuote(quote.id)
-                                    }}
-                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                    title="结束订单"
-                                  >
-                                    <Square size={16} />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-
                             {/* 操作 - 固定列 */}
-                            <div className="w-56 px-4 py-4 flex-shrink-0">
+                            <div className="w-56 px-4 py-4 flex-shrink-0 sticky right-0 bg-white z-20 hover:bg-gray-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">
                               <div className="flex items-center gap-2">
                                 <button
                                   onClick={(e) => {
@@ -505,6 +518,16 @@ export default function Quotes() {
                                   title="编辑"
                                 >
                                   <Edit size={16} />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleCopy(quote.id)
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                  title="复制订单"
+                                >
+                                  <Copy size={16} />
                                 </button>
                                 <button
                                   onClick={(e) => {
@@ -552,6 +575,73 @@ export default function Quotes() {
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
                 删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center">
+                <Download className="text-primary-600" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">导出订单到 Excel</h3>
+                <p className="text-sm text-gray-500">将当前筛选结果导出为 Excel 文件</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">导出范围</span>
+                <span className="font-semibold text-gray-800">当前筛选结果</span>
+              </div>
+              <div className="flex items-center justify-between text-sm mt-2">
+                <span className="text-gray-600">订单数量</span>
+                <span className="font-semibold text-primary-600">
+                  {groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0)} 个
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm mt-2">
+                <span className="text-gray-600">包含内容</span>
+                <span className="text-gray-800 text-xs">订单全部字段 · 状态标签 · 价格信息 · 汇总统计</span>
+              </div>
+            </div>
+
+            {exportError && (
+              <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="text-red-500 flex-shrink-0" size={16} />
+                <span className="text-sm text-red-600">{exportError}</span>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => { setShowExportDialog(false); setExportError('') }}
+                disabled={exporting}
+                className="px-4 py-2 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleExport}
+                disabled={exporting || groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0) === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {exporting ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    导出中...
+                  </>
+                ) : (
+                  <>
+                    <Download size={16} />
+                    确认导出
+                  </>
+                )}
               </button>
             </div>
           </div>

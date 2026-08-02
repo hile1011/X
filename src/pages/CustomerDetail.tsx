@@ -155,7 +155,7 @@ export default function CustomerDetail() {
                         <p className="text-sm text-gray-500">{new Date(quote.created_at).toLocaleDateString()}</p>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium text-gray-800">¥{quote.sellPriceWithTax.toLocaleString()}</p>
+                        <p className="font-medium text-gray-800">¥{quote.sellPriceWithTax.toFixed(2)}</p>
                         <span className={`text-xs ${quote.status === 6 ? 'text-green-600' : quote.status === 5 ? 'text-blue-600' : 'text-gray-600'}`}>
                           {quote.status === 6 ? '已结束' : quote.status === 5 ? '已收款' : quote.status === 4 ? '已发货' : quote.status === 3 ? '做货中' : quote.status === 2 ? '打样中' : '报价中'}
                         </span>

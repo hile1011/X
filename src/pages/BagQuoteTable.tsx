@@ -607,6 +607,7 @@ export default function BagQuoteTable() {
   const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+  const [saveError, setSaveError] = useState<string>('')
   const [status, setStatus] = useState<number>(1)
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
@@ -655,7 +656,7 @@ export default function BagQuoteTable() {
           quantity: data.quantity || '',
           boxSpec: data.boxSpec || '',
           remark: data.remark || '',
-          sampleFee: data.sampleFee || '',
+          sampleFee: (data.sampleFee || '').replace(/元$/, ''),
           sampleDays: data.sampleDays || '',
           massDays: data.massDays || '',
         })
@@ -682,6 +683,7 @@ export default function BagQuoteTable() {
 
   const handleSave = async () => {
     setLoading(true)
+    setSaveError('')
     try {
       const quoteData = {
         ...orderInfo,
@@ -700,8 +702,10 @@ export default function BagQuoteTable() {
       if (!isEditMode) {
         navigate('/quotes')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('保存报价失败:', error)
+      setSaveError(error?.message || '保存失败，请重试')
+      setTimeout(() => setSaveError(''), 5000)
     }
     setLoading(false)
   }
@@ -1131,6 +1135,12 @@ export default function BagQuoteTable() {
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-green-500 text-white rounded-lg shadow-lg">
           <CheckCircle size={20} />
           <span className="font-medium">保存成功</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-red-500 text-white rounded-lg shadow-lg">
+          <span className="font-medium">{saveError}</span>
         </div>
       )}
     </div>

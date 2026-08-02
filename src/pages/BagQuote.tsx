@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2 } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
-import { api } from '../api'
+import { api, downloadBlob } from '../api'
 import CustomerSelect from '../components/CustomerSelect'
+import { findTablePositions } from '../services/tableLocator'
 
 interface OrderInfo {
   unitPrice: string
@@ -628,6 +629,9 @@ export default function BagQuote() {
   const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+  const [saveError, setSaveError] = useState<string>('')
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string>('')
   const [status, setStatus] = useState<number>(1)
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
@@ -648,7 +652,9 @@ export default function BagQuote() {
 
   const sheetContainerRef = useRef<HTMLDivElement>(null)
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
-  // 表格对订单信息的联动：单个卖价(不含税)/单个卖价(含税)
+  // 表格对订单信息的联动：成本价、含税价、单个卖价(不含税)/单个卖价(含税)
+  const [costPrice, setCostPrice] = useState<number | null>(null)
+  const [priceWithTax, setPriceWithTax] = useState<number | null>(null)
   const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
 
   useEffect(() => {
@@ -680,7 +686,7 @@ export default function BagQuote() {
     try {
       const data = await api.quotes.getById(id!)
       if (data) {
-        setOrderInfo(prev => ({
+        setOrderInfo({
           unitPrice: data.unitPrice || '',
           productionTimeStart: data.productionTimeStart || today,
           productionTimeEnd: data.productionTimeEnd || '',
@@ -691,18 +697,20 @@ export default function BagQuote() {
           fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
           process: data.process || '单面数码uv印刷',
           handleMaterial: data.handleMaterial || '帆布手提',
-          handleSpec: prev.handleSpec,  // 保留表格联动设置的值，不被loadQuote覆盖
+          handleSpec: data.handleSpec || '',
           quantity: data.quantity || '',
           boxSpec: data.boxSpec || '',
           remark: data.remark || '',
-          sampleFee: data.sampleFee || '',
+          sampleFee: (data.sampleFee || '').replace(/元$/, ''),
           sampleDays: data.sampleDays || '',
           massDays: data.massDays || '',
-        }))
+        })
         setSellPrices({
           noTax: data.sellPriceNoTax || null,
           withTax: data.sellPriceWithTax || null,
         })
+        setCostPrice(data.costPrice || null)
+        setPriceWithTax(data.priceWithTax || null)
         setStatus(data.status || 1)
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
@@ -722,6 +730,7 @@ export default function BagQuote() {
 
   const handleSave = async () => {
     setLoading(true)
+    setSaveError('')
     try {
       // 同步客户名称和地址到客户管理
       const customerName = orderInfo.customerName.trim()
@@ -743,6 +752,8 @@ export default function BagQuote() {
 
       const quoteData = {
         ...orderInfo,
+        costPrice: costPrice || 0,
+        priceWithTax: priceWithTax || 0,
         sellPriceNoTax: sellPrices.noTax || 0,
         sellPriceWithTax: sellPrices.withTax || 0,
         status,
@@ -758,10 +769,55 @@ export default function BagQuote() {
       if (!isEditMode) {
         navigate('/quotes')
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('保存报价失败:', error)
+      setSaveError(error?.message || '保存失败，请重试')
+      setTimeout(() => setSaveError(''), 5000)
     }
     setLoading(false)
+  }
+
+  // 导出当前订单 + 在线表格（含公式）到 Excel
+  const handleExportWithTable = async () => {
+    if (!id) {
+      setExportError('请先保存订单后再导出')
+      setTimeout(() => setExportError(''), 5000)
+      return
+    }
+    const sheet = sheetInstanceRef.current
+    if (!sheet) {
+      setExportError('表格未初始化')
+      setTimeout(() => setExportError(''), 5000)
+      return
+    }
+    setExporting(true)
+    setExportError('')
+    try {
+      // 从表格实例提取当前二维数据（包含用户编辑后的值）
+      const ws = sheet.getActiveSheet()
+      const activeTable = ws?.tableInstance as any
+      const rowCount = activeTable?.rowCount ?? 0
+      const colCount = activeTable?.colCount ?? 16
+      const tableData: (string | number | null)[][] = []
+      for (let r = 0; r < rowCount; r++) {
+        const rowData: (string | number | null)[] = []
+        for (let c = 0; c < colCount; c++) {
+          rowData.push(activeTable.getCellOriginValue?.(c, r) ?? null)
+        }
+        tableData.push(rowData)
+      }
+      // 从当前款式模板获取公式定义
+      const template = getTemplateByStyle(orderInfo.productStyle)
+      const blob = await api.export.orderWithTable(id, { data: tableData, formulas: template.formulas })
+      const now = new Date()
+      const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
+      downloadBlob(blob, `Order_${orderInfo.customerName || 'Export'}_${ts}.xlsx`)
+    } catch (error) {
+      console.error('导出失败:', error)
+      setExportError(error instanceof Error ? error.message : '导出失败，请重试')
+      setTimeout(() => setExportError(''), 5000)
+    }
+    setExporting(false)
   }
 
   useEffect(() => {
@@ -788,40 +844,67 @@ export default function BagQuote() {
     })
     sheetInstanceRef.current = sheet
 
-    // 表格对订单信息的联动：
-    // 单个卖价(不含税) = 参考卖价行(row 8) 参考卖价列(col 9)
-    // 单个卖价(含税)   = 参考卖价行(row 8) 含税价列(col 10)
-    // 产品规格 = 成品行(row 1) 宽(CM, col 2) "*" 高(CM, col 3) "*" 底(CM, col 4)
-    // 数量     = 成品行(row 1) 数量(个, col 1)
+    // 表格对订单信息的联动（动态定位行和列）：
+    // 成本价       = 汇总行 × 参考卖价列（以"汇总"文字定位行，以"参考卖价"列标题定位列）
+    // 单个卖价(不含税) = 参考卖价行 × 参考卖价列（以"参考卖价"文字定位行）
+    // 单个卖价(含税)   = 参考卖价行 × 含税价列
+    // 产品规格 = 成品行 宽(CM) "*" 高(CM) "*" 底(CM)
+    // 数量     = 成品行 数量(个)
     // 直接通过 formulaManager 读取公式计算结果（构造时已载入引擎，编辑后由 WorkSheet 级联重算）
     const SHEET_KEY = 'sheet1'
-    const FINISHED_ROW = 1          // 成品行
-    const REF_SELL_ROW = 8          // 参考卖价行
     const activeWs = sheet.getActiveSheet()
     const activeTable = activeWs?.tableInstance as any
     const syncFromTable = () => {
       const fm = (sheet as any).formulaManager
       if (!fm) return
       try {
+        // 从表格实例构建二维数组（用于动态定位行和列）
+        const rowCount = activeTable?.rowCount ?? 0
+        const colCount = activeTable?.colCount ?? 16
+        const tableData: any[][] = []
+        for (let r = 0; r < rowCount; r++) {
+          const rowData: any[] = []
+          for (let c = 0; c < colCount; c++) {
+            rowData.push(activeTable.getCellOriginValue?.(c, r) ?? null)
+          }
+          tableData.push(rowData)
+        }
+
+        // 动态定位：汇总行、参考卖价行、成品行、参考卖价列、含税价列
+        const pos = findTablePositions(tableData)
+
+        // 成本价 = 汇总行 × 参考卖价列（公式单元格，读取引擎计算结果）
+        const rCost = pos.summaryRow >= 0
+          ? fm.getCellValue({ sheet: SHEET_KEY, row: pos.summaryRow, col: pos.refSellCol })
+          : null
+        const costVal = rCost && typeof rCost.value === 'number' && !isNaN(rCost.value) ? rCost.value : null
+        setCostPrice(costVal)
+        // 含税价 = 成本价 × 1.1（自动计算）
+        setPriceWithTax(costVal !== null ? Number((costVal * 1.1).toFixed(2)) : null)
+
         // 卖价（公式单元格，读取引擎计算结果）
-        const rNoTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 9 })
-        const rWithTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 10 })
+        const rNoTax = pos.refSellRow >= 0
+          ? fm.getCellValue({ sheet: SHEET_KEY, row: pos.refSellRow, col: pos.refSellCol })
+          : null
+        const rWithTax = pos.refSellRow >= 0
+          ? fm.getCellValue({ sheet: SHEET_KEY, row: pos.refSellRow, col: pos.withTaxCol })
+          : null
         setSellPrices({
           noTax: rNoTax && typeof rNoTax.value === 'number' && !isNaN(rNoTax.value) ? rNoTax.value : null,
           withTax: rWithTax && typeof rWithTax.value === 'number' && !isNaN(rWithTax.value) ? rWithTax.value : null,
         })
+
         // 产品规格 / 数量（成品行数据单元格）
         const fmtVal = (v: any): string => (v == null || v === '') ? '' : String(v)
-        const width = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 2 })
-        const height = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 3 })
-        const base = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 4 })
-        const qty = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 1 })
+        const width = fm.getCellValue({ sheet: SHEET_KEY, row: pos.finishedRow, col: 2 })
+        const height = fm.getCellValue({ sheet: SHEET_KEY, row: pos.finishedRow, col: 3 })
+        const base = fm.getCellValue({ sheet: SHEET_KEY, row: pos.finishedRow, col: 4 })
+        const qty = fm.getCellValue({ sheet: SHEET_KEY, row: pos.finishedRow, col: 1 })
         const newSpec = [fmtVal(width?.value), fmtVal(height?.value), fmtVal(base?.value)].join('*')
         const newQty = fmtVal(qty?.value)
 
         // 手提规格联动：找到第一个叫"手提"的行，拼接成品尺寸和切片尺寸
         let handleSpec = ''
-        const rowCount = activeTable?.rowCount ?? 0
         for (let r = 0; r < rowCount; r++) {
           const rowLabel = activeTable.getCellOriginValue?.(0, r) ?? activeTable.getCellValue?.(0, r)
           if (rowLabel === '手提') {
@@ -849,6 +932,9 @@ export default function BagQuote() {
     }
     // 初始读取（公式在构造时已载入引擎并完成计算）
     syncFromTable()
+    // 公式引擎可能在构造后异步完成计算，延迟再次读取以确保成本价/卖价正确初始化
+    const initTimer1 = setTimeout(syncFromTable, 100)
+    const initTimer2 = setTimeout(syncFromTable, 500)
     // 监听单元格变更：WorkSheet 的 change_cell_value 监听器先于本监听器注册，
     // 会同步完成依赖公式的级联重算，因此此处可直接读取最新结果
     const onCellChange = () => syncFromTable()
@@ -911,6 +997,8 @@ export default function BagQuote() {
         activeTable.off('change_cell_value', onCellChange)
         activeTable.off('add_column', onAddColumn)
       }
+      clearTimeout(initTimer1)
+      clearTimeout(initTimer2)
       resizeObserver.disconnect()
       menuObserver.disconnect()
       sheet.release()
@@ -1050,6 +1138,25 @@ export default function BagQuote() {
   const canGoPrev = status >= 2 && status <= 6
   const canEnd = status >= 1 && status <= 5
 
+  // === 价格联动计算（实时联动：依赖 成本价/含税价/单个卖价/数量） ===
+  // 保留2位小数辅助函数：总额计算以保留2位小数的价格为基础
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  const qty = parseFloat(orderInfo.quantity) || 0
+  // 基础价格统一保留2位小数后参与计算
+  const costVal = round2(costPrice ?? 0)
+  const priceWithTaxVal = round2(priceWithTax ?? 0)
+  const sellNoTaxVal = round2(sellPrices.noTax ?? 0)
+  const sellWithTaxVal = round2(sellPrices.withTax ?? 0)
+  // 单个利润 = 单个卖价 - 成本价（不含税/含税 分别对应），结果保留2位小数
+  const profitPerNoTax = round2(sellNoTaxVal - costVal)
+  const profitPerWithTax = round2(sellWithTaxVal - priceWithTaxVal)
+  // 利润总额 = (单个卖价 - 成本价) × 数量，以保留2位小数的单个利润为计算基础
+  const profitTotalNoTax = round2(profitPerNoTax * qty)
+  const profitTotalWithTax = round2(profitPerWithTax * qty)
+  // 销售总额 = 数量 × 单个卖价，以保留2位小数的单个卖价为计算基础
+  const sellTotalNoTax = round2(sellNoTaxVal * qty)
+  const sellTotalWithTax = round2(sellWithTaxVal * qty)
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* 顶部悬浮栏（sticky 使其限定在 main 内容区内，不覆盖左侧菜单栏） */}
@@ -1073,6 +1180,10 @@ export default function BagQuote() {
               <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50">
                 <Save size={16} />
                 {showSaveSuccess ? '保存成功' : '保存'}
+              </button>
+              <button onClick={handleExportWithTable} disabled={exporting || !isEditMode} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title={!isEditMode ? '请先保存订单' : '导出订单及在线表格到 Excel（保留公式）'}>
+                {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {exporting ? '导出中...' : '导出 Excel'}
               </button>
               <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
                 <RotateCcw size={16} />
@@ -1244,10 +1355,81 @@ export default function BagQuote() {
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100">
             <div className="p-3 pb-1 space-y-2">
-              {/* 单个卖价 - 订单信息最上方单独一行 */}
-              <div className="flex items-center gap-4 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg">
+              {/* 成本价行：成本价(不含税) + 含税价 + 单个利润(不含税/含税) + 利润总额(不含税/含税) */}
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-gray-50 to-transparent rounded-lg flex-wrap">
+                {/* 成本价输入组 */}
                 <div className="flex items-center gap-1.5">
                   <DollarSign className="text-gray-400" size={15} />
+                  <span className="text-xs text-gray-500">成本价</span>
+                  <span className="text-[11px] text-gray-400">不含税</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400">¥</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={costPrice !== null ? costPrice.toFixed(2) : ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? null : Number(e.target.value)
+                      setCostPrice(val)
+                      setPriceWithTax(val !== null ? Number((val * 1.1).toFixed(2)) : null)
+                    }}
+                    placeholder="0.00"
+                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
+                  />
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400">含税</span>
+                  <span className="text-[11px] text-gray-400">¥</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={priceWithTax !== null ? priceWithTax.toFixed(2) : ''}
+                    onChange={(e) => setPriceWithTax(e.target.value === '' ? null : Number(e.target.value))}
+                    placeholder="0.00"
+                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
+                  />
+                </div>
+                <div className="w-px h-5 bg-gray-200" />
+                {/* 单个利润组 = 单个卖价 - 成本价 */}
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-400">单个利润</span>
+                  <span className="text-[10px] text-red-400">不含税</span>
+                  <span className="text-[11px] text-red-400">¥</span>
+                  <div className="w-24 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded text-right">
+                    {profitPerNoTax.toFixed(2)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-green-500">含税</span>
+                  <span className="text-[11px] text-green-500">¥</span>
+                  <div className="w-24 px-1.5 py-0.5 text-sm font-bold text-green-700 bg-green-50/40 border border-green-200 rounded text-right">
+                    {profitPerWithTax.toFixed(2)}
+                  </div>
+                </div>
+                <div className="w-px h-5 bg-gray-200" />
+                {/* 利润总额组 = (单个卖价 - 成本价) × 数量 */}
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-500">利润总额</span>
+                  <span className="text-[10px] text-red-400">不含税</span>
+                  <span className="text-[11px] text-red-400">¥</span>
+                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
+                    {profitTotalNoTax.toFixed(2)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-green-600">含税</span>
+                  <span className="text-[11px] text-green-600">¥</span>
+                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-green-800 bg-green-100/50 border border-green-300 rounded text-right">
+                    {profitTotalWithTax.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              {/* 单个卖价行：单个卖价(不含税) + 单个卖价(含税) + 销售总额(不含税/含税) */}
+              <div className="flex items-center gap-4 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <TrendingUp className="text-gray-400" size={15} />
                   <span className="text-xs text-gray-500">单个卖价</span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -1256,10 +1438,10 @@ export default function BagQuote() {
                   <input
                     type="number"
                     step="0.01"
-                    value={sellPrices.noTax ?? ''}
+                    value={sellPrices.noTax !== null ? sellPrices.noTax.toFixed(2) : ''}
                     onChange={(e) => setSellPrices(prev => ({ ...prev, noTax: e.target.value === '' ? null : Number(e.target.value) }))}
                     placeholder="0.00"
-                    className="w-20 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
+                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
                   />
                 </div>
                 <div className="flex items-center gap-1">
@@ -1269,17 +1451,34 @@ export default function BagQuote() {
                   <input
                     type="number"
                     step="0.01"
-                    value={sellPrices.withTax ?? ''}
+                    value={sellPrices.withTax !== null ? sellPrices.withTax.toFixed(2) : ''}
                     onChange={(e) => setSellPrices(prev => ({ ...prev, withTax: e.target.value === '' ? null : Number(e.target.value) }))}
                     placeholder="0.00"
-                    className="w-20 px-1.5 py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
                   />
+                </div>
+                <div className="w-px h-5 bg-gray-200" />
+                {/* 销售总额组 = 数量 × 单个卖价 */}
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-gray-500">销售总额</span>
+                  <span className="text-[10px] text-red-400">不含税</span>
+                  <span className="text-[11px] text-red-400">¥</span>
+                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
+                    {sellTotalNoTax.toFixed(2)}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] text-blue-500">含税</span>
+                  <span className="text-[11px] text-blue-500">¥</span>
+                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-blue-700 bg-blue-100/50 border border-blue-300 rounded text-right">
+                    {sellTotalWithTax.toFixed(2)}
+                  </div>
                 </div>
               </div>
 
-              {/* 表单字段 - 密集网格。LG:5列 MD:4列 SM:2列
-              同行规则：客户+地址 / 款式+数量 / 手提材质+规格 / 打样天数+大货天数+箱规 */}
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-x-3 gap-y-1.5">
+              {/* 表单字段 - 密集网格。LG:6列 MD:4列 SM:2列
+              同行规则：客户+地址 / 大货日期+天数 / 手提材质+规格 / 打样费+箱规+备注 */}
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5">
                 {/* 行1：客户名称 + 收货地址 同行 */}
                 <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
@@ -1291,7 +1490,7 @@ export default function BagQuote() {
                     placeholder="请选择或输入客户名称"
                   />
                 </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-3">
+                <div className="col-span-2 md:col-span-2 lg:col-span-4">
                   <label className="block text-xs text-gray-400 mb-0.5">收货地址</label>
                   <textarea
                     value={orderInfo.shippingAddress}
@@ -1302,9 +1501,9 @@ export default function BagQuote() {
                   />
                 </div>
 
-                {/* 行2：做货日期 + 款式 + 数量 + 产品规格（款式+数量相邻同行） */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">做货日期</label>
+                {/* 行2：大货日期/天数 + 款式 + 数量 + 产品规格 */}
+                <div className="col-span-2 md:col-span-2 lg:col-span-3">
+                  <label className="block text-xs text-gray-400 mb-0.5">大货日期/天数</label>
                   <div className="flex items-center gap-1">
                     <input
                       type="date"
@@ -1327,9 +1526,20 @@ export default function BagQuote() {
                       onChange={(e) => updateOrderField('productionTimeEnd', e.target.value)}
                       className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
                     />
+                    <input type="text" value={orderInfo.massDays} onChange={(e) => {
+                        const newDays = e.target.value
+                        updateOrderField('massDays', newDays)
+                        // 联动：开始日期有值时，自动计算结束日期 = 开始日期 + 大货天数
+                        const days = Number(newDays)
+                        if (orderInfo.productionTimeStart && days) {
+                          updateOrderField('productionTimeEnd', addDaysToDate(orderInfo.productionTimeStart, days))
+                        }
+                      }}
+                      placeholder="天数"
+                      className="w-16 px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors shrink-0" />
                   </div>
                 </div>
-                <div>
+                <div className="lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">款式</label>
                   <select
                     value={orderInfo.productStyle}
@@ -1343,33 +1553,33 @@ export default function BagQuote() {
                     ))}
                   </select>
                 </div>
-                <div>
+                <div className="lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">数量(个)</label>
                   <input type="text" value={orderInfo.quantity} onChange={(e) => updateOrderField('quantity', e.target.value)}
                     placeholder="0"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
-                <div>
+                <div className="lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">产品规格(CM)</label>
                   <input type="text" value={orderInfo.productSpec} onChange={(e) => updateOrderField('productSpec', e.target.value)}
                     placeholder="产品规格"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
-                {/* 行3：面料材质 + 工艺 + 手提（材质：规格合并） + 打样费 */}
-                <div>
+                {/* 行3：面料材质 + 工艺 + 手提 + 打样费/天（合并文本框） */}
+                <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">面料材质</label>
                   <input type="text" value={orderInfo.fabricMaterial} onChange={(e) => updateOrderField('fabricMaterial', e.target.value)}
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
-                <div>
+                <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">工艺</label>
                   <input type="text" value={orderInfo.process} onChange={(e) => updateOrderField('process', e.target.value)}
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
                 {/* 手提材质与手提规格合并为单字段，格式：手提材质：手提规格 */}
                 <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">手提（材质：规格）</label>
+                  <label className="block text-xs text-gray-400 mb-0.5">手提</label>
                   <input
                     type="text"
                     value={[orderInfo.handleMaterial, orderInfo.handleSpec].filter(Boolean).join('：')}
@@ -1387,41 +1597,35 @@ export default function BagQuote() {
                     placeholder="材质：规格"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">打样费</label>
-                  <input type="text" value={orderInfo.sampleFee ? `${orderInfo.sampleFee}元` : ''} onChange={(e) => updateOrderField('sampleFee', e.target.value.replace(/元$/, ''))}
-                    placeholder="0"
+                {/* 打样费与打样天数合并为文本输入框，格式：费用/天数 */}
+                <div className="col-span-1 md:col-span-1 lg:col-span-1">
+                  <label className="block text-xs text-gray-400 mb-0.5">打样费/天</label>
+                  <input
+                    type="text"
+                    value={[orderInfo.sampleFee, orderInfo.sampleDays].filter(Boolean).join('/')}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      const idx = v.indexOf('/')
+                      if (idx >= 0) {
+                        updateOrderField('sampleFee', v.slice(0, idx))
+                        updateOrderField('sampleDays', v.slice(idx + 1))
+                      } else {
+                        updateOrderField('sampleFee', v)
+                        updateOrderField('sampleDays', '')
+                      }
+                    }}
+                    placeholder="费用/天数"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
-                {/* 行4：打样天数+大货天数（合并缩短） + 箱规（加大） + 备注 */}
-                <div className="col-span-2 md:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">打样/大货天数</label>
-                  <div className="flex items-center gap-1">
-                    <input type="number" value={orderInfo.sampleDays} onChange={(e) => updateOrderField('sampleDays', e.target.value)}
-                      placeholder="打样"
-                      className="w-full px-1.5 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                    <span className="text-xs text-gray-400 shrink-0">/</span>
-                    <input type="number" value={orderInfo.massDays} onChange={(e) => {
-                      const newDays = e.target.value
-                      updateOrderField('massDays', newDays)
-                      // 联动：开始日期有值时，自动计算结束日期 = 开始日期 + 大货天数
-                      const days = Number(newDays)
-                      if (orderInfo.productionTimeStart && days) {
-                        updateOrderField('productionTimeEnd', addDaysToDate(orderInfo.productionTimeStart, days))
-                      }
-                    }}
-                      placeholder="大货"
-                      className="w-full px-1.5 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                  </div>
-                </div>
+                {/* 行4：箱规 + 备注 */}
                 <div className="col-span-2 md:col-span-1 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">箱规</label>
                   <input type="text" value={orderInfo.boxSpec} onChange={(e) => updateOrderField('boxSpec', e.target.value)}
                     placeholder="箱规"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
+                <div className="col-span-2 md:col-span-2 lg:col-span-3">
                   <label className="block text-xs text-gray-400 mb-0.5">备注</label>
                   <textarea
                     value={orderInfo.remark}
@@ -1551,6 +1755,20 @@ export default function BagQuote() {
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-green-500 text-white rounded-lg shadow-lg">
           <CheckCircle size={20} />
           <span className="font-medium">保存成功</span>
+        </div>
+      )}
+
+      {saveError && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-red-500 text-white rounded-lg shadow-lg">
+          <X size={20} />
+          <span className="font-medium">{saveError}</span>
+        </div>
+      )}
+
+      {exportError && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-red-500 text-white rounded-lg shadow-lg">
+          <X size={20} />
+          <span className="font-medium">{exportError}</span>
         </div>
       )}
     </div>

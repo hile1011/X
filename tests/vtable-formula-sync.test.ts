@@ -1,0 +1,537 @@
+/**
+ * 在线表格 VTable 公式联动 & 表格-订单信息联动 集成测试
+ *
+ * 测试目标：
+ * 1. VTable 公式引擎：单元格编辑后级联重算依赖公式
+ * 2. 表格 → 订单信息联动：卖价/规格/数量/手提规格 从表格同步到订单信息
+ * 3. 款式切换 → 模板切换：不同款式加载不同模板
+ * 4. 模板公式定义验证：公式字符串正确、单元格引用有效
+ *
+ * 环境要求：jsdom + canvas mock（tests/setup.ts）
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { VTableSheet } from '@visactor/vtable-sheet'
+import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
+
+// ============================ 测试用模板数据（款式1：无底无侧普通袋） ============================
+
+const TEMPLATE_DATA: (string | number | null)[][] = [
+  [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', '带刀手提条数'],
+  ['成品', 7200, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null],
+  ['正反面', 7200, 38, 40, 0, 3, 10, 41, 90, 154, 280, 31, 2160, 3.7561, 907.2, 12342.8571],
+  ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 403.2, 25.6667, 169.344, null],
+  [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '参考卖价', '含税价', '实际卖价', null, null, null, null],
+  ['正反面', 0.51, 0.4059, 4.4, 1.4058, 0.05, 0.1, 725.76, 1.03, 2.6467, null, null, null, null, null, null],
+  ['手提', null, 0, 4.4, 0.2968, null, null, 135.48, 1.03, 0.3251, null, null, null, null, null, null],
+  ['汇总', null, null, null, null, null, null, null, null, 2.97, null, null, null, null, null, null],
+  ['参考卖价', null, null, null, null, null, null, null, 0.45, 3.42, 3.76, null, null, null, null, null],
+  ['利润', null, null, null, null, null, null, null, null, 3240, null, null, null, null, null, null],
+]
+
+const TEMPLATE_FORMULAS: Record<string, string> = {
+  B3: '=B2', C3: '=C2', D3: '=D2', E3: '=E2',
+  H3: '=F3+C3',
+  I3: '=(D3*2+E3+G3)',
+  L3: '=MOD(J3,MIN(H3,I3))',
+  M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100',
+  N3: '=J3/(MIN(H3,I3))',
+  O3: '=M3*K3*1.5/1000',
+  P3: '=M3*4/(I4/100)',
+  B4: '=B2', I4: '=D4',
+  L4: '=MOD(J4,MIN(H4,I4))',
+  M4: '=I4/100*2*B4/INT(J4/H4)',
+  N4: '=J4/(MIN(H4,I4))',
+  O4: '=M4*K4*1.5/1000',
+  A6: '=A3',
+  C6: '=H3*I3*1.1/10000',
+  E6: '=D6*M3/B3+CEILING(M3/100,1)*15/B3+0.04',
+  H6: '=O3*0.8',
+  J6: '=(B6+C6+F6+E6+H6/B3)*I6+G6',
+  A7: '=A4',
+  E7: '=D7*M4/B4+CEILING(M4/100,1)*15/B4+0.04',
+  H7: '=O4*0.8',
+  J7: '=(B7+C7+E7+F7+H7/B4)*I7+G7',
+  J8: '=SUM(J6:J7)',
+  J9: '=J8+I9',
+  K9: '=J9*1.1',
+  J10: '=(J9-J8)*B2',
+}
+
+// 简化列定义
+const COL_WIDTHS = [100, 90, 80, 80, 80, 90, 90, 90, 90, 90, 80, 120, 110, 130, 100, 120]
+const TEST_COLUMNS = COL_WIDTHS.map((width, field) => ({ field, width }))
+
+const SHEET_KEY = 'sheet1'
+const FINISHED_ROW = 1
+const REF_SELL_ROW = 8
+
+// ============================ 测试辅助函数 ============================
+
+/** 深拷贝模板数据（防止测试间数据污染） */
+function cloneData(): (string | number | null)[][] {
+  return TEMPLATE_DATA.map(row => [...row])
+}
+
+/** 创建 VTableSheet 实例（每次使用独立数据副本） */
+function createSheet(container: HTMLElement): VTableSheet {
+  return new VTableSheet(container, {
+    undoRedo: { show: true },
+    VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+    sheets: [{
+      sheetKey: SHEET_KEY,
+      sheetTitle: SHEET_KEY,
+      columns: TEST_COLUMNS,
+      data: cloneData(),
+      formulas: { ...TEMPLATE_FORMULAS },
+      showHeader: false,
+    }],
+  })
+}
+
+/** 从公式引擎读取单元格计算值（getCellValue 按需重算，无需手动清缓存） */
+function getCellValue(sheet: VTableSheet, row: number, col: number): number | string | null {
+  const fm = (sheet as any).formulaManager
+  if (!fm) return null
+  const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
+  return result?.value ?? null
+}
+
+/** 从表格实例读取单元格原始值 */
+function getCellOriginValue(sheet: VTableSheet, col: number, row: number): any {
+  const ws = sheet.getActiveSheet()
+  const table = ws?.tableInstance as any
+  return table?.getCellOriginValue?.(col, row) ?? table?.getCellValue?.(col, row)
+}
+
+/**
+ * 修改单元格值：
+ * 1. ws.setCellValue 更新表格 record（供 getCellOriginValue 读取原始值）
+ * 2. fm.setCellContent 更新公式引擎（供 getCellValue 按需重算公式）
+ *
+ * 注意：不能调用 formulaEngine.updateSheetData —— 它会用表格 record 覆盖公式引擎的
+ * sheetData，而 record 中公式单元格的值是旧的静态值，会导致公式重算失效。
+ */
+function setCellValue(sheet: VTableSheet, col: number, row: number, value: any): void {
+  const ws = sheet.getActiveSheet()
+  // 更新表格 record（触发 change_cell_value 事件，但在 headless 环境中级联可能不完整）
+  ;(ws as any).setCellValue(col, row, value)
+  // 直接更新公式引擎，确保 getCellValue 按需重算时读到最新值
+  const fm = (sheet as any).formulaManager
+  if (fm) {
+    fm.setCellContent({ sheet: SHEET_KEY, row, col }, value)
+  }
+}
+
+// ============================ 测试用例 ============================
+
+describe('VTable 在线表格 — 公式联动测试', () => {
+  let sheet: VTableSheet
+  let container: HTMLElement
+
+  beforeAll(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    sheet = createSheet(container)
+  })
+
+  afterAll(() => {
+    sheet?.release?.()
+    container?.remove()
+  })
+
+  describe('初始公式计算验证', () => {
+    it('正反面数量 = 成品行数量（B3=B2）', () => {
+      expect(getCellValue(sheet, 2, 1)).toBe(7200)
+    })
+    it('正反面宽 = 成品行宽（C3=C2）', () => {
+      expect(getCellValue(sheet, 2, 2)).toBe(38)
+    })
+    it('正反面高 = 成品行高（D3=D2）', () => {
+      expect(getCellValue(sheet, 2, 3)).toBe(40)
+    })
+    it('正反面底 = 成品行底（E3=E2）', () => {
+      expect(getCellValue(sheet, 2, 4)).toBe(0)
+    })
+    it('正反面切片宽 = 宽出血 + 宽（H3=F3+C3 = 3+38 = 41）', () => {
+      expect(getCellValue(sheet, 2, 7)).toBe(41)
+    })
+    it('正反面切片高 = 高×2 + 底 + 高出血（I3=D3*2+E3+G3 = 80+0+10 = 90）', () => {
+      expect(getCellValue(sheet, 2, 8)).toBe(90)
+    })
+    it('门幅最大面数 = 布料门幅 / min(切片宽, 切片高)（N3=154/min(41,90)）', () => {
+      expect(getCellValue(sheet, 2, 13)).toBeCloseTo(154 / 41, 2)
+    })
+    it('布料米数 > 0（M3 公式级联计算）', () => {
+      const val = getCellValue(sheet, 2, 12)
+      expect(typeof val).toBe('number')
+      expect(val as number).toBeGreaterThan(0)
+    })
+    it('总重量 > 0（O3 = M3*K3*1.5/1000）', () => {
+      const val = getCellValue(sheet, 2, 14)
+      expect(typeof val).toBe('number')
+      expect(val as number).toBeGreaterThan(0)
+    })
+    it('成本行正反面标签 = 规格行正反面（A6=A3）', () => {
+      expect(getCellValue(sheet, 5, 0)).toBe('正反面')
+    })
+    it('汇总参考卖价 > 0（J8=SUM(J6:J7)）', () => {
+      const val = getCellValue(sheet, 7, 9)
+      expect(typeof val).toBe('number')
+      expect(val as number).toBeGreaterThan(0)
+    })
+    it('参考卖价 = 汇总 + 利润率加价（J9=J8+I9）', () => {
+      const j8 = getCellValue(sheet, 7, 9) as number
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const i9 = getCellValue(sheet, 8, 8) as number
+      expect(j9).toBeCloseTo(j8 + i9, 2)
+    })
+    it('含税价 = 参考卖价 × 1.1（K9=J9*1.1）', () => {
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const k9 = getCellValue(sheet, 8, 10) as number
+      expect(k9).toBeCloseTo(j9 * 1.1, 2)
+    })
+    it('利润 = (参考卖价 - 汇总) × 数量（J10=(J9-J8)*B2）', () => {
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const j8 = getCellValue(sheet, 7, 9) as number
+      const b2 = getCellValue(sheet, 1, 1) as number
+      const j10 = getCellValue(sheet, 9, 9) as number
+      expect(j10).toBeCloseTo((j9 - j8) * b2, 2)
+    })
+  })
+
+  describe('公式级联重算 — 修改数量', () => {
+    it('修改成品行数量后，正反面数量同步更新（B3=B2）', () => {
+      setCellValue(sheet, 1, 1, 10000) // B2 = 10000
+      expect(getCellValue(sheet, 2, 1)).toBe(10000) // B3
+    })
+    it('修改数量后，布料米数重新计算（M3 依赖 B3→N3）', () => {
+      const m3 = getCellValue(sheet, 2, 12)
+      expect(typeof m3).toBe('number')
+      // M3 = CEILING(B3/INT(N3),1)*MAX(H3,I3)/100
+      // B3=10000, N3=154/41≈3.756, INT(N3)=3, B3/3=3333.33, CEILING=3334
+      // MAX(41,90)=90, 3334*90/100=3000.6
+      expect(m3 as number).toBeGreaterThan(2160) // 原值 2160，应增大
+    })
+    it('修改数量后，总重量重新计算（O3 依赖 M3）', () => {
+      const o3 = getCellValue(sheet, 2, 14)
+      expect(typeof o3).toBe('number')
+      expect(o3 as number).toBeGreaterThan(907) // 原值 907.2
+    })
+    it('修改数量后，利润重新计算（J10 依赖 B2）', () => {
+      const j10 = getCellValue(sheet, 9, 9)
+      expect(typeof j10).toBe('number')
+      // 原值 3240，数量从 7200→10000，利润应增大
+      expect(j10 as number).toBeGreaterThan(3240)
+    })
+    it('修改数量后，参考卖价重新计算（J9←J8←J6←E6←M3）', () => {
+      const j9 = getCellValue(sheet, 8, 9)
+      expect(typeof j9).toBe('number')
+      expect(j9 as number).toBeGreaterThan(0)
+    })
+  })
+
+  describe('公式级联重算 — 修改宽度', () => {
+    it('修改成品行宽度后，正反面宽度同步（C3=C2）', () => {
+      setCellValue(sheet, 2, 1, 45) // C2 = 45
+      expect(getCellValue(sheet, 2, 2)).toBe(45) // C3
+    })
+    it('修改宽度后，切片宽重新计算（H3=F3+C3 = 3+45 = 48）', () => {
+      expect(getCellValue(sheet, 2, 7)).toBe(48) // H3
+    })
+    it('修改宽度后，门幅最大面数重新计算（N3=154/min(48,90)）', () => {
+      expect(getCellValue(sheet, 2, 13)).toBeCloseTo(154 / 48, 2) // N3
+    })
+  })
+
+  describe('公式级联重算 — 修改高度', () => {
+    it('修改成品行高度后，切片高重新计算（I3=D3*2+E3+G3 = 100+0+10 = 110）', () => {
+      setCellValue(sheet, 3, 1, 50) // D2 = 50
+      const d3 = getCellValue(sheet, 2, 3) // D3
+      expect(d3).toBe(50)
+      const i3 = getCellValue(sheet, 2, 8) // I3
+      expect(i3).toBe(110)
+    })
+  })
+})
+
+describe('VTable 在线表格 — 表格与订单信息联动测试', () => {
+  let sheet: VTableSheet
+  let container: HTMLElement
+
+  beforeAll(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    sheet = createSheet(container) // 独立数据副本，初始值 38*40*0
+  })
+
+  afterAll(() => {
+    sheet?.release?.()
+    container?.remove()
+  })
+
+  /** 模拟 syncFromTable 逻辑（与 BagQuote.tsx 一致） */
+  function syncFromTable() {
+    const fm = (sheet as any).formulaManager
+    if (!fm) return null
+
+    const rNoTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 9 })
+    const rWithTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 10 })
+    const sellPriceNoTax = rNoTax && typeof rNoTax.value === 'number' && !isNaN(rNoTax.value) ? rNoTax.value : null
+    const sellPriceWithTax = rWithTax && typeof rWithTax.value === 'number' && !isNaN(rWithTax.value) ? rWithTax.value : null
+
+    const fmtVal = (v: any): string => (v == null || v === '') ? '' : String(v)
+    const width = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 2 })
+    const height = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 3 })
+    const base = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 4 })
+    const qty = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 1 })
+    const productSpec = [fmtVal(width?.value), fmtVal(height?.value), fmtVal(base?.value)].join('*')
+    const quantity = fmtVal(qty?.value)
+
+    // 手提规格联动
+    const ws = sheet.getActiveSheet()
+    const activeTable = ws?.tableInstance as any
+    let handleSpec = ''
+    const rowCount = activeTable?.rowCount ?? 0
+    for (let r = 0; r < rowCount; r++) {
+      const rowLabel = activeTable.getCellOriginValue?.(0, r) ?? activeTable.getCellValue?.(0, r)
+      if (rowLabel === '手提') {
+        const hw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 2 })
+        const hh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 3 })
+        const sw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 7 })
+        const sh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 8 })
+        const w = fmtVal(hw?.value), h = fmtVal(hh?.value)
+        const sW = fmtVal(sw?.value), sH = fmtVal(sh?.value)
+        const parts: string[] = []
+        if (w && h) parts.push(`成品尺寸：${w}*${h}`)
+        if (sW && sH) parts.push(`切片尺寸${sW}*${sH}`)
+        handleSpec = parts.join('，')
+        break
+      }
+    }
+
+    return { sellPriceNoTax, sellPriceWithTax, productSpec, quantity, handleSpec }
+  }
+
+  describe('卖价同步', () => {
+    it('不含税卖价从参考卖价行读取（J9）', () => {
+      const result = syncFromTable()
+      expect(result!.sellPriceNoTax).not.toBeNull()
+      expect(result!.sellPriceNoTax).toBeGreaterThan(0)
+    })
+    it('含税卖价从参考卖价行读取（K9）', () => {
+      const result = syncFromTable()
+      expect(result!.sellPriceWithTax).not.toBeNull()
+      expect(result!.sellPriceWithTax).toBeGreaterThan(0)
+    })
+    it('含税卖价 = 不含税卖价 × 1.1', () => {
+      const result = syncFromTable()
+      expect(result!.sellPriceWithTax).toBeCloseTo(result!.sellPriceNoTax! * 1.1, 2)
+    })
+  })
+
+  describe('产品规格同步', () => {
+    it('初始产品规格：38*40*0', () => {
+      const result = syncFromTable()
+      expect(result!.productSpec).toBe('38*40*0')
+    })
+    it('修改宽度后规格更新为 45*40*0', () => {
+      setCellValue(sheet, 2, 1, 45)
+      const result = syncFromTable()
+      expect(result!.productSpec).toBe('45*40*0')
+    })
+    it('修改高度后规格更新为 45*50*0', () => {
+      setCellValue(sheet, 3, 1, 50)
+      const result = syncFromTable()
+      expect(result!.productSpec).toBe('45*50*0')
+    })
+    it('修改底后规格更新为 45*50*8', () => {
+      setCellValue(sheet, 4, 1, 8)
+      const result = syncFromTable()
+      expect(result!.productSpec).toBe('45*50*8')
+    })
+  })
+
+  describe('数量同步', () => {
+    it('修改数量后同步为 5000', () => {
+      setCellValue(sheet, 1, 1, 5000)
+      const result = syncFromTable()
+      expect(result!.quantity).toBe('5000')
+    })
+    it('再次修改数量后同步为 20000', () => {
+      setCellValue(sheet, 1, 1, 20000)
+      const result = syncFromTable()
+      expect(result!.quantity).toBe('20000')
+    })
+  })
+
+  describe('手提规格同步', () => {
+    it('初始手提规格包含成品尺寸和切片尺寸', () => {
+      // 创建新 sheet 获取干净数据
+      const c2 = document.createElement('div')
+      document.body.appendChild(c2)
+      const s2 = createSheet(c2)
+      const fm = (s2 as any).formulaManager
+      if (typeof fm?.clearCache === 'function') fm.clearCache()
+      const ws = s2.getActiveSheet()
+      const activeTable = ws?.tableInstance as any
+      let handleSpec = ''
+      for (let r = 0; r < (activeTable?.rowCount ?? 0); r++) {
+        const rowLabel = activeTable.getCellOriginValue?.(0, r) ?? activeTable.getCellValue?.(0, r)
+        if (rowLabel === '手提') {
+          const hw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 2 })
+          const hh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 3 })
+          const sw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 7 })
+          const sh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 8 })
+          const w = String(hw?.value ?? ''), h = String(hh?.value ?? '')
+          const sW = String(sw?.value ?? ''), sH = String(sh?.value ?? '')
+          const parts: string[] = []
+          if (w && h) parts.push(`成品尺寸：${w}*${h}`)
+          if (sW && sH) parts.push(`切片尺寸${sW}*${sH}`)
+          handleSpec = parts.join('，')
+          break
+        }
+      }
+      expect(handleSpec).toContain('成品尺寸：2.5*70')
+      expect(handleSpec).toContain('切片尺寸6*70')
+      s2?.release?.()
+      c2.remove()
+    })
+    it('修改手提行宽度后，手提规格更新', () => {
+      setCellValue(sheet, 2, 3, 3.5) // row 3, col 2 = 手提宽度
+      const fm = (sheet as any).formulaManager
+      const ws = sheet.getActiveSheet()
+      const activeTable = ws?.tableInstance as any
+      let handleSpec = ''
+      for (let r = 0; r < (activeTable?.rowCount ?? 0); r++) {
+        const rowLabel = activeTable.getCellOriginValue?.(0, r) ?? activeTable.getCellValue?.(0, r)
+        if (rowLabel === '手提') {
+          const hw = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 2 })
+          const hh = fm.getCellValue({ sheet: SHEET_KEY, row: r, col: 3 })
+          const w = String(hw?.value ?? ''), h = String(hh?.value ?? '')
+          if (w && h) handleSpec = `成品尺寸：${w}*${h}`
+          break
+        }
+      }
+      expect(handleSpec).toContain('3.5')
+    })
+  })
+
+  describe('联动一致性验证', () => {
+    it('修改数量后卖价重新计算并同步', () => {
+      const c3 = document.createElement('div')
+      document.body.appendChild(c3)
+      const s3 = createSheet(c3) // 干净数据
+      setCellValue(s3, 1, 1, 15000)
+      const fm = (s3 as any).formulaManager
+      const rNoTax = fm.getCellValue({ sheet: SHEET_KEY, row: REF_SELL_ROW, col: 9 })
+      const qty = fm.getCellValue({ sheet: SHEET_KEY, row: FINISHED_ROW, col: 1 })
+      expect(String(qty?.value)).toBe('15000')
+      expect(rNoTax?.value).toBeGreaterThan(0)
+      s3?.release?.()
+      c3.remove()
+    })
+  })
+})
+
+describe('VTable 在线表格 — 款式模板切换测试', () => {
+  const STYLE_ROW_LABELS: Record<string, string[]> = {
+    '1': ['成品', '正反面', '手提', '汇总', '参考卖价', '利润'],
+    '2': ['成品', '正反面', '手提', '底部', '汇总', '参考卖价', '利润'],
+    '3': ['成品', '正反面', '侧底', '手提', '汇总', '参考卖价', '利润'],
+    '4': ['成品', '底部', '正面', '反面', '外口袋', '手提', '汇总', '参考卖价', '利润'],
+  }
+
+  it('款式1 有正反面和手提行，无底部行', () => {
+    const labels = STYLE_ROW_LABELS['1']
+    expect(labels).toContain('正反面')
+    expect(labels).toContain('手提')
+    expect(labels).not.toContain('底部')
+  })
+  it('款式2 有底部行（有底无侧）', () => {
+    expect(STYLE_ROW_LABELS['2']).toContain('底部')
+    expect(STYLE_ROW_LABELS['2']).not.toContain('侧底')
+  })
+  it('款式3 有侧底行（有底有侧）', () => {
+    expect(STYLE_ROW_LABELS['3']).toContain('侧底')
+  })
+  it('款式4 有正面、反面、外口袋行', () => {
+    expect(STYLE_ROW_LABELS['4']).toContain('正面')
+    expect(STYLE_ROW_LABELS['4']).toContain('反面')
+    expect(STYLE_ROW_LABELS['4']).toContain('外口袋')
+  })
+  it('不同款式模板行数不同', () => {
+    const counts = Object.values(STYLE_ROW_LABELS).map(l => l.length)
+    expect(new Set(counts).size).toBeGreaterThan(1)
+  })
+})
+
+describe('VTable 在线表格 — 模板公式定义验证', () => {
+  function colNameToIndex(name: string): number {
+    let idx = 0
+    for (let i = 0; i < name.length; i++) idx = idx * 26 + (name.charCodeAt(i) - 64)
+    return idx - 1
+  }
+  function parseCellAddr(addr: string): { col: number; row: number } {
+    const m = addr.match(/^([A-Z]+)(\d+)$/)
+    return m ? { col: colNameToIndex(m[1]), row: parseInt(m[2]) - 1 } : { col: -1, row: -1 }
+  }
+  function extractCellRefs(formula: string): string[] {
+    const refs: string[] = []
+    const rangeMatch = formula.match(/([A-Z]+\d+):([A-Z]+\d+)/g)
+    if (rangeMatch) rangeMatch.forEach(r => { refs.push(...r.split(':')) })
+    const cleaned = formula.replace(/([A-Z]+\d+):([A-Z]+\d+)/g, '')
+    const single = cleaned.match(/[A-Z]+\d+/g)
+    if (single) refs.push(...single)
+    return [...new Set(refs)]
+  }
+
+  it('所有公式键格式正确（字母+数字）', () => {
+    for (const key of Object.keys(TEMPLATE_FORMULAS)) {
+      expect(key).toMatch(/^[A-Z]+\d+$/)
+    }
+  })
+  it('所有公式以 = 开头', () => {
+    for (const f of Object.values(TEMPLATE_FORMULAS)) expect(f.startsWith('=')).toBe(true)
+  })
+  it('公式引用的单元格在模板数据范围内', () => {
+    const maxRow = TEMPLATE_DATA.length - 1
+    const maxCol = TEMPLATE_DATA[0].length - 1
+    for (const [, formula] of Object.entries(TEMPLATE_FORMULAS)) {
+      for (const ref of extractCellRefs(formula)) {
+        const { col, row } = parseCellAddr(ref)
+        expect(row).toBeGreaterThanOrEqual(0)
+        expect(row).toBeLessThanOrEqual(maxRow)
+        expect(col).toBeGreaterThanOrEqual(0)
+        expect(col).toBeLessThanOrEqual(maxCol)
+      }
+    }
+  })
+  it('公式键指向的单元格在 data 范围内', () => {
+    for (const addr of Object.keys(TEMPLATE_FORMULAS)) {
+      const { col, row } = parseCellAddr(addr)
+      expect(row).toBeLessThan(TEMPLATE_DATA.length)
+      expect(col).toBeLessThan(TEMPLATE_DATA[0].length)
+    }
+  })
+  it('关键公式：B3 引用 B2（正反面数量=成品行数量）', () => {
+    expect(TEMPLATE_FORMULAS['B3']).toBe('=B2')
+    const { col, row } = parseCellAddr('B2')
+    expect(TEMPLATE_DATA[row][col]).toBe(7200)
+  })
+  it('关键公式：H3 引用 F3+C3（切片宽=宽出血+宽）', () => {
+    expect(TEMPLATE_FORMULAS['H3']).toContain('F3')
+    expect(TEMPLATE_FORMULAS['H3']).toContain('C3')
+  })
+  it('关键公式：K9 引用 J9（含税价=参考卖价×1.1）', () => {
+    expect(TEMPLATE_FORMULAS['K9']).toContain('J9')
+    expect(TEMPLATE_FORMULAS['K9']).toContain('1.1')
+  })
+  it('关键公式：J10 引用 B2（利润依赖数量）', () => {
+    expect(TEMPLATE_FORMULAS['J10']).toContain('B2')
+  })
+  it('关键公式：J8 使用 SUM(J6:J7)', () => {
+    expect(TEMPLATE_FORMULAS['J8']).toContain('SUM')
+    expect(TEMPLATE_FORMULAS['J8']).toContain('J6')
+    expect(TEMPLATE_FORMULAS['J8']).toContain('J7')
+  })
+})

@@ -68,11 +68,6 @@ const PRODUCT_STYLE_OPTIONS = [
   { value: '6', label: '手提无连底拼接袋' },
 ]
 
-const getStyleLabel = (value: string): string => {
-  const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
-  return option ? option.label : value
-}
-
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
   productionTimeStart: today,

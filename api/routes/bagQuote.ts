@@ -1,5 +1,5 @@
 import express from 'express'
-import { calculateBagQuote, defaultBagQuoteInput, type BagQuoteInput } from '../services/bagQuoteCalculator'
+import { calculateBagQuote, defaultBagQuoteInput, type BagQuoteInput } from '../services/bagQuoteCalculator.js'
 
 export const bagQuoteRouter = express.Router()
 

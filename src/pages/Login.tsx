@@ -81,6 +81,10 @@ export default function Login() {
         <p className="text-center mt-6 text-gray-500">
           还没有账户？ <Link to="/register" className="text-primary-600 hover:text-primary-700 font-medium">注册</Link>
         </p>
+
+        <p className="text-center mt-3 text-xs text-gray-400">
+          登录后 10 分钟无操作将自动登出
+        </p>
       </div>
     </div>
   )

@@ -92,6 +92,8 @@ export interface Quote {
   unitPrice: string
   productionTimeStart: string
   productionTimeEnd: string
+  costPrice: number
+  priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
   status: 1 | 2 | 3 | 4 | 5 | 6

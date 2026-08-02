@@ -1,29 +1,30 @@
 import express from 'express'
-import { db } from '../db'
+import { db } from '../db.js'
+import { asyncHandler } from '../asyncHandler.js'
 
 export const customersRouter = express.Router()
 
-customersRouter.get('/', async (_req, res) => {
+customersRouter.get('/', asyncHandler(async (_req, res) => {
   const data = await db.customers.getAll()
   res.json(data)
-})
+}))
 
-customersRouter.get('/:id', async (req, res) => {
+customersRouter.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.customers.getById(id)
   if (!data) {
     return res.status(404).json({ error: '客户不存在' })
   }
   res.json(data)
-})
+}))
 
-customersRouter.get('/name/:name', async (req, res) => {
+customersRouter.get('/name/:name', asyncHandler(async (req, res) => {
   const { name } = req.params
   const data = await db.customers.getByName(decodeURIComponent(name))
   res.json(data)
-})
+}))
 
-customersRouter.post('/', async (req, res) => {
+customersRouter.post('/', asyncHandler(async (req, res) => {
   const { name, contact_person, phone, email, address, industry } = req.body as {
     name: string
     contact_person?: string
@@ -43,10 +44,11 @@ customersRouter.post('/', async (req, res) => {
   })
 
   res.status(201).json(data)
-})
+}))
 
-customersRouter.put('/:id', async (req, res) => {
+customersRouter.put('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
+  // 过滤掉 undefined 值，防止覆盖数据库中的有效值
   const { name, contact_person, phone, email, address, industry } = req.body as {
     name?: string
     contact_person?: string
@@ -55,27 +57,27 @@ customersRouter.put('/:id', async (req, res) => {
     address?: string
     industry?: string
   }
+  const updateData: Record<string, string> = {}
+  if (name !== undefined) updateData.name = name
+  if (contact_person !== undefined) updateData.contact_person = contact_person
+  if (phone !== undefined) updateData.phone = phone
+  if (email !== undefined) updateData.email = email
+  if (address !== undefined) updateData.address = address
+  if (industry !== undefined) updateData.industry = industry
 
-  const data = await db.customers.update(id, {
-    name,
-    contact_person,
-    phone,
-    email,
-    address,
-    industry,
-  })
+  const data = await db.customers.update(id, updateData)
 
   if (!data) {
     return res.status(404).json({ error: '客户不存在' })
   }
   res.json(data)
-})
+}))
 
-customersRouter.delete('/:id', async (req, res) => {
+customersRouter.delete('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
   const success = await db.customers.delete(id)
   if (!success) {
     return res.status(404).json({ error: '客户不存在' })
   }
   res.json({ message: '客户已删除' })
-})
+}))
