@@ -38,6 +38,21 @@ const addDaysToDate = (dateStr: string, days: number): string => {
   return date.toISOString().split('T')[0]
 }
 
+/**
+ * 解析 Excel 单元格地址（如 "J8"、"AA12"）为 0-based 的 { row, col }
+ * 列字母：A=0, B=1, ..., Z=25, AA=26, ...
+ * 行数字：1→0, 2→1, ...
+ */
+const parseExcelAddress = (addr: string): { row: number; col: number } => {
+  const match = addr.match(/^([A-Z]+)(\d+)$/)
+  if (!match) return { row: -1, col: -1 }
+  let col = 0
+  for (let i = 0; i < match[1].length; i++) {
+    col = col * 26 + (match[1].charCodeAt(i) - 64)
+  }
+  return { row: parseInt(match[2], 10) - 1, col: col - 1 }
+}
+
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
   productionTimeStart: today,
@@ -930,14 +945,51 @@ export default function BagQuote() {
         // 公式引擎未就绪时忽略，后续 change_cell_value 事件会重新读取
       }
     }
-    // 初始读取（公式在构造时已载入引擎并完成计算）
+    // === 公式单元格重算：覆盖模板中的静态默认值 ===
+    // 模板 data 中公式单元格带有预设默认值（可能是旧的/不精确的），
+    // 此函数从公式引擎读取计算结果，覆盖表格 record 中的静态默认值，确保显示准确。
+    // 非公式单元格不受影响，保留其默认值。
+    //
+    // 注意：不能调用 fm.setCellContent 重新注册公式 —— 实测会导致公式引擎清空所有
+    // 公式单元格的计算值（变为 undefined），级联依赖（如 J8=SUM(J6:J7)）全部失效。
+    // 公式引擎在 VTableSheet 构造时已注册公式，getCellValue 会按需重算，直接读取即可。
+    const formulaEntries = Object.entries(template.formulas)
+      .map(([addr, formula]) => ({ ...parseExcelAddress(addr), formula }))
+      .filter((e) => e.row >= 0 && e.col >= 0)
+    const isRecalculating = { current: false }
+    const recalculateFormulas = () => {
+      if (isRecalculating.current) return
+      const fm = (sheet as any).formulaManager
+      const ws = sheet.getActiveSheet()
+      if (!fm || !ws) return
+      isRecalculating.current = true
+      try {
+        // 读取公式引擎计算结果，覆盖表格 record 中的静态默认值
+        // ws.setCellValue 更新 record（触发 change_cell_value，但 isRecalculating 标志阻止递归）
+        for (const { row, col } of formulaEntries) {
+          const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
+          if (result && typeof result.value === 'number' && !isNaN(result.value)) {
+            ;(ws as any).setCellValue(col, row, result.value)
+          }
+        }
+      } catch {
+        // 公式引擎未就绪时忽略，后续事件会重新触发
+      } finally {
+        isRecalculating.current = false
+      }
+    }
+
+    // 初始重算：覆盖模板中公式单元格的静态默认值，然后同步订单信息
+    recalculateFormulas()
     syncFromTable()
-    // 公式引擎可能在构造后异步完成计算，延迟再次读取以确保成本价/卖价正确初始化
-    const initTimer1 = setTimeout(syncFromTable, 100)
-    const initTimer2 = setTimeout(syncFromTable, 500)
-    // 监听单元格变更：WorkSheet 的 change_cell_value 监听器先于本监听器注册，
-    // 会同步完成依赖公式的级联重算，因此此处可直接读取最新结果
-    const onCellChange = () => syncFromTable()
+    // 公式引擎可能在构造后异步完成计算，延迟再次重算+读取以确保公式值正确初始化
+    const initTimer1 = setTimeout(() => { recalculateFormulas(); syncFromTable() }, 100)
+    const initTimer2 = setTimeout(() => { recalculateFormulas(); syncFromTable() }, 500)
+    // 监听单元格变更：先重算公式单元格（覆盖静态值），再同步订单信息
+    const onCellChange = () => {
+      recalculateFormulas()
+      syncFromTable()
+    }
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
     }

@@ -560,14 +560,14 @@ describe('generateOrderWithTableExcel - 单订单含表格导出', () => {
     expect(allValues).toContain('0.45')
     // 单个利润(含税) = 3.76 - 3.27 = 0.49
     expect(allValues).toContain('0.49')
-    // 销售总额(不含税) = 7200 × 3.42 = 24624
-    expect(allValues).toContain('24624')
-    // 销售总额(含税) = 7200 × 3.76 = 27072
-    expect(allValues).toContain('27072')
-    // 利润总额(不含税) = 0.45 × 7200 = 3240
-    expect(allValues).toContain('3240')
-    // 利润总额(含税) = 0.49 × 7200 = 3528
-    expect(allValues).toContain('3528')
+    // 销售总额(不含税) = 7200 × 3.42 = 24624.00（fmt2 保留2位小数）
+    expect(allValues).toContain('24624.00')
+    // 销售总额(含税) = 7200 × 3.76 = 27072.00
+    expect(allValues).toContain('27072.00')
+    // 利润总额(不含税) = 0.45 × 7200 = 3240.00
+    expect(allValues).toContain('3240.00')
+    // 利润总额(含税) = 0.49 × 7200 = 3528.00
+    expect(allValues).toContain('3528.00')
   })
 
   it('在线表格工作表包含表格数据', async () => {

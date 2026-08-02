@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 export interface Migration {
   version: number
@@ -186,6 +186,82 @@ const migrations: Migration[] = [
           images, created_at, updated_at FROM quotes_backup;
         DROP TABLE quotes_backup;
       `)
+    },
+  },
+  {
+    version: 4,
+    name: 'migrate-productstyle-to-numeric',
+    description: 'V0.3：将 quotes 表 productStyle 字段从中文名称迁移为数字编码（1-6），统一前后端枚举值，并重建 quote_number 中款式部分',
+    up: (db: any) => {
+      // 中文标签 → 数字编码映射表
+      const styleMap: Record<string, string> = {
+        '无底无侧普通袋': '1',
+        '有底无侧普通袋': '2',
+        '有底有侧普通袋': '3',
+        '手提连底普通拼接袋': '4',
+        '手提连底高级拼接袋': '5',
+        '手提无连底拼接袋': '6',
+        // 兼容历史变体
+        '无底无侧普通款': '1',
+        '手提无连底拼接款': '6',
+      }
+
+      // 逐行迁移 productStyle 字段
+      const rows = db.prepare('SELECT id, productStyle, quote_number FROM quotes').all() as {
+        id: string
+        productStyle: string
+        quote_number: string
+      }[]
+
+      const updateStmt = db.prepare('UPDATE quotes SET productStyle = ?, quote_number = ? WHERE id = ?')
+
+      for (const row of rows) {
+        const currentStyle = row.productStyle ?? ''
+        // 已经是数字编码则跳过（幂等性保证）
+        if (/^[1-6]$/.test(currentStyle)) continue
+
+        const numericStyle = styleMap[currentStyle] ?? '1' // 未知值默认为 '1'
+        // 重建 quote_number：将中文款式部分替换为数字编码
+        let newQuoteNumber = row.quote_number ?? ''
+        for (const [label, code] of Object.entries(styleMap)) {
+          if (newQuoteNumber.includes(label)) {
+            newQuoteNumber = newQuoteNumber.replace(label, code)
+            break
+          }
+        }
+        updateStmt.run(numericStyle, newQuoteNumber, row.id)
+      }
+    },
+    down: (db: any) => {
+      // 回滚：将数字编码还原为中文名称
+      const labelMap: Record<string, string> = {
+        '1': '无底无侧普通袋',
+        '2': '有底无侧普通袋',
+        '3': '有底有侧普通袋',
+        '4': '手提连底普通拼接袋',
+        '5': '手提连底高级拼接袋',
+        '6': '手提无连底拼接袋',
+      }
+
+      const rows = db.prepare('SELECT id, productStyle, quote_number FROM quotes').all() as {
+        id: string
+        productStyle: string
+        quote_number: string
+      }[]
+
+      const updateStmt = db.prepare('UPDATE quotes SET productStyle = ?, quote_number = ? WHERE id = ?')
+
+      for (const row of rows) {
+        const currentStyle = row.productStyle ?? ''
+        // 已经是中文则跳过
+        if (!/^[1-6]$/.test(currentStyle)) continue
+
+        const label = labelMap[currentStyle] ?? currentStyle
+        // 还原 quote_number
+        let newQuoteNumber = row.quote_number ?? ''
+        newQuoteNumber = newQuoteNumber.replace(currentStyle, label)
+        updateStmt.run(label, newQuoteNumber, row.id)
+      }
     },
   },
 ]

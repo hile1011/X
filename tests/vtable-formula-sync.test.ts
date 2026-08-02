@@ -535,3 +535,249 @@ describe('VTable 在线表格 — 模板公式定义验证', () => {
     expect(TEMPLATE_FORMULAS['J8']).toContain('J7')
   })
 })
+
+// ============================================================================
+// 公式单元格重算覆盖静态默认值测试
+//
+// 验证目标（对应 BagQuote.tsx 中的 recalculateFormulas）：
+// 1. 模板 data 中公式单元格的预设默认值（可能是旧值/不精确值）应被公式
+//    计算结果覆盖，使表格 record 显示准确值。
+// 2. 非公式单元格保留其默认值，不受重算影响。
+// 3. 重算后，公式单元格的表格原始值（getCellOriginValue）与公式引擎计算
+//    值（getCellValue）一致。
+// ============================================================================
+
+/** 解析 Excel 地址为 0-based { row, col }（与 BagQuote.tsx 一致） */
+function parseExcelAddress(addr: string): { row: number; col: number } {
+  const match = addr.match(/^([A-Z]+)(\d+)$/)
+  if (!match) return { row: -1, col: -1 }
+  let col = 0
+  for (let i = 0; i < match[1].length; i++) {
+    col = col * 26 + (match[1].charCodeAt(i) - 64)
+  }
+  return { row: parseInt(match[2], 10) - 1, col: col - 1 }
+}
+
+/**
+ * 复刻 BagQuote.tsx 中 recalculateFormulas 的核心逻辑：
+ * 从公式引擎读取计算结果，覆盖表格 record 中的静态默认值。
+ *
+ * 注意：不调用 fm.setCellContent 重新注册公式 —— 实测会清空公式引擎的
+ * 计算值。公式引擎在 VTableSheet 构造时已注册公式，getCellValue 按需重算。
+ */
+function recalculateFormulas(sheet: VTableSheet, formulas: Record<string, string>): void {
+  const fm = (sheet as any).formulaManager
+  const ws = sheet.getActiveSheet()
+  if (!fm || !ws) return
+  const entries = Object.entries(formulas)
+    .map(([addr, formula]) => ({ ...parseExcelAddress(addr), formula }))
+    .filter((e) => e.row >= 0 && e.col >= 0)
+  // 读取公式引擎计算结果，覆盖表格 record 中的静态默认值
+  for (const { row, col } of entries) {
+    const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
+    if (result && typeof result.value === 'number' && !isNaN(result.value)) {
+      ;(ws as any).setCellValue(col, row, result.value)
+    }
+  }
+}
+
+describe('VTable 在线表格 — 公式重算覆盖静态默认值', () => {
+  /**
+   * 构造一份"被污染"的模板：在公式单元格中填入明显错误的静态默认值
+   * （如 -999、0、99999），用于验证 recalculateFormulas 能用公式计算
+   * 结果覆盖这些错误值。
+   */
+  function buildPollutedData(): (string | number | null)[][] {
+    const data = TEMPLATE_DATA.map(row => [...row])
+    // 公式单元格的地址（0-based）：故意写入错误静态值
+    // B3(行2,列1)=B2 → 错误值 -999；正确应为 7200
+    data[2][1] = -999
+    // C3(行2,列2)=C2 → 错误值 -888；正确应为 38
+    data[2][2] = -888
+    // H3(行2,列7)=F3+C3 → 错误值 0；正确应为 41
+    data[2][7] = 0
+    // I3(行2,列8) → 错误值 0；正确应为 90
+    data[2][8] = 0
+    // M3(行2,列12) → 错误值 99999
+    data[2][12] = 99999
+    // N3(行2,列13) → 错误值 99999
+    data[2][13] = 99999
+    // O3(行2,列14) → 错误值 99999
+    data[2][14] = 99999
+    // J8(行7,列9)=SUM(J6:J7) → 错误值 0；正确应 > 0
+    data[7][9] = 0
+    // J9(行8,列9)=J8+I9 → 错误值 0
+    data[8][9] = 0
+    // K9(行8,列10)=J9*1.1 → 错误值 0
+    data[8][10] = 0
+    // J10(行9,列9)=(J9-J8)*B2 → 错误值 0
+    data[9][9] = 0
+    return data
+  }
+
+  /** 用污染数据创建 sheet */
+  function createPollutedSheet(container: HTMLElement): VTableSheet {
+    return new VTableSheet(container, {
+      undoRedo: { show: true },
+      VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+      sheets: [{
+        sheetKey: SHEET_KEY,
+        sheetTitle: SHEET_KEY,
+        columns: TEST_COLUMNS,
+        data: buildPollutedData(),
+        formulas: { ...TEMPLATE_FORMULAS },
+        showHeader: false,
+      }],
+    })
+  }
+
+  let sheet: VTableSheet
+  let container: HTMLElement
+
+  beforeAll(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    sheet = createPollutedSheet(container)
+  })
+
+  afterAll(() => {
+    sheet?.release?.()
+    container?.remove()
+  })
+
+  describe('重算前：公式单元格的表格原始值仍是错误的静态默认值', () => {
+    it('B3 表格原始值 = -999（错误静态值）', () => {
+      expect(getCellOriginValue(sheet, 1, 2)).toBe(-999)
+    })
+    it('H3 表格原始值 = 0（错误静态值）', () => {
+      expect(getCellOriginValue(sheet, 7, 2)).toBe(0)
+    })
+    it('J8 表格原始值 = 0（错误静态值）', () => {
+      expect(getCellOriginValue(sheet, 9, 7)).toBe(0)
+    })
+  })
+
+  describe('重算前：公式引擎已计算出正确值（与表格原始值不一致）', () => {
+    it('B3 公式值 = 7200（正确），但表格原始值仍是 -999', () => {
+      expect(getCellValue(sheet, 2, 1)).toBe(7200)
+      expect(getCellOriginValue(sheet, 1, 2)).toBe(-999)
+    })
+    it('H3 公式值 = 41（正确），但表格原始值仍是 0', () => {
+      expect(getCellValue(sheet, 2, 7)).toBe(41)
+      expect(getCellOriginValue(sheet, 7, 2)).toBe(0)
+    })
+  })
+
+  describe('重算后：公式单元格的表格原始值被公式计算结果覆盖', () => {
+    // 在所有"重算后"测试前执行一次重算
+    beforeAll(() => {
+      recalculateFormulas(sheet, TEMPLATE_FORMULAS)
+    })
+
+    it('B3 表格原始值被覆盖为公式计算结果 7200', () => {
+      expect(getCellOriginValue(sheet, 1, 2)).toBe(7200)
+      expect(getCellValue(sheet, 2, 1)).toBe(7200)
+    })
+    it('C3 表格原始值被覆盖为公式计算结果 38', () => {
+      expect(getCellOriginValue(sheet, 2, 2)).toBe(38)
+      expect(getCellValue(sheet, 2, 2)).toBe(38)
+    })
+    it('H3 表格原始值被覆盖为公式计算结果 41', () => {
+      expect(getCellOriginValue(sheet, 7, 2)).toBe(41)
+      expect(getCellValue(sheet, 2, 7)).toBe(41)
+    })
+    it('I3 表格原始值被覆盖为公式计算结果 90', () => {
+      expect(getCellOriginValue(sheet, 8, 2)).toBe(90)
+      expect(getCellValue(sheet, 2, 8)).toBe(90)
+    })
+    it('M3 表格原始值被覆盖为正数（不再是 99999）', () => {
+      const origin = getCellOriginValue(sheet, 12, 2)
+      const formula = getCellValue(sheet, 2, 12)
+      expect(origin).not.toBe(99999)
+      expect(typeof formula).toBe('number')
+      expect(origin).toBeCloseTo(formula as number, 2)
+    })
+    it('J8 表格原始值被覆盖为正数（不再是 0）', () => {
+      const origin = getCellOriginValue(sheet, 9, 7)
+      const formula = getCellValue(sheet, 7, 9)
+      expect(origin).not.toBe(0)
+      expect(typeof formula).toBe('number')
+      expect(formula as number).toBeGreaterThan(0)
+      expect(origin).toBeCloseTo(formula as number, 2)
+    })
+    it('J9 表格原始值被覆盖为正数（不再是 0）', () => {
+      const origin = getCellOriginValue(sheet, 9, 8)
+      const formula = getCellValue(sheet, 8, 9)
+      expect(origin).not.toBe(0)
+      expect(typeof formula).toBe('number')
+      expect(formula as number).toBeGreaterThan(0)
+      expect(origin).toBeCloseTo(formula as number, 2)
+    })
+    it('K9 表格原始值被覆盖为 J9*1.1（不再是 0）', () => {
+      const origin = getCellOriginValue(sheet, 10, 8)
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const formula = getCellValue(sheet, 8, 10)
+      expect(origin).not.toBe(0)
+      expect(typeof formula).toBe('number')
+      expect(formula as number).toBeCloseTo(j9 * 1.1, 2)
+      expect(origin).toBeCloseTo(formula as number, 2)
+    })
+    it('J10 表格原始值被覆盖为 (J9-J8)*B2（不再是 0）', () => {
+      const origin = getCellOriginValue(sheet, 9, 9)
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const j8 = getCellValue(sheet, 7, 9) as number
+      const b2 = getCellValue(sheet, 1, 1) as number
+      const formula = getCellValue(sheet, 9, 9)
+      expect(origin).not.toBe(0)
+      expect(typeof formula).toBe('number')
+      expect(formula as number).toBeCloseTo((j9 - j8) * b2, 2)
+      expect(origin).toBeCloseTo(formula as number, 2)
+    })
+  })
+
+  describe('重算后：非公式单元格保留原默认值（不受影响）', () => {
+    it('B2（成品数量）= 7200 保留', () => {
+      // B2 不是公式单元格，应保留模板默认值
+      expect(getCellOriginValue(sheet, 1, 1)).toBe(7200)
+    })
+    it('C2（成品宽）= 38 保留', () => {
+      expect(getCellOriginValue(sheet, 2, 1)).toBe(38)
+    })
+    it('D2（成品高）= 40 保留', () => {
+      expect(getCellOriginValue(sheet, 3, 1)).toBe(40)
+    })
+    it('F3（宽出血）= 3 保留（非公式单元格）', () => {
+      // F3 不在 TEMPLATE_FORMULAS 中，应保留模板默认值
+      expect(getCellOriginValue(sheet, 5, 2)).toBe(3)
+    })
+    it('G3（高出血）= 10 保留（非公式单元格）', () => {
+      expect(getCellOriginValue(sheet, 6, 2)).toBe(10)
+    })
+    it('I9（参考卖价行的利润率加价）= 0.45 保留（非公式单元格）', () => {
+      expect(getCellOriginValue(sheet, 8, 8)).toBe(0.45)
+    })
+    it('A1（表头"数量"等）保留（非公式单元格）', () => {
+      expect(getCellOriginValue(sheet, 1, 0)).toBe('数量 (个)')
+    })
+  })
+
+  describe('重算后：修改输入值，公式单元格与表格原始值同步更新', () => {
+    it('修改 B2 后，B3 的表格原始值与公式值同步更新', () => {
+      // 修改 B2 = 10000
+      setCellValue(sheet, 1, 1, 10000)
+      // 重算覆盖表格原始值
+      recalculateFormulas(sheet, TEMPLATE_FORMULAS)
+      // B3 = B2 = 10000，表格原始值应与公式值一致
+      expect(getCellValue(sheet, 2, 1)).toBe(10000)
+      expect(getCellOriginValue(sheet, 1, 2)).toBe(10000)
+    })
+    it('修改数量后，J10（利润）的表格原始值与公式值同步更新', () => {
+      const j9 = getCellValue(sheet, 8, 9) as number
+      const j8 = getCellValue(sheet, 7, 9) as number
+      const b2 = getCellValue(sheet, 1, 1) as number
+      const expected = (j9 - j8) * b2
+      expect(getCellValue(sheet, 9, 9)).toBeCloseTo(expected, 2)
+      expect(getCellOriginValue(sheet, 9, 9)).toBeCloseTo(expected, 2)
+    })
+  })
+})

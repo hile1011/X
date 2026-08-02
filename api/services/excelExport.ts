@@ -135,6 +135,11 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
+/** 格式化为保留 2 位小数的字符串（如 10 → "10.00"） */
+function fmt2(n: number | undefined | null): string {
+  return (Number(n ?? 0) || 0).toFixed(2)
+}
+
 /** 将 ISO 日期字符串转为 Date 对象（仅日期部分） */
 function parseDate(dateStr: string): Date | null {
   if (!dateStr) return null
@@ -684,9 +689,9 @@ export async function generateOrderWithTableExcel(
       fitToHeight: 0,
     },
   })
-  infoSheet.getColumn(1).width = 14
+  infoSheet.getColumn(1).width = 20
   infoSheet.getColumn(2).width = 24
-  infoSheet.getColumn(3).width = 14
+  infoSheet.getColumn(3).width = 20
   infoSheet.getColumn(4).width = 24
 
   // 标题
@@ -722,16 +727,16 @@ export async function generateOrderWithTableExcel(
     {
       title: '价格信息',
       fields: [
-        ['成本价', String(order.costPrice ?? 0)],
-        ['含税价', String(order.priceWithTax ?? 0)],
-        ['单个卖价(不含税)', String(order.sellPriceNoTax ?? 0)],
-        ['单个卖价(含税)', String(order.sellPriceWithTax ?? 0)],
-        ['单个利润(不含税)', String(round2(round2(order.sellPriceNoTax ?? 0) - round2(order.costPrice ?? 0)))],
-        ['单个利润(含税)', String(round2(round2(order.sellPriceWithTax ?? 0) - round2(order.priceWithTax ?? 0)))],
-        ['销售总额(不含税)', String(round2(round2(order.sellPriceNoTax ?? 0) * parseQuantity(order.quantity)))],
-        ['销售总额(含税)', String(round2(round2(order.sellPriceWithTax ?? 0) * parseQuantity(order.quantity)))],
-        ['利润总额(不含税)', String(round2(round2(round2(order.sellPriceNoTax ?? 0) - round2(order.costPrice ?? 0)) * parseQuantity(order.quantity)))],
-        ['利润总额(含税)', String(round2(round2(round2(order.sellPriceWithTax ?? 0) - round2(order.priceWithTax ?? 0)) * parseQuantity(order.quantity)))],
+        ['成本价', fmt2(order.costPrice)],
+        ['含税价', fmt2(order.priceWithTax)],
+        ['单个卖价(不含税)', fmt2(order.sellPriceNoTax)],
+        ['单个卖价(含税)', fmt2(order.sellPriceWithTax)],
+        ['单个利润(不含税)', fmt2(round2(order.sellPriceNoTax ?? 0) - round2(order.costPrice ?? 0))],
+        ['单个利润(含税)', fmt2(round2(order.sellPriceWithTax ?? 0) - round2(order.priceWithTax ?? 0))],
+        ['销售总额(不含税)', fmt2(round2(order.sellPriceNoTax ?? 0) * parseQuantity(order.quantity))],
+        ['销售总额(含税)', fmt2(round2(order.sellPriceWithTax ?? 0) * parseQuantity(order.quantity))],
+        ['利润总额(不含税)', fmt2(round2(round2(order.sellPriceNoTax ?? 0) - round2(order.costPrice ?? 0)) * parseQuantity(order.quantity))],
+        ['利润总额(含税)', fmt2(round2(round2(order.sellPriceWithTax ?? 0) - round2(order.priceWithTax ?? 0)) * parseQuantity(order.quantity))],
         ['单价', order.unitPrice],
         ['打样费', order.sampleFee],
         ['打样天数', order.sampleDays],
@@ -902,6 +907,21 @@ export async function generateOrderWithTableExcel(
   // 表格列宽设置
   for (let c = 0; c < (data[0]?.length ?? 0); c++) {
     tableSheet.getColumn(c + 1).width = 14
+  }
+
+  // 数值/公式单元格统一应用 2 位小数格式，与订单管理在线表格规则一致
+  // （非数值单元格如标签、数量等保持常规格式）
+  const NUM_FMT_2 = '0.00'
+  for (let r = 0; r < data.length; r++) {
+    for (let c = 0; c < (data[r]?.length ?? 0); c++) {
+      const cell = tableSheet.getCell(r + 1, c + 1)
+      const hasFormula = typeof cell.value === 'object' && cell.value !== null && 'formula' in cell.value
+      const rawVal = data[r]?.[c]
+      // 数值类型或含公式的单元格 → 2 位小数
+      if (typeof rawVal === 'number' || hasFormula) {
+        cell.numFmt = NUM_FMT_2
+      }
+    }
   }
 
   // 表格样式：第一列标签加粗
