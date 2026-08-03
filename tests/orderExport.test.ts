@@ -37,7 +37,7 @@ function createTestQuote(overrides: Partial<Quote> = {}): Quote {
     id: 'test-quote-001',
     user_id: 'user-001',
     customer_id: 'cust-001',
-    quote_number: '测试客户-20240722100000-无底无侧普通袋',
+    quote_number: '测试客户-无底无侧普通袋-20240722100000',
     customerName: '测试客户',
     shippingAddress: '上海市浦东新区',
     productStyle: '1',
@@ -78,7 +78,7 @@ function generateLargeDataset(count: number): Quote[] {
   return Array.from({ length: count }, (_, i) =>
     createTestQuote({
       id: `test-quote-${String(i).padStart(4, '0')}`,
-      quote_number: `客户${i}-20240722100000-无底无侧普通袋`,
+      quote_number: `客户${i}-无底无侧普通袋-20240722100000`,
       customerName: `客户${Math.floor(i / 10)}`,
       quantity: String(1000 + i),
       costPrice: 2.5 + (i % 100) / 100,

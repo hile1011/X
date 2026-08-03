@@ -4,6 +4,7 @@ import { TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, Sav
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
+import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 
 interface OrderInfo {
   unitPrice: string
@@ -56,26 +57,11 @@ const STATUS_OPTIONS = [
   { value: 6, label: '结束' },
 ]
 
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
-
 // 在线表格初始数据（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
 // 根据款式类型定义不同的表格模版
 interface SheetTemplate {
   data: (string | number | null)[][]
   formulas: Record<string, string>
-}
-
-// 空模板（款式没有对应模板时使用）
-const EMPTY_TEMPLATE: SheetTemplate = {
-  data: [],
-  formulas: {},
 }
 
 // 款式1：无底无侧普通袋（底=0）
@@ -528,7 +514,8 @@ const getTemplateByStyle = (style: string): SheetTemplate => {
     case '6': // 手提无连底拼接袋
       return TEMPLATE_HAND_HELD_NO_BOTTOM_SPLICING
     default:
-      return EMPTY_TEMPLATE
+      // 无绑定模板的产品（无 code 或 code 非 1-6）默认使用「无底无侧」模板
+      return TEMPLATE_NO_BOTTOM_NO_SIDE
   }
 }
 
@@ -629,6 +616,12 @@ export default function BagQuoteTable() {
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
   // 表格对订单信息的联动：单个卖价(不含税)/单个卖价(含税)
   const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
+  // 款式选项：从产品管理模块动态获取（code 1-6 对应在线表格模板）
+  const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
+
+  useEffect(() => {
+    fetchStyleOptions().then(setStyleOptions)
+  }, [])
 
   useEffect(() => {
     if (isEditMode) {
@@ -987,7 +980,7 @@ export default function BagQuoteTable() {
               onChange={(e) => updateOrderField('productStyle', e.target.value)}
               className="px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
             >
-              {PRODUCT_STYLE_OPTIONS.map((option) => (
+              {styleOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>

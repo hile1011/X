@@ -226,13 +226,15 @@ function applyCellFormat(cell: ExcelJS.Cell, col: ExportColumn, value: any): voi
 }
 
 /** 将 Quote 字段值转换为导出值 */
-function convertFieldValue(quote: Quote, col: ExportColumn): any {
+function convertFieldValue(quote: Quote, col: ExportColumn, styleLabelResolver?: (code: string) => string): any {
   const raw = (quote as any)[col.key]
   switch (col.type) {
     case 'status':
       return getStatusLabel(typeof raw === 'number' ? raw : parseInt(raw) || 0)
-    case 'style':
-      return getStyleLabel(String(raw || ''))
+    case 'style': {
+      const code = String(raw || '')
+      return styleLabelResolver ? (styleLabelResolver(code) || getStyleLabel(code)) : getStyleLabel(code)
+    }
     case 'images': {
       const imgs = Array.isArray(raw) ? raw : []
       return imgs.length > 0 ? `${imgs.length}张图片` : '无'
@@ -359,7 +361,10 @@ export function calculateSummary(orders: Quote[]): ExportSummary {
  * @param orders 订单列表
  * @returns ExcelJS Workbook（调用方负责写入流）
  */
-export async function generateOrdersExcel(orders: Quote[]): Promise<ExcelJS.Workbook> {
+export async function generateOrdersExcel(
+  orders: Quote[],
+  styleLabelResolver?: (code: string) => string,
+): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '订单管理系统'
   workbook.created = new Date()
@@ -424,7 +429,7 @@ export async function generateOrdersExcel(orders: Quote[]): Promise<ExcelJS.Work
     const isAlt = rowIdx % 2 === 1
     ORDER_COLUMNS.forEach((col, colIdx) => {
       const cell = row.getCell(colIdx + 1)
-      const value = convertFieldValue(order, col)
+      const value = convertFieldValue(order, col, styleLabelResolver)
       cell.value = value
       applyCellFormat(cell, col, value)
       if (isAlt) cell.fill = ALT_ROW_FILL
@@ -676,6 +681,7 @@ function pixelToFractionalCol(sheet: ExcelJS.Worksheet, pixelX: number): number 
 export async function generateOrderWithTableExcel(
   order: Quote,
   tableData: TableExportData,
+  styleLabelResolver?: (code: string) => string,
 ): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = '订单管理系统'
@@ -709,7 +715,7 @@ export async function generateOrderWithTableExcel(
         ['客户名称', order.customerName],
         ['收货地址', order.shippingAddress],
         ['订单状态', getStatusLabel(order.status as number)],
-        ['款式', getStyleLabel(order.productStyle)],
+        ['款式', styleLabelResolver ? (styleLabelResolver(order.productStyle) || getStyleLabel(order.productStyle)) : getStyleLabel(order.productStyle)],
         ['产品规格', order.productSpec],
       ],
     },

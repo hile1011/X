@@ -23,6 +23,7 @@ export interface Product {
   id: string
   name: string
   sku: string
+  code: string
   description: string
   price: number
   category: string
@@ -105,6 +106,10 @@ export interface Quote {
   paymentTime: string
   endTime: string
   images: string[]
+  // 在线表格二维数据（用户编辑后的值），JSON 字符串存储。仅新增时从模板加载，后续以数据库为准
+  tableData: (string | number | null)[][]
+  // 用户已删除的公式地址列表 JSON 字符串，如 ["J8"]
+  removedFormulaAddresses: string[]
   created_at: string
   updated_at: string
 }

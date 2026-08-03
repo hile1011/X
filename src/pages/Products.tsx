@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Plus, Search, Eye, Edit, Trash2, Package, Tag, DollarSign } from 'lucide-react'
+import { isDefaultStyleProduct } from '../services/productStyles'
 import type { Product } from '../types'
 
 export default function Products() {
@@ -24,8 +25,12 @@ export default function Products() {
 
   const handleDelete = async (id: string) => {
     if (window.confirm('确定要删除这个产品吗？')) {
-      await api.products.delete(id)
-      fetchProducts()
+      try {
+        await api.products.delete(id)
+        fetchProducts()
+      } catch (error) {
+        alert((error as Error).message || '删除失败')
+      }
     }
   }
 
@@ -89,7 +94,7 @@ export default function Products() {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 p-4">
-              {filteredProducts.map((product: { id: string; name: string; sku: string; price: number; category: string; stock: number }) => (
+              {filteredProducts.map((product: { id: string; name: string; sku: string; code: string; price: number; category: string; stock: number }) => (
                 <div
                   key={product.id}
                   className="bg-gray-50 rounded-xl p-4 hover:bg-gray-100 transition-colors"
@@ -103,9 +108,16 @@ export default function Products() {
 
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-lg font-bold text-primary-600">¥{product.price.toLocaleString()}</span>
-                    <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded">
-                      {product.category || '未分类'}
-                    </span>
+                    <div className="flex items-center gap-1">
+                      {product.code && (
+                        <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">
+                          编码:{product.code}
+                        </span>
+                      )}
+                      <span className="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded">
+                        {product.category || '未分类'}
+                      </span>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
@@ -128,13 +140,15 @@ export default function Products() {
                     >
                       <Edit size={18} />
                     </button>
-                    <button
-                      onClick={() => handleDelete(product.id)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="删除"
-                    >
-                      <Trash2 size={18} />
-                    </button>
+                    {!isDefaultStyleProduct(product.id) && (
+                      <button
+                        onClick={() => handleDelete(product.id)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="删除"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

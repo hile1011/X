@@ -6,6 +6,7 @@ import { ArrowLeft, Save, Package, Hash, FileText, DollarSign, Tag, Box } from '
 export default function CreateProduct() {
   const [name, setName] = useState('')
   const [sku, setSku] = useState('')
+  const [code, setCode] = useState('')
   const [description, setDescription] = useState('')
   const [price, setPrice] = useState('')
   const [category, setCategory] = useState('')
@@ -21,6 +22,7 @@ export default function CreateProduct() {
       await api.products.create({
         name,
         sku,
+        code,
         description,
         price: parseFloat(price) || 0,
         category,
@@ -101,6 +103,22 @@ export default function CreateProduct() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     <span className="flex items-center gap-2">
+                      <Tag size={18} />
+                      产品编码
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                    placeholder="款式编码(如1-6)，可关联报价模板"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="flex items-center gap-2">
                       <DollarSign size={18} />
                       价格 <span className="text-red-500">*</span>
                     </span>
@@ -130,6 +148,7 @@ export default function CreateProduct() {
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
                   >
                     <option value="">请选择分类</option>
+                    <option value="款式">款式</option>
                     <option value="电子产品">电子产品</option>
                     <option value="办公用品">办公用品</option>
                     <option value="服装配饰">服装配饰</option>

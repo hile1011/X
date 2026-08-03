@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RotateCcw, TrendingUp, DollarSign, Image as ImageIcon, Upload, X, ClipboardList, Calculator, FileSpreadsheet, AlertCircle } from 'lucide-react'
 import { calculateBagQuote as calcBagQuote } from '../services/bagQuoteCalculator'
+import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 
 interface FrontBackRowInput {
   label: string
@@ -58,15 +59,6 @@ interface OrderInfo {
 }
 
 const today = new Date().toISOString().split('T')[0]
-
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
 
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
@@ -184,6 +176,12 @@ export default function BagQuoteWps() {
   const [iframeLoading, setIframeLoading] = useState(true)
   const [wpsDocumentUrl, setWpsDocumentUrl] = useState(import.meta.env.VITE_WPS_DOC_URL || '')
   const [refreshKey, setRefreshKey] = useState(0)
+  // 款式选项：从产品管理模块动态获取（code 1-6 对应在线表格模板）
+  const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
+
+  useEffect(() => {
+    fetchStyleOptions().then(setStyleOptions)
+  }, [])
 
   const hasWpsUrl = !!wpsDocumentUrl
 
@@ -383,7 +381,7 @@ export default function BagQuoteWps() {
                       onChange={(e) => updateOrderField('productStyle', e.target.value)}
                       className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
                     >
-                      {PRODUCT_STYLE_OPTIONS.map((option) => (
+                      {styleOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>

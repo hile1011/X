@@ -121,6 +121,13 @@ export default function ProductDetail() {
                 <div className="flex items-center gap-3">
                   <Tag className="text-gray-400" size={20} />
                   <div>
+                    <label className="block text-sm text-gray-500">产品编码</label>
+                    <p className="text-gray-900">{(product as { code: string }).code || '无'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Tag className="text-gray-400" size={20} />
+                  <div>
                     <label className="block text-sm text-gray-500">分类</label>
                     <p className="text-gray-900">{(product as { category: string }).category || '未分类'}</p>
                   </div>

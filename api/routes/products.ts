@@ -1,5 +1,5 @@
 import express from 'express'
-import { db } from '../db.js'
+import { db, isDefaultStyleProduct } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 
 export const productsRouter = express.Router()
@@ -19,9 +19,10 @@ productsRouter.get('/:id', asyncHandler(async (req, res) => {
 }))
 
 productsRouter.post('/', asyncHandler(async (req, res) => {
-  const { name, sku, description, price, category, stock } = req.body as {
+  const { name, sku, code, description, price, category, stock } = req.body as {
     name: string
     sku: string
+    code?: string
     description?: string
     price: number
     category?: string
@@ -31,6 +32,7 @@ productsRouter.post('/', asyncHandler(async (req, res) => {
   const data = await db.products.create({
     name,
     sku,
+    code,
     description,
     price,
     category,
@@ -42,9 +44,10 @@ productsRouter.post('/', asyncHandler(async (req, res) => {
 
 productsRouter.put('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
-  const { name, sku, description, price, category, stock } = req.body as {
+  const { name, sku, code, description, price, category, stock } = req.body as {
     name?: string
     sku?: string
+    code?: string
     description?: string
     price?: number
     category?: string
@@ -54,6 +57,7 @@ productsRouter.put('/:id', asyncHandler(async (req, res) => {
   const updateData: Record<string, any> = {}
   if (name !== undefined) updateData.name = name
   if (sku !== undefined) updateData.sku = sku
+  if (code !== undefined) updateData.code = code
   if (description !== undefined) updateData.description = description
   if (price !== undefined) updateData.price = price
   if (category !== undefined) updateData.category = category
@@ -69,6 +73,10 @@ productsRouter.put('/:id', asyncHandler(async (req, res) => {
 
 productsRouter.delete('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
+  // 默认款式不可删除（数据库默认存储的 6 个款式受保护）
+  if (isDefaultStyleProduct(id)) {
+    return res.status(400).json({ error: '默认款式不可删除' })
+  }
   const success = await db.products.delete(id)
   if (!success) {
     return res.status(404).json({ error: '产品不存在' })

@@ -6,6 +6,7 @@ import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
 import CustomerSelect from '../components/CustomerSelect'
 import { findTablePositions } from '../services/tableLocator'
+import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 
 interface OrderInfo {
   unitPrice: string
@@ -28,6 +29,7 @@ interface OrderInfo {
 }
 
 const today = new Date().toISOString().split('T')[0]
+const SHEET_KEY = 'sheet1'
 
 // 日期加天数：返回 YYYY-MM-DD 格式
 const addDaysToDate = (dateStr: string, days: number): string => {
@@ -51,6 +53,20 @@ const parseExcelAddress = (addr: string): { row: number; col: number } => {
     col = col * 26 + (match[1].charCodeAt(i) - 64)
   }
   return { row: parseInt(match[2], 10) - 1, col: col - 1 }
+}
+
+/**
+ * 将 0-based { row, col } 转为 Excel 单元格地址（如 "J8"）。parseExcelAddress 的逆运算。
+ */
+const toExcelAddress = (row: number, col: number): string => {
+  let c = col + 1
+  let letters = ''
+  while (c > 0) {
+    const rem = (c - 1) % 26
+    letters = String.fromCharCode(65 + rem) + letters
+    c = Math.floor((c - 1) / 26)
+  }
+  return `${letters}${row + 1}`
 }
 
 const DEFAULT_ORDER_INFO: OrderInfo = {
@@ -82,15 +98,6 @@ const STATUS_OPTIONS = [
   { value: 6, label: '结束' },
 ]
 
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
-
 const PRODUCTION_STEPS = [
   { id: 1, name: '面料采购', description: '采购所需面料' },
   { id: 2, name: '裁剪', description: '根据规格裁剪面料' },
@@ -105,12 +112,6 @@ const PRODUCTION_STEPS = [
 interface SheetTemplate {
   data: (string | number | null)[][]
   formulas: Record<string, string>
-}
-
-// 空模板（款式没有对应模板时使用）
-const EMPTY_TEMPLATE: SheetTemplate = {
-  data: [],
-  formulas: {},
 }
 
 // 款式1：无底无侧普通袋（底=0）
@@ -563,7 +564,8 @@ const getTemplateByStyle = (style: string): SheetTemplate => {
     case '6': // 手提无连底拼接袋
       return TEMPLATE_HAND_HELD_NO_BOTTOM_SPLICING
     default:
-      return EMPTY_TEMPLATE
+      // 无绑定模板的产品（无 code 或 code 非 1-6）默认使用「无底无侧」模板
+      return TEMPLATE_NO_BOTTOM_NO_SIDE
   }
 }
 
@@ -667,10 +669,23 @@ export default function BagQuote() {
 
   const sheetContainerRef = useRef<HTMLDivElement>(null)
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
+  // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
+  // 新增订单时为 null，使用模板数据初始化。
+  const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
+  // 用户已删除的公式地址列表（加载时从 template.formulas 中排除这些公式，使 tableData 值生效）
+  const removedFormulasRef = useRef<string[]>([])
+  // 加载完成的版本号：loadQuote 返回后自增，触发表格 useEffect 重新初始化以使用数据库数据
+  const [tableDataVersion, setTableDataVersion] = useState(0)
   // 表格对订单信息的联动：成本价、含税价、单个卖价(不含税)/单个卖价(含税)
   const [costPrice, setCostPrice] = useState<number | null>(null)
   const [priceWithTax, setPriceWithTax] = useState<number | null>(null)
   const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
+  // 款式选项：从产品管理模块动态获取（code 1-6 对应在线表格模板）
+  const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
+
+  useEffect(() => {
+    fetchStyleOptions().then(setStyleOptions)
+  }, [])
 
   useEffect(() => {
     if (isEditMode) {
@@ -736,6 +751,14 @@ export default function BagQuote() {
           endTime: data.endTime || '',
         })
         setProductImages(data.images || [])
+        // 加载已保存的在线表格数据（覆盖模板默认值，后续以数据库为准）
+        loadedTableDataRef.current = (data.tableData && data.tableData.length > 0) ? data.tableData : null
+        // 加载用户已删除的公式地址列表（加载时排除这些公式，使 tableData 中的值生效）
+        removedFormulasRef.current = data.removedFormulaAddresses || []
+        // 自增版本号，触发表格 useEffect 重新初始化。
+        // 无论 tableData 是否为空（老数据无 tableData 时用模板），都需要自增以解除
+        // useEffect 中 "isEditMode && tableDataVersion===0" 的阻塞，让表格能创建。
+        setTableDataVersion(v => v + 1)
       }
     } catch (error) {
       console.error('加载报价失败:', error)
@@ -765,6 +788,37 @@ export default function BagQuote() {
         }
       }
 
+      // 提取当前在线表格的二维数据（用户编辑后的值），持久化到数据库
+      let tableData: (string | number | null)[][] = []
+      // 检测用户已删除的公式地址（原模板有公式，但公式引擎中已无该公式）
+      // 加载时排除这些公式，使 tableData 中的用户输入值生效而非被公式覆盖
+      let removedFormulaAddresses: string[] = []
+      const sheet = sheetInstanceRef.current
+      if (sheet) {
+        const ws = sheet.getActiveSheet()
+        const activeTable = ws?.tableInstance as any
+        const fm = (sheet as any).formulaManager
+        const rowCount = activeTable?.rowCount ?? 0
+        const colCount = activeTable?.colCount ?? 16
+        for (let r = 0; r < rowCount; r++) {
+          const rowData: (string | number | null)[] = []
+          for (let c = 0; c < colCount; c++) {
+            rowData.push(activeTable.getCellOriginValue?.(c, r) ?? null)
+          }
+          tableData.push(rowData)
+        }
+        // 遍历模板公式地址，检查公式引擎中是否还存在该公式
+        const template = getTemplateByStyle(orderInfo.productStyle)
+        for (const addr of Object.keys(template.formulas)) {
+          const { row, col } = parseExcelAddress(addr)
+          if (row < 0 || col < 0) continue
+          const stillHasFormula = fm?.getCellFormula?.({ sheet: SHEET_KEY, row, col })
+          if (!stillHasFormula) {
+            removedFormulaAddresses.push(addr)
+          }
+        }
+      }
+
       const quoteData = {
         ...orderInfo,
         costPrice: costPrice || 0,
@@ -773,6 +827,8 @@ export default function BagQuote() {
         sellPriceWithTax: sellPrices.withTax || 0,
         status,
         images: productImages,
+        tableData,
+        removedFormulaAddresses,
       }
       if (isEditMode) {
         await api.quotes.update(id!, quoteData)
@@ -838,8 +894,24 @@ export default function BagQuote() {
   useEffect(() => {
     if (!sheetContainerRef.current) return
 
+    // 编辑已有订单时：必须等数据库 tableData 加载完成后再创建表格，避免首次用模板初始化后
+    // 被 recalculateFormulas 用公式结果覆盖用户编辑值（tableDataVersion=0 表示尚未加载）
+    if (isEditMode && tableDataVersion === 0) return
+
     const template = getTemplateByStyle(orderInfo.productStyle)
-    
+    // 编辑已有订单时优先使用数据库保存的表格数据；新增订单时用模板数据
+    const initialData = loadedTableDataRef.current && loadedTableDataRef.current.length > 0
+      ? loadedTableDataRef.current
+      : template.data
+    // 编辑已有订单时排除用户已删除的公式，使 tableData 中对应单元格的值生效而非被公式覆盖
+    const removedSet = new Set(removedFormulasRef.current)
+    const activeFormulas = Object.keys(template.formulas).reduce((acc, addr) => {
+      if (!removedSet.has(addr)) {
+        acc[addr] = template.formulas[addr]
+      }
+      return acc
+    }, {} as Record<string, string>)
+
     const sheet = new VTableSheet(sheetContainerRef.current, {
       undoRedo: { show: true },
       VTablePluginModules: [
@@ -851,8 +923,8 @@ export default function BagQuote() {
           sheetKey: 'sheet1',
           sheetTitle: 'sheet1',
           columns: SHEET_COLUMNS,
-          data: template.data,
-          formulas: template.formulas,
+          data: initialData,
+          formulas: activeFormulas,
           showHeader: false,
         },
       ],
@@ -866,7 +938,6 @@ export default function BagQuote() {
     // 产品规格 = 成品行 宽(CM) "*" 高(CM) "*" 底(CM)
     // 数量     = 成品行 数量(个)
     // 直接通过 formulaManager 读取公式计算结果（构造时已载入引擎，编辑后由 WorkSheet 级联重算）
-    const SHEET_KEY = 'sheet1'
     const activeWs = sheet.getActiveSheet()
     const activeTable = activeWs?.tableInstance as any
     const syncFromTable = () => {
@@ -953,10 +1024,12 @@ export default function BagQuote() {
     // 注意：不能调用 fm.setCellContent 重新注册公式 —— 实测会导致公式引擎清空所有
     // 公式单元格的计算值（变为 undefined），级联依赖（如 J8=SUM(J6:J7)）全部失效。
     // 公式引擎在 VTableSheet 构造时已注册公式，getCellValue 会按需重算，直接读取即可。
-    const formulaEntries = Object.entries(template.formulas)
+    const formulaEntries = Object.entries(activeFormulas)
       .map(([addr, formula]) => ({ ...parseExcelAddress(addr), formula }))
       .filter((e) => e.row >= 0 && e.col >= 0)
     const isRecalculating = { current: false }
+    // 被删除的公式地址集合（这些单元格用户已清空公式，recalc 时不覆盖）
+    const removedSetForRecalc = new Set(removedFormulasRef.current)
     const recalculateFormulas = () => {
       if (isRecalculating.current) return
       const fm = (sheet as any).formulaManager
@@ -967,6 +1040,9 @@ export default function BagQuote() {
         // 读取公式引擎计算结果，覆盖表格 record 中的静态默认值
         // ws.setCellValue 更新 record（触发 change_cell_value，但 isRecalculating 标志阻止递归）
         for (const { row, col } of formulaEntries) {
+          // 跳过用户已删除公式的单元格（保留 tableData 中的用户输入值）
+          const addr = toExcelAddress(row, col)
+          if (removedSetForRecalc.has(addr)) continue
           const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
           if (result && typeof result.value === 'number' && !isNaN(result.value)) {
             ;(ws as any).setCellValue(col, row, result.value)
@@ -1058,7 +1134,7 @@ export default function BagQuote() {
       cellStyleOverrides.clear()
       cellFormatOverrides.clear()
     }
-  }, [orderInfo.productStyle])
+  }, [orderInfo.productStyle, tableDataVersion])
 
   const processFiles = (files: File[]) => {
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
@@ -1102,6 +1178,11 @@ export default function BagQuote() {
   }
 
   const updateOrderField = (field: keyof OrderInfo, value: string) => {
+    // 切换款式时清除已加载的数据库表格数据，使用新款式模板初始化
+    if (field === 'productStyle') {
+      loadedTableDataRef.current = null
+      removedFormulasRef.current = []
+    }
     setOrderInfo((prev) => ({ ...prev, [field]: value }))
   }
 
@@ -1598,7 +1679,7 @@ export default function BagQuote() {
                     onChange={(e) => updateOrderField('productStyle', e.target.value)}
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
                   >
-                    {PRODUCT_STYLE_OPTIONS.map((option) => (
+                    {styleOptions.map((option) => (
                       <option key={option.value} value={option.value}>
                         {option.label}
                       </option>

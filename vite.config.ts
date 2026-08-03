@@ -11,6 +11,9 @@ export default defineConfig({
     },
   },
   server: {
+    // 监听所有接口，支持通过 IP+端口访问开发服务器（局域网调试）
+    host: true,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

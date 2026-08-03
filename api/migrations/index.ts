@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 4
+export const CURRENT_SCHEMA_VERSION = 7
 
 export interface Migration {
   version: number
@@ -262,6 +262,104 @@ const migrations: Migration[] = [
         newQuoteNumber = newQuoteNumber.replace(currentStyle, label)
         updateStmt.run(label, newQuoteNumber, row.id)
       }
+    },
+  },
+  {
+    version: 5,
+    name: 'add-table-data',
+    description: '为 quotes 表添加 tableData 字段，持久化在线表格二维数据（用户编辑后的值），仅新增订单时从模板加载，后续以数据库为准',
+    up: (db: any) => {
+      // tableData 存储 JSON 字符串：二维数组 (string|number|null)[][]
+      db.exec(`ALTER TABLE quotes ADD COLUMN tableData TEXT DEFAULT '[]'`)
+    },
+    down: (db: any) => {
+      // 重建表移除 tableData 列（SQLite 旧版本不支持 DROP COLUMN）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quotes_backup AS SELECT * FROM quotes;
+        DROP TABLE quotes;
+        CREATE TABLE quotes AS SELECT id, user_id, customer_id, quote_number, customerName,
+          shippingAddress, productStyle, productSpec, fabricMaterial, process, handleMaterial,
+          handleSpec, quantity, boxSpec, remark, sampleFee, sampleDays, massDays, unitPrice,
+          productionTimeStart, productionTimeEnd, costPrice, priceWithTax, sellPriceNoTax,
+          sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
+          paymentTime, endTime, images, created_at, updated_at FROM quotes_backup;
+        DROP TABLE quotes_backup;
+      `)
+    },
+  },
+  {
+    version: 6,
+    name: 'add-removed-formula-addresses',
+    description: '为 quotes 表添加 removedFormulaAddresses 字段，持久化用户已删除的公式地址列表，加载时排除这些公式使 tableData 值生效',
+    up: (db: any) => {
+      // removedFormulaAddresses 存储 JSON 字符串：字符串数组 ["J8", "K9"]
+      db.exec(`ALTER TABLE quotes ADD COLUMN removedFormulaAddresses TEXT DEFAULT '[]'`)
+    },
+    down: (db: any) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quotes_backup AS SELECT * FROM quotes;
+        DROP TABLE quotes;
+        CREATE TABLE quotes AS SELECT id, user_id, customer_id, quote_number, customerName,
+          shippingAddress, productStyle, productSpec, fabricMaterial, process, handleMaterial,
+          handleSpec, quantity, boxSpec, remark, sampleFee, sampleDays, massDays, unitPrice,
+          productionTimeStart, productionTimeEnd, costPrice, priceWithTax, sellPriceNoTax,
+          sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
+          paymentTime, endTime, images, tableData, created_at, updated_at FROM quotes_backup;
+        DROP TABLE quotes_backup;
+      `)
+    },
+  },
+  {
+    version: 7,
+    name: 'add-product-code-and-default-styles',
+    description: 'V0.4：为 products 表添加 code 字段（款式编码，对应 quotes.productStyle 1-6），并插入 6 条默认款式产品，使款式数据来源由产品管理模块统一管理',
+    up: (db: any) => {
+      // 1. 新增 code 字段（可空，普通产品可为空）
+      db.exec(`ALTER TABLE products ADD COLUMN code TEXT DEFAULT ''`)
+
+      // 2. 创建唯一索引：非空 code 唯一，避免重复款式编码；空 code 允许多条（普通产品）
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_products_code ON products(code) WHERE code != ''`)
+
+      // 3. 插入 6 条默认款式产品（幂等：INSERT OR IGNORE 保证重复执行不报错）
+      const insertStmt = db.prepare(
+        `INSERT OR IGNORE INTO products (id, name, code, sku, description, price, category, stock)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      const defaultStyles = [
+        { id: 'style-1', name: '无底无侧普通袋', code: '1' },
+        { id: 'style-2', name: '有底无侧普通袋', code: '2' },
+        { id: 'style-3', name: '有底有侧普通袋', code: '3' },
+        { id: 'style-4', name: '手提连底普通拼接袋', code: '4' },
+        { id: 'style-5', name: '手提连底高级拼接袋', code: '5' },
+        { id: 'style-6', name: '手提无连底拼接袋', code: '6' },
+      ]
+      for (const s of defaultStyles) {
+        insertStmt.run(s.id, s.name, s.code, `STYLE-${s.code}`, `${s.name}款式`, 0, '款式', 0)
+      }
+    },
+    down: (db: any) => {
+      // 1. 删除插入的默认款式产品
+      db.exec(`DELETE FROM products WHERE id IN ('style-1','style-2','style-3','style-4','style-5','style-6')`)
+      // 2. 删除唯一索引
+      db.exec(`DROP INDEX IF EXISTS idx_products_code`)
+      // 3. 重建 products 表移除 code 列（SQLite 旧版本不支持 DROP COLUMN）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS products_backup AS SELECT id, name, sku, description, price, category, stock, created_at, updated_at FROM products;
+        DROP TABLE products;
+        CREATE TABLE products (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          sku TEXT DEFAULT '',
+          description TEXT DEFAULT '',
+          price REAL DEFAULT 0,
+          category TEXT DEFAULT '',
+          stock INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now','localtime')),
+          updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO products SELECT id, name, sku, description, price, category, stock, created_at, updated_at FROM products_backup;
+        DROP TABLE products_backup;
+      `)
     },
   },
 ]

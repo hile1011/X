@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter } from 'lucide-react'
+import { getStyleLabelFromProducts } from '../services/productStyles'
+import type { Product } from '../types'
 
 const STATUS_OPTIONS = [
   { value: 1, label: '报价中', color: 'bg-blue-100 text-blue-700', bgColor: 'bg-blue-500' },
@@ -10,15 +12,6 @@ const STATUS_OPTIONS = [
   { value: 4, label: '已发货未收款', color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500' },
   { value: 5, label: '已发货已收款', color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500' },
   { value: 6, label: '结束', color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500' },
-]
-
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
 ]
 
 // 默认选中的订单状态：打样中、做货中、已发货未收款
@@ -65,11 +58,6 @@ const getInitialProfitMode = (): ProfitMode => {
   return 'noTax'
 }
 
-const getStyleLabel = (value: string): string => {
-  const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
-  return option ? option.label : value
-}
-
 interface Quote {
   id: string
   quote_number: string
@@ -97,8 +85,15 @@ export default function Dashboard() {
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<string>(getInitialMonth)
   const [profitMode, setProfitMode] = useState<ProfitMode>(getInitialProfitMode)
+  // 产品列表：从产品管理模块获取，用于款式标签显示
+  const [products, setProducts] = useState<Product[]>([])
   const filterRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+
+  // 获取产品列表（款式标签数据源）
+  useEffect(() => {
+    api.products.getAll().then((data: Product[]) => setProducts(data))
+  }, [])
 
   // 点击筛选器外部时关闭下拉
   useEffect(() => {
@@ -569,7 +564,7 @@ export default function Dashboard() {
                             </span>
                           </div>
                           <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
-                          <p className="text-xs text-gray-500">{getStyleLabel(quote.productStyle)} - {quote.quantity}个</p>
+                          <p className="text-xs text-gray-500">{getStyleLabelFromProducts(products, quote.productStyle)} - {quote.quantity}个</p>
                         </div>
                         <div className="flex-1 relative h-10">
                           {/* 背景轨道 */}
@@ -643,7 +638,7 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-gray-700 font-medium">
-                            {quote.customerName}-{getStyleLabel(quote.productStyle)}-{quote.quantity}个-{quote.productSpec}CM
+                            {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个-{quote.productSpec}CM
                           </span>
                         </div>
                         <span className={`text-xs font-semibold px-2 py-1 rounded-full ${getStatusColor(quote.status)}`}>

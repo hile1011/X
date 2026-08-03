@@ -137,7 +137,20 @@ const PRODUCT_STYLE_OPTIONS = [
   { value: '6', label: '手提无连底拼接袋' },
 ]
 
+// 6 个默认款式产品的 id（迁移脚本 v7 插入，不可删除）
+export const DEFAULT_STYLE_PRODUCT_IDS = ['style-1', 'style-2', 'style-3', 'style-4', 'style-5', 'style-6']
+
+/** 判断产品是否为默认款式（默认款式不可删除） */
+export function isDefaultStyleProduct(id: string): boolean {
+  return DEFAULT_STYLE_PRODUCT_IDS.includes(id)
+}
+
 const getStyleLabel = (value: string): string => {
+  // 优先从 products 表查询（动态数据源：款式标签由产品管理模块维护）
+  // value 可能是款式 code（1-6）或产品 id（无 code 的产品），按 code 或 id 匹配
+  const row = dbConn.prepare('SELECT name FROM products WHERE code = ? OR id = ?').get(value, value) as { name?: string } | undefined
+  if (row?.name) return row.name
+  // 兜底：硬编码默认款式（保证迁移前/异常场景/测试仍可用）
   const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
   return option ? option.label : value
 }
@@ -210,9 +223,9 @@ export const dbApi = {
     },
     create: (data: Partial<Product>) => {
       const id = `prod-${Date.now()}`
-      dbConn.prepare(`INSERT INTO products (id, name, sku, description, price, category, stock)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
-        id, data.name || '', data.sku || '', data.description || '',
+      dbConn.prepare(`INSERT INTO products (id, name, sku, code, description, price, category, stock)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, data.name || '', data.sku || '', data.code ?? '', data.description || '',
         data.price || 0, data.category || '', data.stock || 0
       )
       persist()
@@ -222,8 +235,8 @@ export const dbApi = {
       const existing = dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
       if (!existing) return null
       const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE products SET name=?, sku=?, description=?, price=?, category=?, stock=?, updated_at=?
-        WHERE id=?`).run(row.name, row.sku, row.description, row.price, row.category, row.stock, row.updated_at, id)
+      dbConn.prepare(`UPDATE products SET name=?, sku=?, code=?, description=?, price=?, category=?, stock=?, updated_at=?
+        WHERE id=?`).run(row.name, row.sku, row.code ?? '', row.description, row.price, row.category, row.stock, row.updated_at, id)
       persist()
       return row as Product
     },
@@ -307,6 +320,8 @@ export const dbApi = {
       return rows.map((r) => {
         const c = toCamelRow(r)
         c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
+        c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
+        c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
         return c
       }) as Quote[]
     },
@@ -315,6 +330,8 @@ export const dbApi = {
       if (!row) return null
       const c = toCamelRow(row)
       c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
+      c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
+      c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
       return c as Quote
     },
     create: (data: Partial<Quote>) => {
@@ -323,15 +340,15 @@ export const dbApi = {
       const timestamp = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       const customerName = data.customerName || ''
       const productStyle = data.productStyle || '1'
-      const quoteNumber = `${customerName}-${timestamp}-${getStyleLabel(productStyle)}`
+      const quoteNumber = `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
       const id = `quote-${Date.now()}`
 
       dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
-        shippingTime, paymentTime, endTime, images)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷',
@@ -341,7 +358,9 @@ export const dbApi = {
         data.unitPrice || '', data.productionTimeStart || today, data.productionTimeEnd || '',
         data.costPrice || 0, data.priceWithTax || 0, data.sellPriceNoTax || 0, data.sellPriceWithTax || 0,
         data.status || 1, today, '', '', '', '', '',
-        JSON.stringify(data.images || [])
+        JSON.stringify(data.images || []),
+        JSON.stringify(data.tableData || []),
+        JSON.stringify(data.removedFormulaAddresses || [])
       )
       persist()
 
@@ -368,32 +387,42 @@ export const dbApi = {
         sampleTime: '', productionStartTime: '',
         shippingTime: '', paymentTime: '', endTime: '',
         images: data.images || [],
+        tableData: data.tableData || [],
+        removedFormulaAddresses: data.removedFormulaAddresses || [],
         created_at: timeNow(), updated_at: timeNow(),
       }
     },
     update: (id: string, data: Partial<Quote>) => {
       const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
-      let updatedQuote: Quote = { ...(toCamelRow(existing) as Quote), ...data, updated_at: timeNow() }
+      // 解析 existing 中的 JSON 字段（tableData/images/removedFormulaAddresses 存储为字符串）
+      const existingParsed = toCamelRow(existing) as Quote
+      existingParsed.images = typeof (existingParsed as any).images === 'string' ? JSON.parse((existingParsed as any).images || '[]') : (existingParsed.images || [])
+      existingParsed.tableData = typeof (existingParsed as any).tableData === 'string' ? JSON.parse((existingParsed as any).tableData || '[]') : (existingParsed.tableData || [])
+      existingParsed.removedFormulaAddresses = typeof (existingParsed as any).removedFormulaAddresses === 'string' ? JSON.parse((existingParsed as any).removedFormulaAddresses || '[]') : ((existingParsed as any).removedFormulaAddresses || [])
+      let updatedQuote: Quote = { ...existingParsed, ...data, updated_at: timeNow() }
 
       if (data.customerName !== undefined || data.productStyle !== undefined) {
         const customerName = data.customerName !== undefined ? data.customerName : existing.customerName
         const productStyle = data.productStyle !== undefined ? data.productStyle : existing.productStyle
         const timestampMatch = existing.quote_number.match(/\d{14}/)
         const timestamp = timestampMatch ? timestampMatch[0] : ''
-        updatedQuote.quote_number = `${customerName}-${timestamp}-${getStyleLabel(productStyle)}`
+        updatedQuote.quote_number = `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
       }
 
       if (data.images !== undefined) {
         updatedQuote.images = data.images
       }
+      // tableData/removedFormulaAddresses 持久化为 JSON 字符串；返回给前端时保持数组形式
+      const tableDataJson = JSON.stringify(updatedQuote.tableData || [])
+      const removedFormulaAddressesJson = JSON.stringify(updatedQuote.removedFormulaAddresses || [])
 
       dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, shippingAddress=?,
         productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
         status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
-        images=?, updated_at=? WHERE id=?`).run(
+        images=?, tableData=?, removedFormulaAddresses=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id,
         updatedQuote.shippingAddress, updatedQuote.productStyle, updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
@@ -403,7 +432,7 @@ export const dbApi = {
         updatedQuote.costPrice, updatedQuote.priceWithTax, updatedQuote.sellPriceNoTax, updatedQuote.sellPriceWithTax,
         updatedQuote.status, updatedQuote.sampleTime, updatedQuote.productionStartTime,
         updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
-        JSON.stringify(updatedQuote.images || []), updatedQuote.updated_at, id
+        JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, updatedQuote.updated_at, id
       )
       persist()
       return updatedQuote

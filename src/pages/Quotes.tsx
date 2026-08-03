@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
+import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
+import { TooltipCell } from '../components/TooltipCell'
+import type { Product } from '../types'
 
 export interface Quote {
   id: string
@@ -50,20 +53,6 @@ const STATUS_OPTIONS = [
   { value: 6, label: '结束' },
 ]
 
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
-
-const getStyleLabel = (value: string): string => {
-  const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
-  return option ? option.label : value
-}
-
 interface GroupedQuotes {
   customerName: string
   expanded: boolean
@@ -82,15 +71,20 @@ export default function Quotes() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
+  // 款式选项与产品列表：从产品管理模块动态获取
+  const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
+  const [products, setProducts] = useState<Product[]>([])
   const navigate = useNavigate()
 
   useEffect(() => {
     fetchQuotes()
+    fetchStyleOptions().then(setStyleOptions)
+    api.products.getAll().then((data: Product[]) => setProducts(data))
   }, [])
 
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter])
+  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products])
 
   const fetchQuotes = async () => {
     setLoading(true)
@@ -109,7 +103,7 @@ export default function Quotes() {
       const matchesSearch = 
         quote.quote_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        getStyleLabel(quote.productStyle).toLowerCase().includes(searchTerm.toLowerCase())
+        getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(searchTerm.toLowerCase())
       
       const matchesStatus = 
         statusFilter === 'all' ||
@@ -121,7 +115,7 @@ export default function Quotes() {
       
       const matchesStyle = !styleFilter || 
         quote.productStyle.toLowerCase().includes(styleFilter.toLowerCase()) ||
-        getStyleLabel(quote.productStyle).toLowerCase().includes(styleFilter.toLowerCase())
+        getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(styleFilter.toLowerCase())
       
       return matchesSearch && matchesStatus && matchesCustomer && matchesStyle
     })
@@ -275,7 +269,7 @@ export default function Quotes() {
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜索订单号..."
+                placeholder="搜索客户/款式/订单号..."
                 className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
               />
             </div>
@@ -300,7 +294,7 @@ export default function Quotes() {
                 className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none appearance-none cursor-pointer"
               >
                 <option value="">款式</option>
-                {PRODUCT_STYLE_OPTIONS.map((style) => (
+                {styleOptions.map((style) => (
                   <option key={style.value} value={style.value}>{style.label}</option>
                 ))}
               </select>
@@ -329,15 +323,16 @@ export default function Quotes() {
           </div>
         ) : (
           <div className="flex-1 overflow-auto">
-            <div className="min-w-[1700px]">
+            <div className="min-w-[1764px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                 <div className="flex">
                   <div className="w-16 px-4 py-3 flex-shrink-0"></div>
-                  <div className="w-48 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单号</div>
                   <div className="w-40 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">款式</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">产品规格</div>
                   <div className="w-24 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">数量</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">面料</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">工艺</div>
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">成本价</div>
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(不含税)</div>
@@ -403,27 +398,42 @@ export default function Quotes() {
                               )}
                             </div>
 
-                            {/* 订单号 */}
-                            <div className="w-48 px-4 py-4 flex-shrink-0">
-                              <span className="font-medium text-gray-800 text-sm truncate block">
-                                {quote.quote_number}
-                              </span>
-                            </div>
-
                             {/* 款式 */}
-                            <div className="w-40 px-4 py-4 flex-shrink-0 text-gray-600 text-sm">
-                              {getStyleLabel(quote.productStyle)}
-                            </div>
+                            <TooltipCell
+                              className="w-40 px-4 py-4 text-gray-600 text-sm"
+                              tooltip={getStyleLabelFromProducts(products, quote.productStyle)}
+                            >
+                              {getStyleLabelFromProducts(products, quote.productStyle)}
+                            </TooltipCell>
 
                             {/* 产品规格 */}
-                            <div className="w-36 px-4 py-4 flex-shrink-0 text-gray-600 text-sm">
+                            <TooltipCell
+                              className="w-36 px-4 py-4 text-gray-600 text-sm"
+                              tooltip={quote.productSpec ? `${quote.productSpec}CM` : ''}
+                            >
                               {quote.productSpec}{quote.productSpec ? 'CM' : ''}
-                            </div>
+                            </TooltipCell>
 
                             {/* 数量 */}
                             <div className="w-24 px-4 py-4 flex-shrink-0 text-gray-600 text-sm">
                               {quote.quantity}{quote.quantity ? '个' : ''}
                             </div>
+
+                            {/* 面料 */}
+                            <TooltipCell
+                              className="w-32 px-4 py-4 text-gray-600 text-sm"
+                              tooltip={quote.fabricMaterial}
+                            >
+                              {quote.fabricMaterial}
+                            </TooltipCell>
+
+                            {/* 工艺 */}
+                            <TooltipCell
+                              className="w-32 px-4 py-4 text-gray-600 text-sm"
+                              tooltip={quote.process}
+                            >
+                              {quote.process}
+                            </TooltipCell>
 
                             {/* 成本价 */}
                             <div className="w-28 px-4 py-4 flex-shrink-0">

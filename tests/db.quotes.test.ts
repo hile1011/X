@@ -148,7 +148,7 @@ describe('Quote 订单号生成', () => {
       customerName: '深圳科技公司',
       productStyle: '3',
     })
-    expect(quote.quote_number).toMatch(/^深圳科技公司-\d{14}-有底有侧普通袋$/)
+    expect(quote.quote_number).toMatch(/^深圳科技公司-有底有侧普通袋-\d{14}$/)
   })
 
   it('修改客户名称时保留原时间戳，更新订单号', () => {

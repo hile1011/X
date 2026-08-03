@@ -21,6 +21,27 @@ import {
 export const exportRouter = express.Router()
 
 /**
+ * 构建款式标签解析器：从产品管理模块获取所有产品的 code→name 和 id→name 映射，
+ * 用于 Excel 导出时动态解析款式标签（产品改名后导出使用新名称）。
+ * value 可能是款式 code（1-6）或产品 id（无 code 的产品），故同时按 code 和 id 建映射。
+ * 返回 null 时由 excelExport 内部硬编码 getStyleLabel 兜底。
+ */
+function buildStyleLabelResolver(): ((code: string) => string) | null {
+  try {
+    const products = db.products.getAll()
+    if (products.length === 0) return null
+    const styleMap = new Map<string, string>()
+    for (const p of products) {
+      if (p.code && p.code.trim() !== '') styleMap.set(p.code, p.name)
+      styleMap.set(p.id, p.name)
+    }
+    return (code: string) => styleMap.get(code) || ''
+  } catch {
+    return null
+  }
+}
+
+/**
  * POST /api/export/orders
  * Body: { orderIds: string[] }  — 要导出的订单 ID 列表
  *  - 传空数组时导出全部订单
@@ -47,7 +68,8 @@ exportRouter.post(
     }
 
     try {
-      const workbook = await generateOrdersExcel(orders)
+      const styleLabelResolver = buildStyleLabelResolver() || undefined
+      const workbook = await generateOrdersExcel(orders, styleLabelResolver)
       const buffer = await workbookToBuffer(workbook)
       const filename = generateFileName('OrderExport')
 
@@ -92,10 +114,11 @@ exportRouter.post(
     }
 
     try {
+      const styleLabelResolver = buildStyleLabelResolver() || undefined
       const workbook = await generateOrderWithTableExcel(order, {
         data: tableData.data,
         formulas: tableData.formulas || {},
-      })
+      }, styleLabelResolver)
       const buffer = await workbookToBuffer(workbook)
       const filename = generateFileName(`Order_${order.customerName}`)
 

@@ -61,7 +61,7 @@ function getStyleLabel(value: string): string {
 }
 
 function generateQuoteNumber(customerName: string, timestamp: string, productStyle: string): string {
-  return `${customerName}-${timestamp}-${getStyleLabel(productStyle)}`
+  return `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
 }
 
 // ============================ 测试 ============================
@@ -167,9 +167,9 @@ describe('splitHandleField - 手提字段拆分', () => {
 })
 
 describe('generateQuoteNumber - 订单号生成', () => {
-  it('格式正确：客户-时间戳-款式', () => {
+  it('格式正确：客户-款式-时间戳（时间戳在末尾）', () => {
     const number = generateQuoteNumber('测试客户', '20260731143000', '1')
-    expect(number).toBe('测试客户-20260731143000-无底无侧普通袋')
+    expect(number).toBe('测试客户-无底无侧普通袋-20260731143000')
   })
 
   it('款式1 → 无底无侧普通袋', () => {
