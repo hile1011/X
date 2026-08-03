@@ -574,6 +574,8 @@ const SC = {
   yellow: '#FFFF00', blue: '#91AADF', orange: '#F4B382',
   darkOrange: '#EE822F', lightOrange: '#F8CBAD', red: '#FF0000', black: '#000000',
   headerBg: '#4472C4', headerColor: '#FFFFFF',
+  // 公式单元格背景色（浅橙）：实时标识含公式的单元格，便于用户区分公式与输入值
+  formulaBg: '#F8CBAD',
 }
 const BORDER = { borderColor: SC.black, borderLineWidth: 1 }
 
@@ -581,6 +583,10 @@ const BORDER = { borderColor: SC.black, borderLineWidth: 1 }
 const cellStyleOverrides = new Map<string, Record<string, unknown>>()
 // 单元格数字格式覆盖：key = "col,row"，value = 小数位数（-1=常规, 0=整数, 2=2位, 4=4位）
 const cellFormatOverrides = new Map<string, number>()
+
+// 公式引擎引用（模块级，供 getCellStyle 实时检测单元格是否含公式）
+// 在 useEffect 创建 VTableSheet 后赋值，组件卸载或重建表格时清空
+let activeFormulaManager: any = null
 
 // 辅助：构建单元格样式（字体统一加大4号、加粗）
 const cs = (
@@ -592,7 +598,11 @@ const cs = (
 })
 
 // 按行+列返回单元格样式（VTable 行列均为 0-based）
-// 规则：第一列无值但其他列有值的行 → 标题颜色；其余行无背景色
+// 规则：
+//   1. 第一列无值但其他列有值的行 → 标题颜色（蓝底白字）
+//   2. 含公式的单元格 → 浅橙背景（实时标识公式单元格，便于区分公式与输入值）
+//   3. 其余单元格无背景色
+// 优先级：标题样式 < 公式绿色背景 < 用户右键菜单覆盖
 const getCellStyle = (args: { row: number; col: number; table?: any }): Record<string, unknown> => {
   const { row, col, table } = args
   // 判断是否为标题行（第一列无值但其他列有值）
@@ -608,7 +618,19 @@ const getCellStyle = (args: { row: number; col: number; table?: any }): Record<s
   }
   const style = isTitleRow ? cs(SC.headerBg, SC.headerColor) : cs(undefined)
 
-  // 合并用户通过右键菜单设置的样式覆盖
+  // 实时检测公式单元格：通过公式引擎查询该单元格是否有公式
+  // 公式引擎在 VTableSheet 构造时已载入，getCellFormula 返回公式字符串（如 "=B2"）或 undefined
+  let hasFormula = false
+  if (activeFormulaManager?.getCellFormula) {
+    const formula = activeFormulaManager.getCellFormula({ sheet: SHEET_KEY, row, col })
+    hasFormula = !!formula
+  }
+  // 公式单元格应用浅橙背景（不覆盖标题行的白字，仅改背景色）
+  if (hasFormula) {
+    style.bgColor = SC.formulaBg
+  }
+
+  // 合并用户通过右键菜单设置的样式覆盖（最高优先级）
   const override = cellStyleOverrides.get(`${col},${row}`)
   return override ? { ...style, ...override } : style
 }
@@ -952,6 +974,8 @@ export default function BagQuote() {
       ],
     })
     sheetInstanceRef.current = sheet
+    // 将公式引擎引用赋值给模块级变量，供 getCellStyle 实时检测公式单元格
+    activeFormulaManager = (sheet as any).formulaManager
 
     // 表格对订单信息的联动（动态定位行和列）：
     // 成本价       = 汇总行 × 参考卖价列（以"汇总"文字定位行，以"参考卖价"列标题定位列）
@@ -1078,12 +1102,15 @@ export default function BagQuote() {
     // 公式引擎可能在构造后异步完成计算，延迟再次重算+读取以确保公式值正确初始化
     const initTimer1 = setTimeout(() => { recalculateFormulas(); syncFromTable() }, 100)
     const initTimer2 = setTimeout(() => { recalculateFormulas(); syncFromTable() }, 500)
-    // 监听单元格变更：先重算公式单元格（覆盖静态值），再同步订单信息
+    // 监听单元格变更：先重算公式单元格（覆盖静态值），再同步订单信息，最后刷新样式
     const onCellChange = () => {
       // 仅用户编辑（非程序重算）触发的变更标记为 dirty，用于款式切换提示
       if (!isRecalculating.current) setIsTableDirty(true)
       recalculateFormulas()
       syncFromTable()
+      // 实时刷新单元格样式：用户可能新增/删除/修改公式，需重新检测公式单元格并应用浅橙背景
+      // invalidate 使 VTable 丢弃渲染缓存并重新调用 getCellStyle，确保公式高亮实时更新
+      try { activeTable?.invalidate?.() } catch { /* VTable 未就绪时忽略 */ }
     }
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
@@ -1150,6 +1177,7 @@ export default function BagQuote() {
       menuObserver.disconnect()
       sheet.release()
       sheetInstanceRef.current = null
+      activeFormulaManager = null
       cellStyleOverrides.clear()
       cellFormatOverrides.clear()
     }
@@ -1325,7 +1353,7 @@ export default function BagQuote() {
     <div className="min-h-screen flex flex-col">
       {/* 顶部悬浮栏（sticky 使其限定在 main 内容区内，不覆盖左侧菜单栏） */}
       <div className="shrink-0 sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100">
-        <div className="px-4 py-2 max-w-7xl mx-auto">
+        <div className="px-6 py-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -1359,7 +1387,7 @@ export default function BagQuote() {
       </div>
 
       {/* 主内容区域（shrink-0：订单信息区按内容高度，不压缩） */}
-      <div className="shrink-0 px-4 pt-4 pb-0 max-w-7xl mx-auto w-full">
+      <div className="shrink-0 px-6 pt-4 pb-0 w-full">
         {/* 状态流转（位于卖价上方） */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
           <div className="flex items-center justify-between gap-3 mb-2">
@@ -1641,9 +1669,9 @@ export default function BagQuote() {
               </div>
 
               {/* 表单字段 - 密集网格。LG:6列 MD:4列 SM:2列
-              同行规则：客户+地址 / 大货日期+天数 / 手提材质+规格 / 打样费+箱规+备注 */}
+              同行规则：客户+打样费+箱规 / 大货日期+天数 / 面料+工艺+手提 / 收货地址+备注 */}
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5">
-                {/* 行1：客户名称 + 收货地址 同行 */}
+                {/* 行1：客户名称 + 打样费/天 + 箱规 */}
                 <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
                   <CustomerSelect
@@ -1654,15 +1682,31 @@ export default function BagQuote() {
                     placeholder="请选择或输入客户名称"
                   />
                 </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-4">
-                  <label className="block text-xs text-gray-400 mb-0.5">收货地址</label>
-                  <textarea
-                    value={orderInfo.shippingAddress}
-                    onChange={(e) => updateOrderField('shippingAddress', e.target.value)}
-                    placeholder="请输入收货地址"
-                    rows={1}
-                    className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                  />
+                {/* 打样费与打样天数合并为文本输入框，格式：费用/天数 */}
+                <div className="col-span-1 md:col-span-1 lg:col-span-2">
+                  <label className="block text-xs text-gray-400 mb-0.5">打样费/天</label>
+                  <input
+                    type="text"
+                    value={[orderInfo.sampleFee, orderInfo.sampleDays].filter(Boolean).join('/')}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      const idx = v.indexOf('/')
+                      if (idx >= 0) {
+                        updateOrderField('sampleFee', v.slice(0, idx))
+                        updateOrderField('sampleDays', v.slice(idx + 1))
+                      } else {
+                        updateOrderField('sampleFee', v)
+                        updateOrderField('sampleDays', '')
+                      }
+                    }}
+                    placeholder="费用/天数"
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                </div>
+                <div className="col-span-1 md:col-span-1 lg:col-span-2">
+                  <label className="block text-xs text-gray-400 mb-0.5">箱规</label>
+                  <input type="text" value={orderInfo.boxSpec} onChange={(e) => updateOrderField('boxSpec', e.target.value)}
+                    placeholder="箱规"
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
                 {/* 行2：大货日期/天数 + 款式 + 数量 + 产品规格 */}
@@ -1730,64 +1774,51 @@ export default function BagQuote() {
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
-                {/* 行3：面料材质 + 工艺 + 手提 + 打样费/天（合并文本框） */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">面料材质</label>
-                  <input type="text" value={orderInfo.fabricMaterial} onChange={(e) => updateOrderField('fabricMaterial', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">工艺</label>
-                  <input type="text" value={orderInfo.process} onChange={(e) => updateOrderField('process', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                {/* 手提材质与手提规格合并为单字段，格式：手提材质：手提规格 */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">手提</label>
-                  <input
-                    type="text"
-                    value={[orderInfo.handleMaterial, orderInfo.handleSpec].filter(Boolean).join('：')}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      const idx = v.indexOf('：')
-                      if (idx >= 0) {
-                        updateOrderField('handleMaterial', v.slice(0, idx))
-                        updateOrderField('handleSpec', v.slice(idx + 1))
-                      } else {
-                        updateOrderField('handleMaterial', v)
-                        updateOrderField('handleSpec', '')
-                      }
-                    }}
-                    placeholder="材质：规格"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
-                </div>
-                {/* 打样费与打样天数合并为文本输入框，格式：费用/天数 */}
-                <div className="col-span-1 md:col-span-1 lg:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">打样费/天</label>
-                  <input
-                    type="text"
-                    value={[orderInfo.sampleFee, orderInfo.sampleDays].filter(Boolean).join('/')}
-                    onChange={(e) => {
-                      const v = e.target.value
-                      const idx = v.indexOf('/')
-                      if (idx >= 0) {
-                        updateOrderField('sampleFee', v.slice(0, idx))
-                        updateOrderField('sampleDays', v.slice(idx + 1))
-                      } else {
-                        updateOrderField('sampleFee', v)
-                        updateOrderField('sampleDays', '')
-                      }
-                    }}
-                    placeholder="费用/天数"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                {/* 行3：面料材质 + 工艺 + 手提 — flex 精确控制比例（2:4:3）
+                    面料材质缩短原长的1/3，工艺相应加长 */}
+                <div className="col-span-2 md:col-span-4 lg:col-span-6 flex gap-x-3 gap-y-1.5">
+                  <div style={{ flex: '2 1 0%' }}>
+                    <label className="block text-xs text-gray-400 mb-0.5">面料材质</label>
+                    <input type="text" value={orderInfo.fabricMaterial} onChange={(e) => updateOrderField('fabricMaterial', e.target.value)}
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                  </div>
+                  <div style={{ flex: '4 1 0%' }}>
+                    <label className="block text-xs text-gray-400 mb-0.5">工艺</label>
+                    <input type="text" value={orderInfo.process} onChange={(e) => updateOrderField('process', e.target.value)}
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                  </div>
+                  {/* 手提材质与手提规格合并为单字段，格式：手提材质：手提规格 */}
+                  <div style={{ flex: '3 1 0%' }}>
+                    <label className="block text-xs text-gray-400 mb-0.5">手提</label>
+                    <input
+                      type="text"
+                      value={[orderInfo.handleMaterial, orderInfo.handleSpec].filter(Boolean).join('：')}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        const idx = v.indexOf('：')
+                        if (idx >= 0) {
+                          updateOrderField('handleMaterial', v.slice(0, idx))
+                          updateOrderField('handleSpec', v.slice(idx + 1))
+                        } else {
+                          updateOrderField('handleMaterial', v)
+                          updateOrderField('handleSpec', '')
+                        }
+                      }}
+                      placeholder="材质：规格"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                  </div>
                 </div>
 
-                {/* 行4：箱规 + 备注 */}
-                <div className="col-span-2 md:col-span-1 lg:col-span-2">
-                  <label className="block text-xs text-gray-400 mb-0.5">箱规</label>
-                  <input type="text" value={orderInfo.boxSpec} onChange={(e) => updateOrderField('boxSpec', e.target.value)}
-                    placeholder="箱规"
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                {/* 行4：收货地址 + 备注 */}
+                <div className="col-span-2 md:col-span-2 lg:col-span-3">
+                  <label className="block text-xs text-gray-400 mb-0.5">收货地址</label>
+                  <textarea
+                    value={orderInfo.shippingAddress}
+                    onChange={(e) => updateOrderField('shippingAddress', e.target.value)}
+                    placeholder="请输入收货地址"
+                    rows={3}
+                    className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                  />
                 </div>
                 <div className="col-span-2 md:col-span-2 lg:col-span-3">
                   <label className="block text-xs text-gray-400 mb-0.5">备注</label>
@@ -1795,7 +1826,7 @@ export default function BagQuote() {
                     value={orderInfo.remark}
                     onChange={(e) => updateOrderField('remark', e.target.value)}
                     placeholder="请输入备注信息"
-                    rows={1}
+                    rows={3}
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none"
                   />
                 </div>
@@ -1877,9 +1908,9 @@ export default function BagQuote() {
             </div>
         </div>
 
-        {/* 在线表格 — 全宽，不受订单信息的 max-w-7xl 限制 */}
+        {/* 在线表格 — 全宽，填满 Layout main 容器 */}
       </div>
-      <div className="flex-1 min-h-0 px-4 pt-1 pb-4 max-w-7xl mx-auto w-full flex flex-col">
+      <div className="flex-1 min-h-0 px-6 pt-1 pb-4 w-full flex flex-col">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0">
           <div ref={sheetContainerRef} className="h-full w-full" style={{ minHeight: 400 }} />
         </div>

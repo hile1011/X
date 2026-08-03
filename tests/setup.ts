@@ -7,7 +7,6 @@
 const createCtxMock = () => {
   const ctx: Record<string, any> = {}
   const noop = () => {}
-  const chainable = () => ctx
 
   // 绘制方法（返回 undefined，与真实 Canvas API 一致）
   ;[

@@ -1,9 +1,11 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { ArrowLeft, Save, Package, Hash, FileText, DollarSign, Tag, Box } from 'lucide-react'
 
 export default function CreateProduct() {
+  const { id } = useParams<{ id: string }>()
+  const isEditMode = !!id
   const [name, setName] = useState('')
   const [sku, setSku] = useState('')
   const [code, setCode] = useState('')
@@ -12,14 +14,41 @@ export default function CreateProduct() {
   const [category, setCategory] = useState('')
   const [stock, setStock] = useState('')
   const [loading, setLoading] = useState(false)
+  const [fetching, setFetching] = useState(isEditMode)
   const navigate = useNavigate()
+
+  // 编辑模式：加载已有产品数据填充表单
+  useEffect(() => {
+    if (!isEditMode) return
+    let cancelled = false
+    const fetchProduct = async () => {
+      setFetching(true)
+      try {
+        const data = await api.products.getById(id!)
+        if (cancelled) return
+        setName(data.name || '')
+        setSku(data.sku || '')
+        setCode(data.code || '')
+        setDescription(data.description || '')
+        setPrice(data.price != null ? String(data.price) : '')
+        setCategory(data.category || '')
+        setStock(data.stock != null ? String(data.stock) : '')
+      } catch (error) {
+        console.error('加载产品失败:', error)
+      } finally {
+        if (!cancelled) setFetching(false)
+      }
+    }
+    fetchProduct()
+    return () => { cancelled = true }
+  }, [isEditMode, id])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
     try {
-      await api.products.create({
+      const payload = {
         name,
         sku,
         code,
@@ -27,14 +56,40 @@ export default function CreateProduct() {
         price: parseFloat(price) || 0,
         category,
         stock: parseInt(stock) || 0,
-      })
-
-      navigate('/products')
+      }
+      if (isEditMode) {
+        await api.products.update(id!, payload)
+        // 编辑后跳转回详情页，便于确认修改结果
+        navigate(`/products/${id}`)
+      } else {
+        await api.products.create(payload)
+        navigate('/products')
+      }
     } catch (error) {
-      console.error('创建产品失败:', error)
+      console.error(isEditMode ? '更新产品失败:' : '创建产品失败:', error)
     } finally {
       setLoading(false)
     }
+  }
+
+  if (fetching) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center gap-4 mb-6">
+          <button
+            onClick={() => navigate('/products')}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <h1 className="text-2xl font-bold text-gray-800">加载中...</h1>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+          <p className="text-gray-500 mt-4">加载产品信息...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -48,8 +103,8 @@ export default function CreateProduct() {
               <ArrowLeft size={20} />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-gray-800">添加产品</h1>
-              <p className="text-gray-500 mt-1">填写产品基本信息</p>
+              <h1 className="text-2xl font-bold text-gray-800">{isEditMode ? '编辑产品' : '添加产品'}</h1>
+              <p className="text-gray-500 mt-1">{isEditMode ? '修改产品基本信息' : '填写产品基本信息'}</p>
             </div>
           </div>
           <button

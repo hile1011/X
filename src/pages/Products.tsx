@@ -18,9 +18,15 @@ export default function Products() {
 
   const fetchProducts = async () => {
     setLoading(true)
-    const data = await api.products.getAll()
-    setProducts(data)
-    setLoading(false)
+    try {
+      const data = await api.products.getAll()
+      setProducts(data)
+    } catch (error) {
+      console.error('加载产品列表失败:', error)
+      setProducts([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -134,7 +140,7 @@ export default function Products() {
                       <Eye size={18} />
                     </button>
                     <button
-                      onClick={() => navigate(`/products/${product.id}`)}
+                      onClick={() => navigate(`/products/${product.id}/edit`)}
                       className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                       title="编辑"
                     >

@@ -75,7 +75,7 @@ export default function ProductDetail() {
             </div>
           </div>
           <button
-            onClick={() => navigate('/products/new')}
+            onClick={() => navigate(`/products/${id}/edit`)}
             className="text-primary-600 hover:text-primary-700 font-medium"
           >
             编辑产品
