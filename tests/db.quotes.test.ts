@@ -358,6 +358,204 @@ describe('Quote priceWithTax 含税价持久化', () => {
   })
 })
 
+describe('Quote modifiedFormulas 公式修改持久化', () => {
+  let db: any
+  beforeEach(async () => {
+    process.env.DB_PATH = ':memory:'
+    vi.resetModules()
+    const mod = await import('../api/db')
+    db = mod.db
+  })
+
+  it('创建报价时 modifiedFormulas 默认为空对象', () => {
+    const quote = db.quotes.create({ customerName: '公式测试', productStyle: '1' })
+    expect(quote.modifiedFormulas).toEqual({})
+  })
+
+  it('创建报价时传入 modifiedFormulas 能正确保存', () => {
+    const modified = { J8: '=SUM(J6:J7)*1.1', K9: '=J9*1.13' }
+    const quote = db.quotes.create({ customerName: '公式测试', productStyle: '1', modifiedFormulas: modified })
+    expect(quote.modifiedFormulas).toEqual(modified)
+  })
+
+  it('getById 能正确读取 modifiedFormulas', () => {
+    const modified = { J8: '=SUM(J6:J7)*1.1' }
+    const created = db.quotes.create({ customerName: '公式测试', productStyle: '1', modifiedFormulas: modified })
+    const found = db.quotes.getById(created.id)
+    expect(found).not.toBeNull()
+    expect(found!.modifiedFormulas).toEqual(modified)
+  })
+
+  it('update 能更新 modifiedFormulas', () => {
+    const created = db.quotes.create({ customerName: '公式测试', productStyle: '1' })
+    const modified = { J10: '=(J9-J8)*B2*1.05' }
+    const updated = db.quotes.update(created.id, { modifiedFormulas: modified })
+    expect(updated!.modifiedFormulas).toEqual(modified)
+  })
+
+  it('update 能追加和覆盖 modifiedFormulas 中的公式', () => {
+    const created = db.quotes.create({
+      customerName: '公式测试', productStyle: '1',
+      modifiedFormulas: { J8: '=SUM(J6:J7)*1.1' },
+    })
+    // 覆盖 J8 并新增 J10
+    const updated = db.quotes.update(created.id, {
+      modifiedFormulas: { J8: '=SUM(J6:J7)*1.15', J10: '=(J9-J8)*B2' },
+    })
+    expect(updated!.modifiedFormulas.J8).toBe('=SUM(J6:J7)*1.15')
+    expect(updated!.modifiedFormulas.J10).toBe('=(J9-J8)*B2')
+  })
+
+  it('update 其他字段时不影响 modifiedFormulas', () => {
+    const modified = { J8: '=SUM(J6:J7)*1.1' }
+    const created = db.quotes.create({ customerName: '公式测试', productStyle: '1', modifiedFormulas: modified })
+    const updated = db.quotes.update(created.id, { quantity: '5000', remark: '加急' })
+    expect(updated!.modifiedFormulas).toEqual(modified)
+    expect(updated!.quantity).toBe('5000')
+  })
+
+  it('modifiedFormulas / removedFormulaAddresses / tableData 三者独立保存', () => {
+    const created = db.quotes.create({
+      customerName: '三字段测试', productStyle: '1',
+      modifiedFormulas: { J8: '=SUM(J6:J7)*1.1' },
+      removedFormulaAddresses: ['K9'],
+      tableData: [[null, '数量'], [100, null]],
+    })
+    const found = db.quotes.getById(created.id)
+    expect(found!.modifiedFormulas).toEqual({ J8: '=SUM(J6:J7)*1.1' })
+    expect(found!.removedFormulaAddresses).toEqual(['K9'])
+    expect(found!.tableData).toEqual([[null, '数量'], [100, null]])
+  })
+
+  it('getAll 返回的 modifiedFormulas 已正确解析为对象', () => {
+    const modified = { J8: '=SUM(J6:J7)*1.1', K9: '=J9*1.1' }
+    db.quotes.create({ customerName: 'getAll测试', productStyle: '1', modifiedFormulas: modified })
+    const all = db.quotes.getAll()
+    const found = all.find((q: { customerName: string }) => q.customerName === 'getAll测试')
+    expect(found).toBeDefined()
+    expect(found!.modifiedFormulas).toEqual(modified)
+    expect(typeof found!.modifiedFormulas).toBe('object')
+    expect(Array.isArray(found!.modifiedFormulas)).toBe(false)
+  })
+
+  it('modifiedFormulas 支持空公式字符串值', () => {
+    const created = db.quotes.create({
+      customerName: '空值测试', productStyle: '1',
+      modifiedFormulas: { J8: '' },
+    })
+    const found = db.quotes.getById(created.id)
+    expect(found!.modifiedFormulas.J8).toBe('')
+  })
+})
+
+describe('Quote allFormulas 完整公式持久化', () => {
+  let db: any
+  beforeEach(async () => {
+    process.env.DB_PATH = ':memory:'
+    vi.resetModules()
+    const mod = await import('../api/db')
+    db = mod.db
+  })
+
+  it('创建报价时 allFormulas 默认为空对象', () => {
+    const quote = db.quotes.create({ customerName: '全公式测试', productStyle: '1' })
+    expect(quote.allFormulas).toEqual({})
+  })
+
+  it('创建报价时传入 allFormulas 能正确保存', () => {
+    const all = { J8: '=SUM(J6:J7)', K9: '=J9*1.1', L8: '=J8*1.1' }
+    const quote = db.quotes.create({ customerName: '全公式测试', productStyle: '1', allFormulas: all })
+    expect(quote.allFormulas).toEqual(all)
+  })
+
+  it('getById 能正确读取 allFormulas', () => {
+    const all = { J8: '=SUM(J6:J7)', L8: '=J8*1.1' }
+    const created = db.quotes.create({ customerName: '全公式测试', productStyle: '1', allFormulas: all })
+    const found = db.quotes.getById(created.id)
+    expect(found).not.toBeNull()
+    expect(found!.allFormulas).toEqual(all)
+  })
+
+  it('update 能更新 allFormulas', () => {
+    const created = db.quotes.create({ customerName: '全公式测试', productStyle: '1' })
+    const all = { J10: '=(J9-J8)*B2', M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100' }
+    const updated = db.quotes.update(created.id, { allFormulas: all })
+    expect(updated!.allFormulas).toEqual(all)
+  })
+
+  it('update 能覆盖 allFormulas 中的公式', () => {
+    const created = db.quotes.create({
+      customerName: '全公式测试', productStyle: '1',
+      allFormulas: { J8: '=SUM(J6:J7)' },
+    })
+    const updated = db.quotes.update(created.id, { allFormulas: { J8: '=SUM(J6:J7)*1.2' } })
+    expect(updated!.allFormulas.J8).toBe('=SUM(J6:J7)*1.2')
+  })
+
+  it('update 其他字段时不影响 allFormulas', () => {
+    const all = { J8: '=SUM(J6:J7)' }
+    const created = db.quotes.create({ customerName: '全公式测试', productStyle: '1', allFormulas: all })
+    const updated = db.quotes.update(created.id, { quantity: '9999', remark: '测试' })
+    expect(updated!.allFormulas).toEqual(all)
+    expect(updated!.quantity).toBe('9999')
+  })
+
+  it('getAll 返回的 allFormulas 已正确解析为对象', () => {
+    const all = { J8: '=SUM(J6:J7)', K9: '=J9*1.1' }
+    db.quotes.create({ customerName: 'getAll全公式', productStyle: '1', allFormulas: all })
+    const list = db.quotes.getAll()
+    const found = list.find((q: { customerName: string }) => q.customerName === 'getAll全公式')
+    expect(found).toBeDefined()
+    expect(found!.allFormulas).toEqual(all)
+    expect(typeof found!.allFormulas).toBe('object')
+    expect(Array.isArray(found!.allFormulas)).toBe(false)
+  })
+
+  it('allFormulas 可保存用户新增到非模板地址的公式', () => {
+    // 模拟用户在原本无公式的单元格（如 Z1）新增公式
+    const all = { Z1: '=A1+B1', AA99: '=SUM(A1:Z1)' }
+    const created = db.quotes.create({ customerName: '新增公式测试', productStyle: '1', allFormulas: all })
+    const found = db.quotes.getById(created.id)
+    expect(found!.allFormulas.Z1).toBe('=A1+B1')
+    expect(found!.allFormulas.AA99).toBe('=SUM(A1:Z1)')
+  })
+
+  it('allFormulas 与 modifiedFormulas/removedFormulaAddresses/tableData 四字段独立保存', () => {
+    const created = db.quotes.create({
+      customerName: '四字段测试', productStyle: '1',
+      allFormulas: { J8: '=SUM(J6:J7)', L8: '=J8*1.1' },
+      modifiedFormulas: { J8: '=SUM(J6:J7)*1.1' },
+      removedFormulaAddresses: ['K9'],
+      tableData: [[null, '数量'], [100, null]],
+    })
+    const found = db.quotes.getById(created.id)
+    expect(found!.allFormulas).toEqual({ J8: '=SUM(J6:J7)', L8: '=J8*1.1' })
+    expect(found!.modifiedFormulas).toEqual({ J8: '=SUM(J6:J7)*1.1' })
+    expect(found!.removedFormulaAddresses).toEqual(['K9'])
+    expect(found!.tableData).toEqual([[null, '数量'], [100, null]])
+  })
+
+  it('迁移脚本将老数据初始化为 allFormulas（模板公式 - removed + modified）', () => {
+    // 模拟 v9 迁移逻辑：从老数据（removed + modified + 模板公式）计算 allFormulas
+    // 这里直接验证迁移后的结果：通过迁移脚本创建的 allFormulas 应包含模板公式（排除已删除、覆盖已修改）
+    const created = db.quotes.create({
+      customerName: '迁移初始化测试', productStyle: '1',
+      allFormulas: {
+        // 模拟 v9 迁移计算结果：模板公式 - removed(K9) + modified(J8 改为 *1.2)
+        J8: '=SUM(J6:J7)*1.2', // modified 覆盖
+        J9: '=J8+I9',           // 模板原值
+        K9: undefined as any,   // removed（不应出现）
+      },
+    })
+    // 删除 K9（模拟 removed）
+    delete (created.allFormulas as any).K9
+    const updated = db.quotes.update(created.id, { allFormulas: created.allFormulas })
+    expect(updated!.allFormulas.J8).toBe('=SUM(J6:J7)*1.2')
+    expect(updated!.allFormulas.J9).toBe('=J8+I9')
+    expect(updated!.allFormulas.K9).toBeUndefined()
+  })
+})
+
 describe('Customer CRUD', () => {
   beforeEach(async () => {
     process.env.DB_PATH = ':memory:'

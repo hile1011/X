@@ -110,6 +110,11 @@ export interface Quote {
   tableData: (string | number | null)[][]
   // 用户已删除的公式地址列表 JSON 字符串，如 ["J8"]
   removedFormulaAddresses: string[]
+  // 用户修改过的公式内容 JSON 字符串，如 {"J8":"=SUM(J6:J7)*1.1"}，加载时覆盖模板原公式
+  modifiedFormulas: Record<string, string>
+  // 表格中所有单元格的公式（地址→公式字符串），加载时直接使用，不依赖模板比对
+  // 新数据优先使用此字段；老数据（v9 前）为空 {} 时回退到 removedFormulaAddresses + modifiedFormulas 合并逻辑
+  allFormulas: Record<string, string>
   created_at: string
   updated_at: string
 }

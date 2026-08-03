@@ -1,25 +1,27 @@
 #!/bin/bash
 # ============================================================
-#  Quote Order System - V0.3 Production Deployment Script
+#  Quote Order System - V0.5 Production Deployment Script
 #  Deploys X (source/dev) to X-PR (production/pre-release)
 #
-#  Key changes in V0.3:
+#  Key changes in V0.5:
+#    - 在线表格公式持久化机制重构：新增 allFormulas 字段存储所有单元格公式
+#    - 老数据通过 v9 迁移脚本一次性初始化 allFormulas（不依赖代码兼容回退）
+#    - 修复用户修改公式保存后恢复原公式的问题
+#    - 数据库 schema v7 → v9（自动迁移 v8/v9，含数据初始化）
 #    - PR backend port: 3002 (independent from dev's 3001)
-#    - Database migrations auto-run on app startup (api/db.ts)
-#    - Removed broken require()-based migration (incompatible with ESM)
 # ============================================================
-set -e
+set -eo pipefail
 
 SOURCE_DIR="/Users/hile/Documents/work/projects/X"
 TARGET_DIR="/Users/hile/Documents/work/projects/X-PR"
 
 # PR 环境端口（独立于开发环境 3001）
 PR_PORT=3002
-APP_VERSION="0.3.0"
-DB_SCHEMA_VERSION=4
+APP_VERSION="0.5.0"
+DB_SCHEMA_VERSION=9
 
 echo "============================================"
-echo "  Quote Order System - V0.3 Deployment"
+echo "  Quote Order System - V0.5 Deployment"
 echo "  Source:  $SOURCE_DIR (dev)"
 echo "  Target:  $TARGET_DIR (PR)"
 echo "  Port:    $PR_PORT (independent from dev 3001)"
@@ -98,7 +100,7 @@ rsync -av "$SOURCE_DIR/tailwind.config.js" "$TARGET_DIR/" 2>/dev/null || true
 rsync -av "$SOURCE_DIR/tsconfig.json" "$TARGET_DIR/" 2>/dev/null || true
 rsync -av "$SOURCE_DIR/vite.config.ts" "$TARGET_DIR/" 2>/dev/null || true
 rsync -av "$SOURCE_DIR/package.json" "$TARGET_DIR/" 2>/dev/null || true
-echo "      Source files synced (V0.3)"
+echo "      Source files synced (V0.5)"
 
 # ------------------------------------------------------------
 # [4/10] 配置 PR 环境（端口独立于开发环境）
@@ -137,7 +139,21 @@ echo "      .env.production template updated"
 echo ""
 echo "[5/10] Installing dependencies..."
 cd "$TARGET_DIR"
+
+# 清理可能损坏的 @visactor/vtable 目录（缺少 package.json 时 npm 误判为已安装）
+if [ -d "node_modules/@visactor/vtable" ] && [ ! -f "node_modules/@visactor/vtable/package.json" ]; then
+  echo "      [INFO] Removing corrupted @visactor/vtable (missing package.json)..."
+  rm -rf node_modules/@visactor/vtable
+fi
+
 npm install 2>&1 | tail -5
+
+# 验证关键依赖 @visactor/vtable 已正确安装
+if [ ! -f "node_modules/@visactor/vtable/package.json" ]; then
+  echo "      [WARN] @visactor/vtable still missing, force installing..."
+  rm -rf node_modules/@visactor/vtable
+  npm install @visactor/vtable@1.26.6 --no-save 2>&1 | tail -3
+fi
 echo "      Dependencies installed"
 
 # ------------------------------------------------------------
@@ -269,6 +285,63 @@ else
   echo "      [INFO] Dev port 3001 not currently in use"
 fi
 
+# 9e. V0.5 专属验证：确认迁移 v9 已应用（quotes 表 allFormulas 字段 + 老数据已初始化）
+echo "      --- V0.5 Specific Verifications ---"
+ALLFORMULAS_CHECK=$(cd "$TARGET_DIR" && node -e "
+import('sql.js').then(async (mod) => {
+  const initSqlJs = mod.default;
+  const SQL = await initSqlJs();
+  const fs = await import('fs');
+  const path = await import('path');
+  const dbPath = path.resolve('./data/quote-system.db');
+  if (!fs.existsSync(dbPath)) { console.log('NO_DB'); return; }
+  const buf = fs.readFileSync(dbPath);
+  const db = new SQL.Database(buf);
+  try {
+    // 检查 quotes 表是否有 allFormulas 列
+    const colStmt = db.prepare(\"PRAGMA table_info(quotes)\");
+    const cols = [];
+    while (colStmt.step()) { cols.push(colStmt.getAsObject().name); }
+    colStmt.free();
+    if (!cols.includes('allFormulas')) { console.log('NO_ALLFORMULAS_COLUMN'); db.close(); return; }
+    if (!cols.includes('modifiedFormulas')) { console.log('NO_MODIFIEDFORMULAS_COLUMN'); db.close(); return; }
+    // 统计已有订单数和 allFormulas 已初始化的订单数
+    const totalStmt = db.prepare(\"SELECT COUNT(*) as c FROM quotes\");
+    totalStmt.step();
+    const total = totalStmt.getAsObject().c;
+    totalStmt.free();
+    const initStmt = db.prepare(\"SELECT COUNT(*) as c FROM quotes WHERE allFormulas IS NOT NULL AND allFormulas != '{}'\");
+    initStmt.step();
+    const initialized = initStmt.getAsObject().c;
+    initStmt.free();
+    console.log('TOTAL_QUOTES:' + total + '|INITIALIZED:' + initialized);
+  } catch(e) { console.log('ERROR:' + e.message); }
+  db.close();
+});
+" 2>/dev/null)
+if echo "$ALLFORMULAS_CHECK" | grep -q "TOTAL_QUOTES:"; then
+  TOTAL=$(echo "$ALLFORMULAS_CHECK" | sed -n 's/.*TOTAL_QUOTES:\([0-9]*\).*/\1/p')
+  INITED=$(echo "$ALLFORMULAS_CHECK" | sed -n 's/.*INITIALIZED:\([0-9]*\).*/\1/p')
+  echo "      [OK] Migration v9 applied: quotes.allFormulas column exists"
+  echo "      [INFO] Quotes: total=$TOTAL, allFormulas initialized=$INITED"
+elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_ALLFORMULAS_COLUMN"; then
+  echo "      [WARN] quotes.allFormulas column not found (migration v9 may not have applied)"
+elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_MODIFIEDFORMULAS_COLUMN"; then
+  echo "      [WARN] quotes.modifiedFormulas column not found (migration v8 may not have applied)"
+elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_DB"; then
+  echo "      [INFO] No database file (fresh install will create on next start)"
+else
+  echo "      [WARN] allFormulas check result: $ALLFORMULAS_CHECK"
+fi
+
+# 9f. V0.5 验证：API 返回单个 quote 时包含 allFormulas 字段
+QUOTES_API=$(curl -s "http://localhost:$PR_PORT/api/quotes" 2>/dev/null | head -c 2000)
+if echo "$QUOTES_API" | grep -q '"allFormulas"' 2>/dev/null; then
+  echo "      [OK] Quotes API returns allFormulas field"
+else
+  echo "      [INFO] Quotes list API response does not include allFormulas (may be empty list or field is null)"
+fi
+
 # ------------------------------------------------------------
 # [10/10] 设置权限
 # ------------------------------------------------------------
@@ -280,7 +353,7 @@ echo "      Done"
 # ------------------------------------------------------------
 echo ""
 echo "============================================"
-echo "  V0.3 Deployment Complete!"
+echo "  V0.5 Deployment Complete!"
 echo "============================================"
 echo ""
 echo "  Application Version: v$APP_VERSION"

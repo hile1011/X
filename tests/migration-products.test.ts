@@ -80,9 +80,9 @@ describe('迁移 v7 - add-product-code-and-default-styles', () => {
     expect(styles).toHaveLength(6)
   })
 
-  it('Schema 版本为 7', () => {
+  it('Schema 版本为 9', () => {
     const row = db.db.prepare(`SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`).get() as { version: number }
-    expect(row.version).toBe(7)
+    expect(row.version).toBe(9)
   })
 })
 
@@ -216,8 +216,8 @@ describe('quote_number 格式（时间戳在末尾）', () => {
 
   it('update：修改款式时保留原时间戳，款式标签更新，时间戳在末尾', () => {
     const quote = db.quotes.create({
-      customerName: '款式修改测试',
-      productStyle: '1',
+      customerName: '原客户名',
+      productStyle: '2',
     })
     const originalTimestamp = quote.quote_number.match(/\d{14}/)?.[0]
 
@@ -228,5 +228,101 @@ describe('quote_number 格式（时间戳在末尾）', () => {
     expect(updated!.quote_number).toContain('手提连底普通拼接袋')
     // 时间戳在末尾
     expect(updated!.quote_number.endsWith(originalTimestamp!)).toBe(true)
+  })
+})
+
+describe('迁移 v9 - add-all-formulas 老数据初始化', () => {
+  /**
+   * 测试 v9 迁移脚本的数据初始化逻辑：
+   * 1. 回滚到 v8（移除 allFormulas 列）
+   * 2. 手动插入老格式数据（仅 removedFormulaAddresses + modifiedFormulas，无 allFormulas）
+   * 3. 重新执行 v9 迁移
+   * 4. 验证 allFormulas 被正确计算（模板公式 - removed + modified）
+   */
+
+  it('v9 迁移从老数据计算 allFormulas（款式1：模板 - removed + modified）', () => {
+    // 1. 回滚到 v8（移除 allFormulas 列）
+    db.runner.rollback(8)
+    const colsBefore = db.db.prepare('PRAGMA table_info(quotes)').all() as { name: string }[]
+    expect(colsBefore.map(c => c.name)).not.toContain('allFormulas')
+
+    // 2. 插入老格式数据：productStyle=1, removed=[K9], modified={J8: =SUM(J6:J7)*1.2}
+    db.db.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, productStyle,
+      removedFormulaAddresses, modifiedFormulas, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'quote-v9-test-1', '', '', '测试-v9-1', '迁移测试客户', '1',
+      JSON.stringify(['K9']), JSON.stringify({ J8: '=SUM(J6:J7)*1.2' }), 1, '2026-01-01', '2026-01-01'
+    )
+
+    // 3. 重新执行迁移到 v9（会添加 allFormulas 列并初始化数据）
+    db.runner.migrate()
+    expect(db.getSchemaVersion()).toBe(9)
+
+    // 4. 验证 allFormulas 已被计算并写入
+    const row = db.db.prepare('SELECT allFormulas FROM quotes WHERE id = ?').get('quote-v9-test-1') as { allFormulas: string }
+    const allFormulas = JSON.parse(row.allFormulas)
+    // J8 应为 modified 中的值（覆盖模板原值 =SUM(J6:J7)）
+    expect(allFormulas.J8).toBe('=SUM(J6:J7)*1.2')
+    // K9 应被排除（在 removed 中）
+    expect(allFormulas.K9).toBeUndefined()
+    // 其他模板公式应保留（如 J9 = =J8+I9）
+    expect(allFormulas.J9).toBe('=J8+I9')
+    expect(allFormulas.J10).toBe('=(J9-J8)*B2')
+  })
+
+  it('v9 迁移处理无 removed/modified 的老数据（纯模板公式）', () => {
+    db.runner.rollback(8)
+    // 插入无 removed/modified 的老数据
+    db.db.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, productStyle,
+      removedFormulaAddresses, modifiedFormulas, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'quote-v9-test-2', '', '', '测试-v9-2', '迁移测试客户2', '2',
+      '[]', '{}', 1, '2026-01-01', '2026-01-01'
+    )
+    db.runner.migrate()
+    const row = db.db.prepare('SELECT allFormulas FROM quotes WHERE id = ?').get('quote-v9-test-2') as { allFormulas: string }
+    const allFormulas = JSON.parse(row.allFormulas)
+    // 应包含款式2的所有模板公式
+    expect(Object.keys(allFormulas).length).toBeGreaterThan(10)
+    expect(allFormulas.J10).toBe('=SUM(J7:J9)')
+    expect(allFormulas.K11).toBe('=J11*1.1')
+  })
+
+  it('v9 迁移处理未知 productStyle（默认使用款式1模板）', () => {
+    db.runner.rollback(8)
+    // 插入 productStyle 为非 1-6 的值（如自定义产品 id）
+    db.db.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, productStyle,
+      removedFormulaAddresses, modifiedFormulas, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'quote-v9-test-3', '', '', '测试-v9-3', '迁移测试客户3', 'prod-custom-xyz',
+      '[]', '{}', 1, '2026-01-01', '2026-01-01'
+    )
+    db.runner.migrate()
+    const row = db.db.prepare('SELECT allFormulas FROM quotes WHERE id = ?').get('quote-v9-test-3') as { allFormulas: string }
+    const allFormulas = JSON.parse(row.allFormulas)
+    // 应使用款式1模板的公式
+    expect(allFormulas.J8).toBe('=SUM(J6:J7)')
+    expect(allFormulas.J9).toBe('=J8+I9')
+  })
+
+  it('v9 迁移后 allFormulas 为有效 JSON 对象', () => {
+    db.runner.rollback(8)
+    db.db.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, productStyle,
+      removedFormulaAddresses, modifiedFormulas, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      'quote-v9-test-4', '', '', '测试-v9-4', '迁移测试客户4', '3',
+      JSON.stringify(['J10']), JSON.stringify({ J11: '=J10+I11+0.5' }), 1, '2026-01-01', '2026-01-01'
+    )
+    db.runner.migrate()
+    const row = db.db.prepare('SELECT allFormulas FROM quotes WHERE id = ?').get('quote-v9-test-4') as { allFormulas: string }
+    const allFormulas = JSON.parse(row.allFormulas)
+    expect(typeof allFormulas).toBe('object')
+    expect(Array.isArray(allFormulas)).toBe(false)
+    // J10 被 removed 排除
+    expect(allFormulas.J10).toBeUndefined()
+    // J11 被 modified 覆盖
+    expect(allFormulas.J11).toBe('=J10+I11+0.5')
+    // K10 保留模板原值
+    expect(allFormulas.K10).toBe('=J10*1.1')
   })
 })

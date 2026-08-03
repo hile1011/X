@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 7
+export const CURRENT_SCHEMA_VERSION = 9
 
 export interface Migration {
   version: number
@@ -359,6 +359,225 @@ const migrations: Migration[] = [
         );
         INSERT INTO products SELECT id, name, sku, description, price, category, stock, created_at, updated_at FROM products_backup;
         DROP TABLE products_backup;
+      `)
+    },
+  },
+  {
+    version: 8,
+    name: 'add-modified-formulas',
+    description: 'V0.4.1：为 quotes 表添加 modifiedFormulas 字段，持久化用户修改过的公式内容（地址→公式字符串），加载时覆盖模板原公式，修复用户修改公式保存后恢复原公式的问题',
+    up: (db: any) => {
+      // modifiedFormulas 存储 JSON 字符串：地址→公式字符串 {"J8":"=SUM(J6:J7)*1.1", ...}
+      db.exec(`ALTER TABLE quotes ADD COLUMN modifiedFormulas TEXT DEFAULT '{}'`)
+    },
+    down: (db: any) => {
+      // 重建 quotes 表移除 modifiedFormulas 列（SQLite 旧版本不支持 DROP COLUMN）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quotes_backup AS SELECT * FROM quotes;
+        DROP TABLE quotes;
+        CREATE TABLE quotes AS SELECT id, user_id, customer_id, quote_number, customerName,
+          shippingAddress, productStyle, productSpec, fabricMaterial, process, handleMaterial,
+          handleSpec, quantity, boxSpec, remark, sampleFee, sampleDays, massDays, unitPrice,
+          productionTimeStart, productionTimeEnd, costPrice, priceWithTax, sellPriceNoTax,
+          sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
+          paymentTime, endTime, images, tableData, removedFormulaAddresses, created_at, updated_at FROM quotes_backup;
+        DROP TABLE quotes_backup;
+      `)
+    },
+  },
+  {
+    version: 9,
+    name: 'add-all-formulas',
+    description: 'V0.4.2：新增 allFormulas 字段持久化表格中所有单元格的公式（地址→公式字符串），并从老数据（removedFormulaAddresses + modifiedFormulas + 模板公式）计算初始化 allFormulas，加载时直接使用，不再依赖模板比对',
+    up: (db: any) => {
+      // 1. 新增 allFormulas 列（JSON 字符串：地址→公式字符串）
+      db.exec(`ALTER TABLE quotes ADD COLUMN allFormulas TEXT DEFAULT '{}'`)
+
+      // 2. 内联 6 个款式的模板公式定义（与前端 BagQuote.tsx 一致）
+      //    迁移脚本一次性使用，内联确保公式与前端完全一致，避免跨边界 import
+      const STYLE_FORMULAS: Record<string, Record<string, string>> = {
+        // 款式1：无底无侧普通袋
+        '1': {
+          B3: '=B2', C3: '=C2', D3: '=D2', E3: '=E2', H3: '=F3+C3', I3: '=(D3*2+E3+G3)',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*K3*1.5/1000', P3: '=M3*4/(I4/100)',
+          B4: '=B2', I4: '=D4', L4: '=MOD(J4,MIN(H4,I4))', M4: '=I4/100*2*B4/INT(J4/H4)',
+          N4: '=J4/(MIN(H4,I4))', O4: '=M4*K4*1.5/1000',
+          A6: '=A3', C6: '=H3*I3*1.1/10000', E6: '=D6*M3/B3+CEILING(M3/100,1)*15/B3+0.04',
+          H6: '=O3*0.8', J6: '=(B6+C6+F6+E6+H6/B3)*I6+G6',
+          A7: '=A4', E7: '=D7*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H7: '=O4*0.8',
+          J7: '=(B7+C7+E7+F7+H7/B4)*I7+G7',
+          J8: '=SUM(J6:J7)', J9: '=J8+I9', K9: '=J9*1.1', J10: '=(J9-J8)*B2',
+        },
+        // 款式2：有底无侧普通袋
+        '2': {
+          B3: '=B2', C3: '=C2', D3: '=D2', E3: '=E2', H3: '=F3+C3', I3: '=(D3*2+E3+G3)',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*K3*1.5/1000', P3: '=M3*4/(I4/100)',
+          B4: '=B2', I4: '=D4', L4: '=MOD(J4,MIN(H4,I4))', M4: '=I4/100*2*B4/INT(J4/H4)',
+          N4: '=J4/(MIN(H4,I4))', O4: '=M4*K4*1.5/1000',
+          B5: '=B2', C5: '=C2', D5: '=E2', H5: '=F5+C5', I5: '=D5+G5*2',
+          L5: '=MOD(J5,MIN(H5,I5))', M5: '=CEILING(B5/INT(N5),1)*MAX(H5,I5)/100', N5: '=J5/(MIN(H5,I5))',
+          O5: '=M5*K5*1.5/1000',
+          A7: '=A3', C7: '=H3*I3*1.1/10000', E7: '=D7*M3/B3+CEILING(M3/100,1)*15/B3+0.04',
+          H7: '=O3*0.8', J7: '=(B7+C7+F7+E7+H7/B3)*I7+G7',
+          A8: '=A4', E8: '=D8*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H8: '=O4*0.8',
+          J8: '=(B8+C8+E8+F8+H8/B4)*I8+G8',
+          A9: '=A5', E9: '=D9*M5/B5+CEILING(M5/100,1)*15/B5+0.04', J9: '=(B9+C9+E9+F9)*I9+G9',
+          J10: '=SUM(J7:J9)', J11: '=J10+I11', K11: '=J11*1.1', J12: '=(J11-J10)*B2',
+        },
+        // 款式3：有底有侧普通袋
+        '3': {
+          B3: '=B2', C3: '=C2', D3: '=D2', H3: '=F3+C2', I3: '=(D3*2+G3)',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*1.5*K3/1000',
+          B4: '=B2', C4: '=E2', D4: '=C2+D2*2', H4: '=E2+F4', I4: '=C2+D2*2+G4',
+          L4: '=MOD(J4,MIN(H4,I4))', M4: '=CEILING(B3/INT(N4),1)*MAX(H4,I4)/100', N4: '=J4/(MIN(H4,I4))',
+          O4: '=M4*1.5*K4/1000',
+          B5: '=B2', I5: '=D5', L5: '=MOD(J5,MIN(H5,I5))', M5: '=I5/100*2*B2/INT(J5/H5)',
+          N5: '=J5/(MIN(H5,I5))', O5: '=M5*1.5*K5/1000',
+          O2: '=SUM(O3:O5)', P2: '=O2/B2*1000',
+          A7: '=A3', C7: '=H3*I3*1.2/10000', E7: '=D7*M3/B2+CEILING(M3/100,1)*15/B2+0.04',
+          H7: '=O3*1.8', J7: '=(B7+F7+C7+E7+H7/B2)*I7+G7',
+          A8: '=A4', E8: '=D8*M4/B3+CEILING(M4/100,1)*15/B3+0.04', H8: '=O4*1.8',
+          J8: '=(B8+F8+C8+E8+H8/B3)*I8+G8',
+          A9: '=A5', H9: '=O5*1.8', J9: '=(B9+C9+E9+F9+H9/B2)*I9+G9',
+          J10: '=SUM(J7:J9)', K10: '=J10*1.1', J11: '=J10+I11', K11: '=J11*1.1', J12: '=(J11-J10)*B2',
+        },
+        // 款式4：手提连底普通拼接袋
+        '4': {
+          B3: '=B2', C3: '=C2', D3: '=E2/2', E3: '=E2', H3: '=F3+C3', I3: '=E3*2+G3',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*K3*1.5/1000',
+          B4: '=B2', C4: '=C2', D4: '=D2-D3', H4: '=F4+C2', I4: '=G4+D2-E2/2',
+          L4: '=MOD(J4,MIN(H4,I4))', M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100', N4: '=J4/(MIN(H4,I4))',
+          O4: '=M4*K4*1.5/1000',
+          B5: '=B2', C5: '=C2', D5: '=D2-D3', H5: '=F5+C2', I5: '=G5+D2-E2/2',
+          L5: '=MOD(J5,MIN(H5,I5))', M5: '=CEILING(B2/INT(N5),1)*MAX(H5,I5)/100', N5: '=J5/(MIN(H5,I5))',
+          O5: '=M5*K5*1.5/1000',
+          B6: '=B3', H6: '=F6+C6', I6: '=G6+D6-E6/2', L6: '=MOD(J6,MIN(H6,I6))',
+          M6: '=CEILING(B3/INT(N6),1)*MAX(H6,I6)/100', N6: '=J6/(MIN(H6,I6))', O6: '=M6*K6*1.5/1000',
+          B7: '=B2', I7: '=D7', L7: '=MOD(J7,MIN(H7,I7))', M7: '=I7/100*2*B2/INT(J7/H7)',
+          N7: '=J7/(MIN(H7,I7))', O7: '=M7*K7*1.5/1000',
+          O2: '=SUM(O3:O7)', P2: '=O2/B2*1000',
+          A9: '=A3', E9: '=D9*M3/B3+CEILING(M3/100,1)*15/B3+0.04', H9: '=O3*0.8',
+          J9: '=(B9+C9+E9+H9/B2+F9)*I9+G9',
+          A10: '=A4', E10: '=D10*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H10: '=O4*0.8',
+          J10: '=(B10+C10+E10+F10+H10/B2)*I10+G10',
+          A11: '=A5', E11: '=D11*M5/B5+CEILING(M5/100,1)*15/B5+0.04', H11: '=O5*0.8',
+          J11: '=(B11+C11+E11+H11/B2)*I11+G11',
+          A12: '=A6', E12: '=D12*M6/B6+CEILING(M6/100,1)*15/B6+0.04', H12: '=O6*0.8',
+          J12: '=(B12+C12+E12+F12+H12/B4)*I12+G12',
+          A13: '=A7', E13: '=M7*D13/B7+0.04+CEILING(M7/100,1)*10/B7', H13: '=O7*0.8',
+          J13: '=(E13+H13/B2)*I13+G13',
+          H14: '=SUM(H9:H13)', J14: '=SUM(J9:J13)', K14: '=J14*1.1',
+          J15: '=J14+I15', K15: '=J15*1.1', J16: '=(J15-J14)*B2',
+        },
+        // 款式5：手提连底高级拼接袋
+        '5': {
+          B3: '=B2', C3: '=C2', E3: '=E2', H3: '=F3+C3', I3: '=E3+D3*2+G3',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*K3*1.5/1000',
+          B4: '=B3', C4: '=C2', D4: '=D2-D3', H4: '=F4+C2', I4: '=D2*2+E2+G4',
+          L4: '=MOD(J4,MIN(H4,I4))', M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100', N4: '=J4/(MIN(H4,I4))',
+          O4: '=M4*K4*1.5/1000',
+          B5: '=B3', D5: '=(D2+C2)*2', H5: '=C5', I5: '=D5', L5: '=MOD(J5,MIN(H5,I5))',
+          M5: '=CEILING(B3/INT(N5),1)*MAX(H5,I5)/100', N5: '=J5/(MIN(H5,I5))', O5: '=M5*K5*1.5/1000',
+          B6: '=B2', I6: '=D6', L6: '=MOD(J6,MIN(H6,I6))', M6: '=I6/100*2*B6/INT(J6/H6)',
+          N6: '=J6/(MIN(H6,I6))', O6: '=M6*K6*1.5/1000',
+          B7: '=B2', D7: '=D6', I7: '=D7', L7: '=MOD(J7,MIN(H7,I7))', M7: '=I7/100*2*B7/INT(J7/H7)',
+          N7: '=J7/(MIN(H7,I7))', O7: '=M7*K7*1.5/1000',
+          O2: '=SUM(O3:O7)', P2: '=O2/B2*1000',
+          A9: '=A3', E9: '=D9*M3/B3+CEILING(M3/100,1)*15/B3+0.04', H9: '=O3*1.8',
+          J9: '=(B9+C9+E9+H9/B2+F9)*I9+G9',
+          A10: '=A4', E10: '=D10*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H10: '=O4*1.8',
+          J10: '=(B10+C10+E10+F10+H10/B2)*I10+G10',
+          A11: '=A5', E11: '=D11*M5/B5+CEILING(M5/100,1)*15/B5+0.04', H11: '=O5*1.8',
+          J11: '=(B11+C11+E11+F11)*I11+H11/B3+G11',
+          A12: '=A6', B12: '=D6/100*2*0.18', E12: '=(M6*D12/B6+CEILING(M6/100,1)*10/B6)',
+          H12: '=O6*1.8', J12: '=(B12+E12+H12/B2)*I12+G12',
+          A13: '=A7', E13: '=(M7*D13/B7+CEILING(M7/100,1)*10/B7)', H13: '=O7*1.8',
+          J13: '=(B13+E13+H13/B3)*I13+G13',
+          H14: '=SUM(H9:H13)', J14: '=SUM(J9:J13)', K14: '=J14*1.1',
+          J15: '=J14+I15', K15: '=J15*1.1', J16: '=(J15-J14)*B2',
+        },
+        // 款式6：手提无连底拼接袋
+        '6': {
+          B3: '=B2', C3: '=C2', D3: '=E2/2', E3: '=E2', H3: '=F3+C3', I3: '=E3*2+G3',
+          L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
+          O3: '=M3*K3*1.5/1000',
+          B4: '=B2', C4: '=C2', D4: '=D2-D3', H4: '=F4+C2', I4: '=G4+D2-E2/2',
+          L4: '=MOD(J4,MIN(H4,I4))', M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100', N4: '=J4/(MIN(H4,I4))',
+          O4: '=M4*K4*1.5/1000',
+          B5: '=B4', C5: '=C2', D5: '=D2-D3', H5: '=F5+C2', I5: '=G5+D2-E2/2',
+          L5: '=MOD(J5,MIN(H5,I5))', M5: '=CEILING(B2/INT(N5),1)*MAX(H5,I5)/100', N5: '=J5/(MIN(H5,I5))',
+          O5: '=M5*K5*1.5/1000',
+          B6: '=B5', H6: '=F6+C6', I6: '=G6+D6', L6: '=MOD(J6,MIN(H6,I6))',
+          M6: '=CEILING(B2/INT(N6),1)*MAX(H6,I6)/100', N6: '=J6/(MIN(H6,I6))', O6: '=M6*K6*1.5/1000',
+          B7: '=B6', I7: '=D7', L7: '=MOD(J7,MIN(H7,I7))', M7: '=I7/100*2*B2/INT(J7/H7)',
+          N7: '=J7/(MIN(H7,I7))', O7: '=M7*K7*1.5/1000',
+          O2: '=SUM(O3:O7)', P2: '=O2/B2*1000',
+          A9: '=A3', E9: '=D9*M3/B3+CEILING(M3/100,1)*15/B3+0.04', H9: '=O3*1.8',
+          J9: '=(B9+C9+E9+H9/B2+F9)*I9+G9',
+          A10: '=A4', E10: '=D10*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H10: '=O4*1.8', I10: '=I9',
+          J10: '=(B10+C10+E10+F10+H10/B2)*I10+G10',
+          A11: '=A5', E11: '=D11*M5/B5+CEILING(M5/100,1)*15/B5+0.04', H11: '=O5*1.8', I11: '=I10',
+          J11: '=(B11+C11+E11+H11/B2)*I11+G11',
+          A12: '=A6', E12: '=D12*M6/B6+CEILING(M6/100,1)*15/B6+0.04', H12: '=O6*1.8', I12: '=I11',
+          J12: '=(B12+C12+E12+F12)*I12+H12/B2+G12',
+          A13: '=A7', E13: '=M7*D13/B7+0.04+CEILING(M7/100,1)*10/B7', H13: '=O7*1.8', I13: '=I12',
+          J13: '=(E13+H13/B2)*I13+G13',
+          H14: '=SUM(H9:H13)', J14: '=SUM(J9:J13)', K14: '=J14*1.1',
+          I15: '=J15-J14', K15: '=J15*1.1', J16: '=(J15-J14)*B2',
+        },
+      }
+
+      // 3. 遍历所有 quotes，从老数据计算 allFormulas 并写入
+      //    allFormulas = template.formulas（排除 removedFormulaAddresses）+ modifiedFormulas（覆盖）
+      //    无模板绑定的 productStyle（如自定义产品 id）默认使用款式1模板
+      const rows = db.prepare('SELECT id, productStyle, removedFormulaAddresses, modifiedFormulas FROM quotes').all() as {
+        id: string
+        productStyle: string
+        removedFormulaAddresses: string | null
+        modifiedFormulas: string | null
+      }[]
+
+      const updateStmt = db.prepare('UPDATE quotes SET allFormulas = ? WHERE id = ?')
+
+      for (const row of rows) {
+        const styleCode = /^[1-6]$/.test(row.productStyle) ? row.productStyle : '1'
+        const templateFormulas = STYLE_FORMULAS[styleCode] || STYLE_FORMULAS['1']
+
+        // 解析老数据 JSON 字段
+        let removed: string[] = []
+        try { removed = row.removedFormulaAddresses ? JSON.parse(row.removedFormulaAddresses) : [] } catch { removed = [] }
+        let modified: Record<string, string> = {}
+        try { modified = row.modifiedFormulas ? JSON.parse(row.modifiedFormulas) : {} } catch { modified = {} }
+
+        const removedSet = new Set(removed)
+        // 计算 allFormulas：模板公式 - 已删除 + 已修改
+        const allFormulas: Record<string, string> = {}
+        for (const [addr, formula] of Object.entries(templateFormulas)) {
+          if (removedSet.has(addr)) continue // 已删除的公式跳过
+          allFormulas[addr] = modified[addr] || formula // 已修改的公式覆盖
+        }
+
+        updateStmt.run(JSON.stringify(allFormulas), row.id)
+      }
+    },
+    down: (db: any) => {
+      // 重建 quotes 表移除 allFormulas 列（保留 removedFormulaAddresses/modifiedFormulas 以兼容回滚）
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quotes_backup AS SELECT * FROM quotes;
+        DROP TABLE quotes;
+        CREATE TABLE quotes AS SELECT id, user_id, customer_id, quote_number, customerName,
+          shippingAddress, productStyle, productSpec, fabricMaterial, process, handleMaterial,
+          handleSpec, quantity, boxSpec, remark, sampleFee, sampleDays, massDays, unitPrice,
+          productionTimeStart, productionTimeEnd, costPrice, priceWithTax, sellPriceNoTax,
+          sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
+          paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas,
+          created_at, updated_at FROM quotes_backup;
+        DROP TABLE quotes_backup;
       `)
     },
   },

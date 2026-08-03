@@ -672,10 +672,13 @@ export default function BagQuote() {
   // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
   // 新增订单时为 null，使用模板数据初始化。
   const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
-  // 用户已删除的公式地址列表（加载时从 template.formulas 中排除这些公式，使 tableData 值生效）
-  const removedFormulasRef = useRef<string[]>([])
+  // 表格中所有单元格的公式（地址→公式字符串），加载时直接使用，不依赖模板比对。
+  // v9 迁移脚本已将老数据（removedFormulaAddresses + modifiedFormulas + 模板公式）计算初始化为 allFormulas。
+  const allFormulasRef = useRef<Record<string, string>>({})
   // 加载完成的版本号：loadQuote 返回后自增，触发表格 useEffect 重新初始化以使用数据库数据
   const [tableDataVersion, setTableDataVersion] = useState(0)
+  // 表格是否有未保存编辑（用于款式切换时提示"保存或丢弃"）
+  const [isTableDirty, setIsTableDirty] = useState(false)
   // 表格对订单信息的联动：成本价、含税价、单个卖价(不含税)/单个卖价(含税)
   const [costPrice, setCostPrice] = useState<number | null>(null)
   const [priceWithTax, setPriceWithTax] = useState<number | null>(null)
@@ -753,8 +756,10 @@ export default function BagQuote() {
         setProductImages(data.images || [])
         // 加载已保存的在线表格数据（覆盖模板默认值，后续以数据库为准）
         loadedTableDataRef.current = (data.tableData && data.tableData.length > 0) ? data.tableData : null
-        // 加载用户已删除的公式地址列表（加载时排除这些公式，使 tableData 中的值生效）
-        removedFormulasRef.current = data.removedFormulaAddresses || []
+        // 加载所有公式（v9 迁移已将老数据初始化为 allFormulas，直接使用，不依赖模板比对）
+        allFormulasRef.current = data.allFormulas || {}
+        // 重置 dirty 状态：加载完成时无未保存编辑
+        setIsTableDirty(false)
         // 自增版本号，触发表格 useEffect 重新初始化。
         // 无论 tableData 是否为空（老数据无 tableData 时用模板），都需要自增以解除
         // useEffect 中 "isEditMode && tableDataVersion===0" 的阻塞，让表格能创建。
@@ -766,9 +771,10 @@ export default function BagQuote() {
     setLoading(false)
   }
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<boolean> => {
     setLoading(true)
     setSaveError('')
+    let saved = false
     try {
       // 同步客户名称和地址到客户管理
       const customerName = orderInfo.customerName.trim()
@@ -790,9 +796,9 @@ export default function BagQuote() {
 
       // 提取当前在线表格的二维数据（用户编辑后的值），持久化到数据库
       let tableData: (string | number | null)[][] = []
-      // 检测用户已删除的公式地址（原模板有公式，但公式引擎中已无该公式）
-      // 加载时排除这些公式，使 tableData 中的用户输入值生效而非被公式覆盖
-      let removedFormulaAddresses: string[] = []
+      // allFormulas：遍历表格所有单元格，收集所有公式（无论来自模板、用户修改还是用户新增到无公式单元格）
+      // 加载时直接使用此字段作为 activeFormulas，不再依赖模板比对
+      let allFormulas: Record<string, string> = {}
       const sheet = sheetInstanceRef.current
       if (sheet) {
         const ws = sheet.getActiveSheet()
@@ -804,18 +810,13 @@ export default function BagQuote() {
           const rowData: (string | number | null)[] = []
           for (let c = 0; c < colCount; c++) {
             rowData.push(activeTable.getCellOriginValue?.(c, r) ?? null)
+            // 收集所有单元格的公式（覆盖模板地址范围之外的用户新增公式）
+            const formula = fm?.getCellFormula?.({ sheet: SHEET_KEY, row: r, col: c })
+            if (formula) {
+              allFormulas[toExcelAddress(r, c)] = formula
+            }
           }
           tableData.push(rowData)
-        }
-        // 遍历模板公式地址，检查公式引擎中是否还存在该公式
-        const template = getTemplateByStyle(orderInfo.productStyle)
-        for (const addr of Object.keys(template.formulas)) {
-          const { row, col } = parseExcelAddress(addr)
-          if (row < 0 || col < 0) continue
-          const stillHasFormula = fm?.getCellFormula?.({ sheet: SHEET_KEY, row, col })
-          if (!stillHasFormula) {
-            removedFormulaAddresses.push(addr)
-          }
         }
       }
 
@@ -828,7 +829,7 @@ export default function BagQuote() {
         status,
         images: productImages,
         tableData,
-        removedFormulaAddresses,
+        allFormulas,
       }
       if (isEditMode) {
         await api.quotes.update(id!, quoteData)
@@ -837,6 +838,11 @@ export default function BagQuote() {
       }
       setShowSaveSuccess(true)
       setTimeout(() => setShowSaveSuccess(false), 3000)
+      // 保存成功后重置 dirty 状态（表格已与数据库一致）
+      setIsTableDirty(false)
+      // 同步 allFormulasRef 为最新保存的内容，避免后续款式切换误判为有未保存编辑
+      allFormulasRef.current = Object.keys(allFormulas).length > 0 ? allFormulas : allFormulasRef.current
+      saved = true
       if (!isEditMode) {
         navigate('/quotes')
       }
@@ -846,6 +852,7 @@ export default function BagQuote() {
       setTimeout(() => setSaveError(''), 5000)
     }
     setLoading(false)
+    return saved
   }
 
   // 导出当前订单 + 在线表格（含公式）到 Excel
@@ -877,9 +884,24 @@ export default function BagQuote() {
         }
         tableData.push(rowData)
       }
-      // 从当前款式模板获取公式定义
+      // 公式来源优先级：当前表格实时收集的公式 > 数据库 allFormulas > 款式模板
+      // 实时收集确保导出与页面显示完全一致（含用户未保存的修改）
       const template = getTemplateByStyle(orderInfo.productStyle)
-      const blob = await api.export.orderWithTable(id, { data: tableData, formulas: template.formulas })
+      const fm = (sheet as any).formulaManager
+      const exportFormulas: Record<string, string> = {}
+      const expRowCount = activeTable?.rowCount ?? 0
+      const expColCount = activeTable?.colCount ?? 16
+      for (let r = 0; r < expRowCount; r++) {
+        for (let c = 0; c < expColCount; c++) {
+          const formula = fm?.getCellFormula?.({ sheet: SHEET_KEY, row: r, col: c })
+          if (formula) exportFormulas[toExcelAddress(r, c)] = formula
+        }
+      }
+      // 若实时收集为空（公式引擎未就绪），回退到 allFormulas 或模板
+      const formulas = Object.keys(exportFormulas).length > 0
+        ? exportFormulas
+        : (allFormulasRef.current || template.formulas)
+      const blob = await api.export.orderWithTable(id, { data: tableData, formulas })
       const now = new Date()
       const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       downloadBlob(blob, `Order_${orderInfo.customerName || 'Export'}_${ts}.xlsx`)
@@ -903,14 +925,14 @@ export default function BagQuote() {
     const initialData = loadedTableDataRef.current && loadedTableDataRef.current.length > 0
       ? loadedTableDataRef.current
       : template.data
-    // 编辑已有订单时排除用户已删除的公式，使 tableData 中对应单元格的值生效而非被公式覆盖
-    const removedSet = new Set(removedFormulasRef.current)
-    const activeFormulas = Object.keys(template.formulas).reduce((acc, addr) => {
-      if (!removedSet.has(addr)) {
-        acc[addr] = template.formulas[addr]
-      }
-      return acc
-    }, {} as Record<string, string>)
+    // activeFormulas 构建策略：
+    // - 编辑已有订单：直接使用数据库保存的 allFormulas（v9 迁移已将老数据初始化），不依赖模板比对
+    // - 新增订单：使用模板公式初始化
+    // - 切换款式后：allFormulasRef 已被清空为 {}，使用新款式模板公式
+    const loadedFormulas = allFormulasRef.current
+    const activeFormulas: Record<string, string> = Object.keys(loadedFormulas).length > 0
+      ? { ...loadedFormulas }
+      : { ...template.formulas }
 
     const sheet = new VTableSheet(sheetContainerRef.current, {
       undoRedo: { show: true },
@@ -1028,8 +1050,6 @@ export default function BagQuote() {
       .map(([addr, formula]) => ({ ...parseExcelAddress(addr), formula }))
       .filter((e) => e.row >= 0 && e.col >= 0)
     const isRecalculating = { current: false }
-    // 被删除的公式地址集合（这些单元格用户已清空公式，recalc 时不覆盖）
-    const removedSetForRecalc = new Set(removedFormulasRef.current)
     const recalculateFormulas = () => {
       if (isRecalculating.current) return
       const fm = (sheet as any).formulaManager
@@ -1040,9 +1060,6 @@ export default function BagQuote() {
         // 读取公式引擎计算结果，覆盖表格 record 中的静态默认值
         // ws.setCellValue 更新 record（触发 change_cell_value，但 isRecalculating 标志阻止递归）
         for (const { row, col } of formulaEntries) {
-          // 跳过用户已删除公式的单元格（保留 tableData 中的用户输入值）
-          const addr = toExcelAddress(row, col)
-          if (removedSetForRecalc.has(addr)) continue
           const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
           if (result && typeof result.value === 'number' && !isNaN(result.value)) {
             ;(ws as any).setCellValue(col, row, result.value)
@@ -1063,6 +1080,8 @@ export default function BagQuote() {
     const initTimer2 = setTimeout(() => { recalculateFormulas(); syncFromTable() }, 500)
     // 监听单元格变更：先重算公式单元格（覆盖静态值），再同步订单信息
     const onCellChange = () => {
+      // 仅用户编辑（非程序重算）触发的变更标记为 dirty，用于款式切换提示
+      if (!isRecalculating.current) setIsTableDirty(true)
       recalculateFormulas()
       syncFromTable()
     }
@@ -1177,11 +1196,23 @@ export default function BagQuote() {
     setProductImages((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const updateOrderField = (field: keyof OrderInfo, value: string) => {
-    // 切换款式时清除已加载的数据库表格数据，使用新款式模板初始化
-    if (field === 'productStyle') {
+  const updateOrderField = async (field: keyof OrderInfo, value: string) => {
+    // 切换款式时：若有未保存编辑则提示保存或丢弃，然后加载新款式模板
+    if (field === 'productStyle' && value !== orderInfo.productStyle) {
+      let canSwitch = true
+      if (isTableDirty) {
+        const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确定"先保存当前内容后切换款式，点击"取消"放弃修改并切换。')
+        if (ok) {
+          // 保存失败则中止款式切换，避免丢失编辑
+          const saved = await handleSave()
+          canSwitch = saved
+        }
+      }
+      if (!canSwitch) return
+      // 清除所有表格相关状态，加载新款式模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
       loadedTableDataRef.current = null
-      removedFormulasRef.current = []
+      allFormulasRef.current = {}
+      setIsTableDirty(false)
     }
     setOrderInfo((prev) => ({ ...prev, [field]: value }))
   }

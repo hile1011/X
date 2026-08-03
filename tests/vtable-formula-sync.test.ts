@@ -781,3 +781,113 @@ describe('VTable 在线表格 — 公式重算覆盖静态默认值', () => {
     })
   })
 })
+
+describe('VTable 在线表格 — allFormulas 优先于模板合并', () => {
+  /**
+   * 验证 allFormulas 字段的"完整状态持久化"模式：
+   * 1. 传入修改后的公式（如 J8 改为 =SUM(J6:J7)*1.2）→ sheet 使用修改后公式
+   * 2. allFormulas 可包含模板范围外的新增公式地址（如 L8）→ sheet 能注册并计算
+   * 3. allFormulas 不依赖模板比对，直接作为 formulas 参数传入 VTableSheet 构造
+   */
+
+  function createSheetWithFormulas(container: HTMLElement, formulas: Record<string, string>): VTableSheet {
+    return new VTableSheet(container, {
+      undoRedo: { show: true },
+      VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+      sheets: [{
+        sheetKey: SHEET_KEY,
+        sheetTitle: SHEET_KEY,
+        columns: TEST_COLUMNS,
+        data: cloneData(),
+        formulas,
+        showHeader: false,
+      }],
+    })
+  }
+
+  /** 从公式引擎读取单元格的公式字符串 */
+  function getCellFormula(sheet: VTableSheet, row: number, col: number): string | undefined {
+    const fm = (sheet as any).formulaManager
+    if (!fm) return undefined
+    return fm.getCellFormula?.({ sheet: SHEET_KEY, row, col })
+  }
+
+  it('allFormulas 中的修改后公式优先于模板原公式（J8 改为 *1.2）', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // 模板原 J8 = =SUM(J6:J7)，用户修改为 *1.2
+    const allFormulas = { ...TEMPLATE_FORMULAS, J8: '=SUM(J6:J7)*1.2' }
+    const sheet = createSheetWithFormulas(container, allFormulas)
+    try {
+      // J8 在 0-based 坐标为 row=7, col=9
+      const formula = getCellFormula(sheet, 7, 9)
+      expect(formula).toBe('=SUM(J6:J7)*1.2')
+      // 计算结果应为 SUM(J6:J7)*1.2，而非模板原值 SUM(J6:J7)
+      const val = getCellValue(sheet, 7, 9) as number
+      expect(typeof val).toBe('number')
+      // 模板原 J8 值 ≈ 2.97，修改后应为 2.97*1.2 ≈ 3.564
+      const originalVal = 2.97
+      expect(val).toBeCloseTo(originalVal * 1.2, 1)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+
+  it('allFormulas 可包含模板范围外的新增公式（L8）', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // L8 不在 TEMPLATE_FORMULAS 中，模拟用户新增公式
+    const allFormulas = { ...TEMPLATE_FORMULAS, L8: '=J8*1.1' }
+    const sheet = createSheetWithFormulas(container, allFormulas)
+    try {
+      // L8 在 0-based 坐标为 row=7, col=11
+      const formula = getCellFormula(sheet, 7, 11)
+      expect(formula).toBe('=J8*1.1')
+      // 计算结果应 = J8 * 1.1
+      const j8 = getCellValue(sheet, 7, 9) as number
+      const l8 = getCellValue(sheet, 7, 11) as number
+      expect(typeof l8).toBe('number')
+      expect(l8).toBeCloseTo(j8 * 1.1, 2)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+
+  it('allFormulas 为空对象时表格无公式（纯数据表格，新增订单场景）', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // 新增订单或纯数据表格：allFormulas 为空
+    const sheet = createSheetWithFormulas(container, {})
+    try {
+      // 无任何公式注册
+      const j8Formula = getCellFormula(sheet, 7, 9)
+      expect(j8Formula).toBeUndefined()
+      // 表格原始值保留为模板静态默认值
+      const j8Origin = getCellOriginValue(sheet, 9, 7)
+      expect(j8Origin).toBe(2.97)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+
+  it('allFormulas 删除某公式地址后该单元格无公式（模拟用户删除公式）', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // 模板有 J8 公式，但 allFormulas 中删除了 J8（用户清空了该公式）
+    const { J8: _removed, ...allFormulasWithoutJ8 } = TEMPLATE_FORMULAS
+    const sheet = createSheetWithFormulas(container, allFormulasWithoutJ8)
+    try {
+      const formula = getCellFormula(sheet, 7, 9)
+      expect(formula).toBeUndefined()
+      // 其他公式仍正常注册
+      const j9Formula = getCellFormula(sheet, 8, 9)
+      expect(j9Formula).toBe(TEMPLATE_FORMULAS.J9)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+})

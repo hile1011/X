@@ -322,7 +322,9 @@ export const dbApi = {
         c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
         c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
         c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
-        return c
+        c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
+        c.allFormulas = typeof (c as any).allFormulas === 'string' ? JSON.parse((c as any).allFormulas || '{}') : ((c as any).allFormulas || {})
+        return c as Quote
       }) as Quote[]
     },
     getById: (id: string) => {
@@ -332,6 +334,8 @@ export const dbApi = {
       c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
       c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
       c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
+      c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
+      c.allFormulas = typeof (c as any).allFormulas === 'string' ? JSON.parse((c as any).allFormulas || '{}') : ((c as any).allFormulas || {})
       return c as Quote
     },
     create: (data: Partial<Quote>) => {
@@ -347,8 +351,8 @@ export const dbApi = {
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
-        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷',
@@ -360,7 +364,9 @@ export const dbApi = {
         data.status || 1, today, '', '', '', '', '',
         JSON.stringify(data.images || []),
         JSON.stringify(data.tableData || []),
-        JSON.stringify(data.removedFormulaAddresses || [])
+        JSON.stringify(data.removedFormulaAddresses || []),
+        JSON.stringify(data.modifiedFormulas || {}),
+        JSON.stringify(data.allFormulas || {})
       )
       persist()
 
@@ -389,17 +395,21 @@ export const dbApi = {
         images: data.images || [],
         tableData: data.tableData || [],
         removedFormulaAddresses: data.removedFormulaAddresses || [],
+        modifiedFormulas: data.modifiedFormulas || {},
+        allFormulas: data.allFormulas || {},
         created_at: timeNow(), updated_at: timeNow(),
       }
     },
     update: (id: string, data: Partial<Quote>) => {
       const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
-      // 解析 existing 中的 JSON 字段（tableData/images/removedFormulaAddresses 存储为字符串）
+      // 解析 existing 中的 JSON 字段（tableData/images/removedFormulaAddresses/modifiedFormulas/allFormulas 存储为字符串）
       const existingParsed = toCamelRow(existing) as Quote
       existingParsed.images = typeof (existingParsed as any).images === 'string' ? JSON.parse((existingParsed as any).images || '[]') : (existingParsed.images || [])
       existingParsed.tableData = typeof (existingParsed as any).tableData === 'string' ? JSON.parse((existingParsed as any).tableData || '[]') : (existingParsed.tableData || [])
       existingParsed.removedFormulaAddresses = typeof (existingParsed as any).removedFormulaAddresses === 'string' ? JSON.parse((existingParsed as any).removedFormulaAddresses || '[]') : ((existingParsed as any).removedFormulaAddresses || [])
+      existingParsed.modifiedFormulas = typeof (existingParsed as any).modifiedFormulas === 'string' ? JSON.parse((existingParsed as any).modifiedFormulas || '{}') : ((existingParsed as any).modifiedFormulas || {})
+      existingParsed.allFormulas = typeof (existingParsed as any).allFormulas === 'string' ? JSON.parse((existingParsed as any).allFormulas || '{}') : ((existingParsed as any).allFormulas || {})
       let updatedQuote: Quote = { ...existingParsed, ...data, updated_at: timeNow() }
 
       if (data.customerName !== undefined || data.productStyle !== undefined) {
@@ -413,16 +423,18 @@ export const dbApi = {
       if (data.images !== undefined) {
         updatedQuote.images = data.images
       }
-      // tableData/removedFormulaAddresses 持久化为 JSON 字符串；返回给前端时保持数组形式
+      // tableData/removedFormulaAddresses/modifiedFormulas/allFormulas 持久化为 JSON 字符串；返回给前端时保持数组/对象形式
       const tableDataJson = JSON.stringify(updatedQuote.tableData || [])
       const removedFormulaAddressesJson = JSON.stringify(updatedQuote.removedFormulaAddresses || [])
+      const modifiedFormulasJson = JSON.stringify(updatedQuote.modifiedFormulas || {})
+      const allFormulasJson = JSON.stringify(updatedQuote.allFormulas || {})
 
       dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, shippingAddress=?,
         productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
         status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
-        images=?, tableData=?, removedFormulaAddresses=?, updated_at=? WHERE id=?`).run(
+        images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id,
         updatedQuote.shippingAddress, updatedQuote.productStyle, updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
@@ -432,7 +444,7 @@ export const dbApi = {
         updatedQuote.costPrice, updatedQuote.priceWithTax, updatedQuote.sellPriceNoTax, updatedQuote.sellPriceWithTax,
         updatedQuote.status, updatedQuote.sampleTime, updatedQuote.productionStartTime,
         updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
-        JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, updatedQuote.updated_at, id
+        JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, updatedQuote.updated_at, id
       )
       persist()
       return updatedQuote
