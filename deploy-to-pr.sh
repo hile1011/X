@@ -1,13 +1,16 @@
 #!/bin/bash
 # ============================================================
-#  Quote Order System - V0.5 Production Deployment Script
+#  Quote Order System - V0.6 Production Deployment Script
 #  Deploys X (source/dev) to X-PR (production/pre-release)
 #
-#  Key changes in V0.5:
-#    - 在线表格公式持久化机制重构：新增 allFormulas 字段存储所有单元格公式
-#    - 老数据通过 v9 迁移脚本一次性初始化 allFormulas（不依赖代码兼容回退）
-#    - 修复用户修改公式保存后恢复原公式的问题
-#    - 数据库 schema v7 → v9（自动迁移 v8/v9，含数据初始化）
+#  Key changes in V0.6:
+#    - 在线表格公式单元格浅橙色实时高亮（#F8CBAD）
+#    - 修复产品编辑按钮导航错误（→ /products/:id/edit）
+#    - 修复编辑页取消按钮返回目标错误（→ /products）
+#    - 修复 Products.tsx 缺少 API 错误处理
+#    - 订单编辑页布局优化（移除 max-w-7xl，字段重排，flex 比例控制）
+#    - 新增 88 个单元测试（总 451 个测试通过）
+#    - 数据库 schema 无变更（V0.5 的 v9 schema 完全兼容）
 #    - PR backend port: 3002 (independent from dev's 3001)
 # ============================================================
 set -eo pipefail
@@ -17,11 +20,11 @@ TARGET_DIR="/Users/hile/Documents/work/projects/X-PR"
 
 # PR 环境端口（独立于开发环境 3001）
 PR_PORT=3002
-APP_VERSION="0.5.0"
+APP_VERSION="0.6.0"
 DB_SCHEMA_VERSION=9
 
 echo "============================================"
-echo "  Quote Order System - V0.5 Deployment"
+echo "  Quote Order System - V0.6 Deployment"
 echo "  Source:  $SOURCE_DIR (dev)"
 echo "  Target:  $TARGET_DIR (PR)"
 echo "  Port:    $PR_PORT (independent from dev 3001)"
@@ -93,14 +96,21 @@ rsync -av --delete \
   --exclude='.DS_Store' \
   "$SOURCE_DIR/src/" "$TARGET_DIR/src/"
 
-# 配置文件
-rsync -av "$SOURCE_DIR/index.html" "$TARGET_DIR/" 2>/dev/null || true
-rsync -av "$SOURCE_DIR/postcss.config.js" "$TARGET_DIR/" 2>/dev/null || true
-rsync -av "$SOURCE_DIR/tailwind.config.js" "$TARGET_DIR/" 2>/dev/null || true
-rsync -av "$SOURCE_DIR/tsconfig.json" "$TARGET_DIR/" 2>/dev/null || true
-rsync -av "$SOURCE_DIR/vite.config.ts" "$TARGET_DIR/" 2>/dev/null || true
-rsync -av "$SOURCE_DIR/package.json" "$TARGET_DIR/" 2>/dev/null || true
-echo "      Source files synced (V0.5)"
+# 配置文件（使用 --delete 确保旧文件被清除）
+rsync -av --delete \
+  --exclude='.env' \
+  --exclude='.env.production' \
+  --exclude='data/' \
+  --exclude='node_modules/' \
+  --exclude='dist/' \
+  --exclude='exports/' \
+  --exclude='nginx/' \
+  --exclude='nginx.conf' \
+  --exclude='config/' \
+  --exclude='.DS_Store' \
+  --exclude='*.log' \
+  "$SOURCE_DIR/" "$TARGET_DIR/" 2>/dev/null || true
+echo "      Source files synced (V0.6) — old files deleted, fresh code deployed"
 
 # ------------------------------------------------------------
 # [4/10] 配置 PR 环境（端口独立于开发环境）
@@ -353,7 +363,7 @@ echo "      Done"
 # ------------------------------------------------------------
 echo ""
 echo "============================================"
-echo "  V0.5 Deployment Complete!"
+echo "  V0.6 Deployment Complete!"
 echo "============================================"
 echo ""
 echo "  Application Version: v$APP_VERSION"
