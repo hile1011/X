@@ -36,15 +36,15 @@ export default function Customers() {
   })
 
   return (
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
+      <div className="p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">客户管理</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">客户管理</h1>
             <p className="text-gray-500 mt-1">管理所有客户信息</p>
           </div>
           <button
             onClick={() => navigate('/customers/new')}
-            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors"
+            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors min-h-[44px] justify-center"
           >
             <Plus size={20} />
             添加客户
@@ -66,12 +66,12 @@ export default function Customers() {
           </div>
 
           {loading ? (
-            <div className="p-8 text-center">
+            <div className="p-6 sm:p-8 text-center">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               <p className="text-gray-500 mt-4">加载中...</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4">
               {filteredCustomers.map((customer) => (
                 <div
                   key={customer.id}
@@ -104,24 +104,24 @@ export default function Customers() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-gray-200">
+                  <div className="flex items-center justify-end gap-1 sm:gap-2 mt-4 pt-3 border-t border-gray-200">
                     <button
                       onClick={() => navigate(`/customers/${customer.id}`)}
-                      className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                      className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                       title="查看详情"
                     >
                       <Eye size={18} />
                     </button>
                     <button
                       onClick={() => navigate(`/customers/${customer.id}/edit`)}
-                      className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                      className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                       title="编辑"
                     >
                       <Edit size={18} />
                     </button>
                     <button
                       onClick={() => handleDelete(customer.id)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                       title="删除"
                     >
                       <Trash2 size={18} />

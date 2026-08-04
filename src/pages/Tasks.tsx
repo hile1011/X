@@ -52,15 +52,15 @@ export default function Tasks() {
   }
 
   return (
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
+      <div className="p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">跟单任务</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">跟单任务</h1>
             <p className="text-gray-500 mt-1">管理所有跟单任务</p>
           </div>
           <button
             onClick={() => navigate('/tasks/new')}
-            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors"
+            className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors min-h-[44px] justify-center"
           >
             <Plus size={20} />
             创建任务
@@ -95,7 +95,7 @@ export default function Tasks() {
           </div>
 
           {loading ? (
-            <div className="p-8 text-center">
+            <div className="p-6 sm:p-8 text-center">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
               <p className="text-gray-500 mt-4">加载中...</p>
             </div>
@@ -104,12 +104,12 @@ export default function Tasks() {
               {filteredTasks.map((task: { id: string; title: string; description: string; status: string; due_date: string; order_id: string }) => (
                 <div
                   key={task.id}
-                  className="p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="p-3 sm:p-4 hover:bg-gray-50 transition-colors cursor-pointer"
                   onClick={() => navigate(`/tasks/${task.id}`)}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-4">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${getStatusColor(task.status)}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 sm:gap-4 min-w-0 flex-1">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${getStatusColor(task.status)}`}>
                         {task.status === 'completed' ? (
                           <CheckCircle className="text-white" size={20} />
                         ) : task.status === 'in_progress' ? (
@@ -118,15 +118,15 @@ export default function Tasks() {
                           <ClipboardList className="text-white" size={20} />
                         )}
                       </div>
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-gray-800">{task.title}</h3>
+                          <h3 className="font-semibold text-gray-800 truncate">{task.title}</h3>
                           {isOverdue(task.due_date) && task.status !== 'completed' && (
-                            <AlertCircle className="text-red-500" size={16} />
+                            <AlertCircle className="text-red-500 shrink-0" size={16} />
                           )}
                         </div>
-                        <p className="text-sm text-gray-500 mt-1">{task.description || '暂无描述'}</p>
-                        <div className="flex items-center gap-4 mt-2">
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{task.description || '暂无描述'}</p>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2">
                           {task.order_id && (
                             <span className="text-sm text-gray-500">订单 #{task.order_id.slice(0, 8)}</span>
                           )}
@@ -138,20 +138,20 @@ export default function Tasks() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                       <span className={`px-3 py-1 text-xs font-semibold rounded-full ${getStatusColor(task.status)}`}>
                         {getStatusLabel(task.status)}
                       </span>
                       <div className="flex gap-1">
                         <button
                           onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}`) }}
-                          className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                          className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         >
                           <Eye size={18} />
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.id}`) }}
-                          className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                          className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         >
                           <Edit size={18} />
                         </button>
@@ -162,7 +162,7 @@ export default function Tasks() {
               ))}
 
               {filteredTasks.length === 0 && (
-                <div className="p-8 text-center">
+                <div className="p-6 sm:p-8 text-center">
                   <p className="text-gray-500">暂无任务记录</p>
                 </div>
               )}

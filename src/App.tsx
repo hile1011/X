@@ -25,6 +25,11 @@ function App() {
 
   useEffect(() => {
     initAuth()
+    // SPA 中禁用浏览器原生滚动恢复，避免进入页面时恢复到历史滚动位置
+    // （如订单编辑页进入时被恢复到在线表格位置，而非停留在顶部）
+    if ('scrollRestoration' in window.history) {
+      window.history.scrollRestoration = 'manual'
+    }
   }, [initAuth])
 
   return (

@@ -1,19 +1,41 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter } from 'lucide-react'
+import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
 
+/**
+ * 统计卡片问号说明：hover 显示计算逻辑
+ * 桌面端 hover 显示，移动端点击/触摸也会触发（浏览器对 group-hover 的触摸处理）
+ */
+function StatTooltip({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative inline-flex group/tip align-middle ml-0.5">
+      <HelpCircle
+        size={14}
+        className="text-gray-400 hover:text-gray-600 cursor-help transition-colors"
+        aria-label="查看计算逻辑"
+      />
+      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/tip:block z-30 w-60 p-3 bg-gray-800 text-white text-xs rounded-lg shadow-lg leading-relaxed">
+        <div className="space-y-1">
+          {children}
+        </div>
+        <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-4 border-transparent border-t-gray-800"></div>
+      </div>
+    </div>
+  )
+}
+
 // 订单状态对应的 UI 颜色样式（Dashboard 专属，value/label 来自 OrderStatus 枚举类）
-const STATUS_COLORS: Record<number, { color: string; bgColor: string }> = {
-  1: { color: 'bg-blue-100 text-blue-700', bgColor: 'bg-blue-500' },
-  2: { color: 'bg-yellow-100 text-yellow-700', bgColor: 'bg-yellow-500' },
-  3: { color: 'bg-purple-100 text-purple-700', bgColor: 'bg-purple-500' },
-  4: { color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500' },
-  5: { color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500' },
-  6: { color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500' },
+const STATUS_COLORS: Record<number, { color: string; bgColor: string; bgLightColor: string }> = {
+  1: { color: 'bg-blue-100 text-blue-700', bgColor: 'bg-blue-500', bgLightColor: 'bg-blue-200' },
+  2: { color: 'bg-yellow-100 text-yellow-700', bgColor: 'bg-yellow-500', bgLightColor: 'bg-yellow-200' },
+  3: { color: 'bg-purple-100 text-purple-700', bgColor: 'bg-purple-500', bgLightColor: 'bg-purple-200' },
+  4: { color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500', bgLightColor: 'bg-orange-200' },
+  5: { color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500', bgLightColor: 'bg-green-200' },
+  6: { color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500', bgLightColor: 'bg-gray-200' },
 }
 
 // 合并 OrderStatus 枚举数据与 UI 颜色样式，消除 value/label 重复定义
@@ -24,11 +46,18 @@ const STATUS_OPTIONS = OrderStatus.getAll().map((o) => ({
 
 // 默认选中的订单状态：打样中、做货中、已发货未收款
 const DEFAULT_SELECTED_STATUSES = [2, 3, 4]
+// 销售额/利润统计的订单状态范围：做货中(3)、已发货未收款(4)、已发货已收款(5)
+// 时间匹配统一用「做货开始时间」归属到对应月份/年份（按用户决策保持原逻辑）
+const STATS_STATUSES = [3, 4, 5]
 const STORAGE_KEY = 'dashboard_selected_statuses'
 const MONTH_STORAGE_KEY = 'dashboard_selected_month'
 const PROFIT_MODE_STORAGE_KEY = 'dashboard_profit_mode'
+const SORT_MODE_STORAGE_KEY = 'dashboard_sort_mode'
 
 type ProfitMode = 'noTax' | 'withTax'
+// 订单状态跟踪排序模式：按状态升序(1→6) / 降序(6→1)
+// 同状态内以交货日期升序作为稳定二级排序，使更紧急的订单排在前面
+type SortMode = 'statusAsc' | 'statusDesc'
 
 const getInitialStatuses = (): number[] => {
   try {
@@ -66,6 +95,17 @@ const getInitialProfitMode = (): ProfitMode => {
   return 'noTax'
 }
 
+/** 获取初始排序模式（默认按状态升序，可从 localStorage 恢复） */
+const getInitialSortMode = (): SortMode => {
+  try {
+    const saved = localStorage.getItem(SORT_MODE_STORAGE_KEY)
+    if (saved === 'statusAsc' || saved === 'statusDesc') return saved
+  } catch {
+    // ignore
+  }
+  return 'statusAsc'
+}
+
 interface Quote {
   id: string
   quote_number: string
@@ -84,6 +124,7 @@ interface Quote {
   sampleTime: string
   productionStartTime: string
   shippingTime: string
+  images?: string[]
 }
 
 export default function Dashboard() {
@@ -93,6 +134,7 @@ export default function Dashboard() {
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<string>(getInitialMonth)
   const [profitMode, setProfitMode] = useState<ProfitMode>(getInitialProfitMode)
+  const [sortMode, setSortMode] = useState<SortMode>(getInitialSortMode)
   // 产品列表：从产品管理模块获取，用于款式标签显示
   const [products, setProducts] = useState<Product[]>([])
   const filterRef = useRef<HTMLDivElement>(null)
@@ -149,6 +191,18 @@ export default function Dashboard() {
     })
   }
 
+  const handleSortToggle = () => {
+    setSortMode((prev) => {
+      const next = prev === 'statusAsc' ? 'statusDesc' : 'statusAsc'
+      try {
+        localStorage.setItem(SORT_MODE_STORAGE_KEY, next)
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
+
   useEffect(() => {
     fetchData()
   }, [])
@@ -190,7 +244,7 @@ export default function Dashboard() {
     return Array.from(set).sort((a, b) => b.localeCompare(a))
   }, [quotes])
 
-  // 月度统计：仅统计状态为做货中(3)且做货开始时间在所选月份的订单
+  // 月度统计：统计状态为做货中/已发货未收款/已发货已收款，且做货开始时间在所选月份的订单
   // - monthlyRevenue: 总销售额（按含税卖价 × 数量）
   // - monthlyProfitNoTax: 总利润(不含税) = Σ 数量 × (卖价不含税 - 成本价)
   // - monthlyProfitWithTax: 总利润(含税) = Σ 数量 × (卖价含税 - 含税价)
@@ -202,7 +256,7 @@ export default function Dashboard() {
     const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999)
 
     const productionQuotes = quotes.filter((quote) => {
-      if (quote.status !== 3) return false
+      if (!STATS_STATUSES.includes(quote.status)) return false
       const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
       if (isNaN(productionDate.getTime())) return false
       return productionDate >= monthStart && productionDate <= monthEnd
@@ -233,8 +287,47 @@ export default function Dashboard() {
     }
   }, [quotes, selectedMonth])
 
-  // 当前利润模式对应的利润值与标签
+  // 年度统计：与月度统计同规则（状态范围/时间字段一致），仅时间范围扩大到所选月份对应的整年
+  const yearlyStats = useMemo(() => {
+    const year = parseInt(selectedMonth.split('-')[0])
+    const yearStart = new Date(year, 0, 1)
+    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999)
+
+    const productionQuotes = quotes.filter((quote) => {
+      if (!STATS_STATUSES.includes(quote.status)) return false
+      const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
+      if (isNaN(productionDate.getTime())) return false
+      return productionDate >= yearStart && productionDate <= yearEnd
+    })
+
+    let yearlyRevenue = 0
+    let yearlyProfitNoTax = 0
+    let yearlyProfitWithTax = 0
+    let orderCount = 0
+
+    productionQuotes.forEach((quote) => {
+      const quantity = parseFloat(quote.quantity) || 0
+      const cost = quote.costPrice || 0
+      const priceWithTax = quote.priceWithTax || 0
+      const sellNoTax = quote.sellPriceNoTax || 0
+      const sellWithTax = quote.sellPriceWithTax || 0
+      yearlyRevenue += quantity * sellWithTax
+      yearlyProfitNoTax += quantity * (sellNoTax - cost)
+      yearlyProfitWithTax += quantity * (sellWithTax - priceWithTax)
+      orderCount++
+    })
+
+    return {
+      yearlyRevenue: Math.round(yearlyRevenue * 100) / 100,
+      yearlyProfitNoTax: Math.round(yearlyProfitNoTax * 100) / 100,
+      yearlyProfitWithTax: Math.round(yearlyProfitWithTax * 100) / 100,
+      orderCount,
+    }
+  }, [quotes, selectedMonth])
+
+  // 当前利润模式对应的月度/年度利润值
   const currentProfit = profitMode === 'noTax' ? monthlyStats.monthlyProfitNoTax : monthlyStats.monthlyProfitWithTax
+  const currentYearProfit = profitMode === 'noTax' ? yearlyStats.yearlyProfitNoTax : yearlyStats.yearlyProfitWithTax
 
   const getStatusLabel = (status: number) => {
     const option = STATUS_OPTIONS.find((o) => o.value === status)
@@ -251,6 +344,11 @@ export default function Dashboard() {
     return option ? option.bgColor : 'bg-gray-500'
   }
 
+  const getStatusBgLightColor = (status: number) => {
+    const option = STATUS_OPTIONS.find((o) => o.value === status)
+    return option ? option.bgLightColor : 'bg-gray-200'
+  }
+
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('zh-CN')
   }
@@ -265,10 +363,25 @@ export default function Dashboard() {
     return diffDays
   }
 
-  // 根据选中的状态筛选订单（useMemo 优化性能，避免每次渲染都重新筛选）
+  // 根据选中的状态筛选订单并排序（useMemo 优化性能，避免每次渲染都重新筛选+排序）
+  // 主排序：按订单状态 value（升序 1→6 或降序 6→1）
+  // 二级排序：同状态内按交货日期升序，使更紧急的订单排在前面（同时保证排序稳定）
   const activeQuotes = useMemo(() => {
-    return quotes.filter((q) => selectedStatuses.includes(q.status))
-  }, [quotes, selectedStatuses])
+    const filtered = quotes.filter((q) => selectedStatuses.includes(q.status))
+    const sorted = [...filtered].sort((a, b) => {
+      // 主排序：状态
+      if (a.status !== b.status) {
+        return sortMode === 'statusAsc'
+          ? a.status - b.status
+          : b.status - a.status
+      }
+      // 二级排序：交货日期升序（无交货日期的排后面）
+      const aDue = a.productionTimeEnd ? new Date(a.productionTimeEnd).getTime() : Infinity
+      const bDue = b.productionTimeEnd ? new Date(b.productionTimeEnd).getTime() : Infinity
+      return aDue - bDue
+    })
+    return sorted
+  }, [quotes, selectedStatuses, sortMode])
 
   // 获取甘特图日期范围（从最早的开始日期到最晚的结束日期）
   const getGanttRange = () => {
@@ -347,11 +460,16 @@ export default function Dashboard() {
     return `${y}年${parseInt(m)}月`
   }, [selectedMonth])
 
+  // 年度标签（与所选月份对应的年份，年度统计随月份切换自动跟随）
+  const yearLabel = useMemo(() => {
+    return `${selectedMonth.split('-')[0]}年`
+  }, [selectedMonth])
+
   return (
-      <div className="p-6">
-        <div className="mb-8 flex items-start justify-between flex-wrap gap-4">
+      <div className="p-4 sm:p-6">
+        <div className="mb-6 sm:mb-8 flex items-start justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-800">仪表盘</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">仪表盘</h1>
             <p className="text-gray-500 mt-1">欢迎回来，查看今日业务概览</p>
           </div>
           {/* 月份筛选器 */}
@@ -375,14 +493,21 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {/* 当月总销售额 */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500">{monthLabel}总销售额</p>
+                <p className="text-sm text-gray-500 flex items-center">
+                  {monthLabel}总销售额
+                  <StatTooltip>
+                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                    <p>• 时间范围：做货开始时间在所选月份</p>
+                    <p>• 计算公式：Σ（含税卖价 × 数量）</p>
+                  </StatTooltip>
+                </p>
                 <p className="text-2xl font-bold text-gray-800 mt-1">¥{monthlyStats.monthlyRevenue.toLocaleString()}</p>
-                <p className="text-xs text-gray-400 mt-1">做货中订单 · {monthlyStats.orderCount} 笔</p>
+                <p className="text-xs text-gray-400 mt-1">做货中/已发货订单 · {monthlyStats.orderCount} 笔</p>
               </div>
               <div className="w-12 h-12 bg-purple-50 rounded-lg flex items-center justify-center">
                 <TrendingUp className="text-purple-600" size={24} />
@@ -391,15 +516,24 @@ export default function Dashboard() {
           </div>
 
           {/* 当月总利润（支持不含税/含税切换） */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="text-sm text-gray-500">{monthLabel}总利润</p>
+                  <p className="text-sm text-gray-500 flex items-center">
+                    {monthLabel}总利润
+                    <StatTooltip>
+                      <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                      <p>• 时间范围：做货开始时间在所选月份</p>
+                      <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
+                      <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
+                      <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">当前模式：{profitMode === 'noTax' ? '不含税' : '含税'}（点击右侧标签切换）</p>
+                    </StatTooltip>
+                  </p>
                   {/* 利润模式切换 */}
                   <button
                     onClick={handleProfitModeToggle}
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium transition-colors ${
+                    className={`text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium transition-colors min-h-[36px] sm:min-h-0 ${
                       profitMode === 'noTax'
                         ? 'bg-red-100 text-red-600 hover:bg-red-200'
                         : 'bg-green-100 text-green-600 hover:bg-green-200'
@@ -425,10 +559,17 @@ export default function Dashboard() {
           </div>
 
           {/* 交期预警 */}
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-500">交期预警</p>
+                <p className="text-sm text-gray-500 flex items-center">
+                  交期预警
+                  <StatTooltip>
+                    <p>• 统计范围：未完成订单（状态为报价中/打样中/做货中/已发货未收款）</p>
+                    <p>• 时间范围：交货日期在今天起3天内（含今日）</p>
+                    <p>• 仅统计已设置交货日期的订单</p>
+                  </StatTooltip>
+                </p>
                 <p className="text-2xl font-bold text-gray-800 mt-1">{alertQuotes.length}</p>
                 <p className="text-xs text-gray-400 mt-1">3天内到期</p>
               </div>
@@ -437,14 +578,90 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* 全年总销售额 */}
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500 flex items-center">
+                  {yearLabel}总销售额
+                  <StatTooltip>
+                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                    <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
+                    <p>• 计算公式：Σ（含税卖价 × 数量）</p>
+                  </StatTooltip>
+                </p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">¥{yearlyStats.yearlyRevenue.toLocaleString()}</p>
+                <p className="text-xs text-gray-400 mt-1">做货中/已发货订单 · {yearlyStats.orderCount} 笔</p>
+              </div>
+              <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center">
+                <TrendingUp className="text-blue-600" size={24} />
+              </div>
+            </div>
+          </div>
+
+          {/* 全年总利润（与当月利润共享 profitMode 切换） */}
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-gray-500 flex items-center">
+                    {yearLabel}总利润
+                    <StatTooltip>
+                      <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                      <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
+                      <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
+                      <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
+                      <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">当前模式：{profitMode === 'noTax' ? '不含税' : '含税'}（点击右侧标签切换）</p>
+                    </StatTooltip>
+                  </p>
+                  {/* 利润模式切换（与当月利润联动同一状态） */}
+                  <button
+                    onClick={handleProfitModeToggle}
+                    className={`text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium transition-colors min-h-[36px] sm:min-h-0 ${
+                      profitMode === 'noTax'
+                        ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                        : 'bg-green-100 text-green-600 hover:bg-green-200'
+                    }`}
+                    title="点击切换不含税 / 含税"
+                  >
+                    {profitMode === 'noTax' ? '不含税' : '含税'}
+                  </button>
+                </div>
+                <p className={`text-2xl font-bold mt-1 ${profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'}`}>
+                  ¥{currentYearProfit.toLocaleString()}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {profitMode === 'noTax'
+                    ? '卖价(不含税) - 成本价'
+                    : '卖价(含税) - 含税价'}
+                </p>
+              </div>
+              <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${profitMode === 'noTax' ? 'bg-red-50' : 'bg-green-50'}`}>
+                <Activity className={profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'} size={24} />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="mb-8">
           {/* 订单状态跟踪甘特图 - 独立一行 */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-lg font-semibold text-gray-800">订单状态跟踪</h2>
               <div className="flex items-center gap-3">
+                {/* 排序按钮：按订单状态升序/降序切换 */}
+                <button
+                  onClick={handleSortToggle}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  title={`按订单状态${sortMode === 'statusAsc' ? '升序' : '降序'}（点击切换）`}
+                >
+                  <ArrowUpDown size={14} className="text-gray-400" />
+                  <span className="text-gray-600">状态排序</span>
+                  {sortMode === 'statusAsc'
+                    ? <ArrowUp size={12} className="text-gray-500" />
+                    : <ArrowDown size={12} className="text-gray-500" />}
+                </button>
                 {/* 多选状态筛选器 */}
                 <div className="relative" ref={filterRef}>
                   <button
@@ -501,7 +718,7 @@ export default function Dashboard() {
                 </div>
                 <button
                   onClick={() => navigate('/quotes')}
-                  className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium py-1.5 sm:py-0 min-h-[40px] sm:min-h-0"
                 >
                   查看全部 <ArrowRight size={16} className="inline" />
                 </button>
@@ -562,29 +779,49 @@ export default function Dashboard() {
                   {activeQuotes.map((quote) => {
                     const barStyle = getGanttBarStyle(quote)
                     const progress = calculateProgress(quote)
-                    
+
                     return (
-                      <div key={quote.id} className="flex items-center gap-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors">
-                        <div className="w-56 shrink-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(quote.status)}`}>
-                              {getStatusLabel(quote.status)}
-                            </span>
+                      <div
+                        key={quote.id}
+                        onDoubleClick={() => navigate(`/quotes/${quote.id}`)}
+                        title="双击查看订单详情"
+                        className="flex items-center gap-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
+                      >
+                        <div className="w-56 shrink-0 flex items-center gap-2">
+                          {/* 产品首图 */}
+                          {quote.images && quote.images.length > 0 ? (
+                            <img
+                              src={quote.images[0]}
+                              alt="产品图"
+                              className="w-10 h-10 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
+                            </div>
+                          )}
+                          {/* 文字信息 */}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(quote.status)}`}>
+                                {getStatusLabel(quote.status)}
+                              </span>
+                            </div>
+                            <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
+                            <p className="text-xs text-gray-500 truncate">{getStyleLabelFromProducts(products, quote.productStyle)} - {quote.quantity}个</p>
                           </div>
-                          <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
-                          <p className="text-xs text-gray-500">{getStyleLabelFromProducts(products, quote.productStyle)} - {quote.quantity}个</p>
                         </div>
                         <div className="flex-1 relative h-10">
                           {/* 背景轨道 */}
                           <div className="absolute inset-y-3 left-0 right-0 bg-gray-100 rounded-full"></div>
-                          {/* 进度条 */}
+                          {/* 总时间进度条（浅色） */}
                           <div
-                            className={`absolute inset-y-3 rounded-full transition-all duration-300 ${getStatusBgColor(quote.status)}`}
+                            className={`absolute inset-y-3 rounded-full transition-all duration-300 ${getStatusBgLightColor(quote.status)}`}
                             style={{ ...barStyle }}
                           >
-                            {/* 进度指示 */}
+                            {/* 当前进度条（深色） */}
                             <div
-                              className="absolute top-0 bottom-0 left-0 bg-white/40 rounded-full"
+                              className={`absolute top-0 bottom-0 left-0 rounded-full transition-all duration-300 ${getStatusBgColor(quote.status)}`}
                               style={{ width: `${progress}%` }}
                             ></div>
                           </div>
@@ -608,9 +845,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {/* 交期预警 */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="text-red-500" size={20} />
@@ -618,7 +855,7 @@ export default function Dashboard() {
               </div>
               <button
                 onClick={() => navigate('/quotes')}
-                className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                className="text-sm text-primary-600 hover:text-primary-700 font-medium py-1.5 sm:py-0 min-h-[40px] sm:min-h-0"
               >
                 查看全部 <ArrowRight size={16} className="inline" />
               </button>
@@ -675,23 +912,23 @@ export default function Dashboard() {
         </div>
 
         <div className="mt-6">
-          <div className="bg-gradient-to-r from-primary-600 to-blue-600 rounded-xl p-6 text-white">
-            <div className="flex items-center justify-between">
+          <div className="bg-gradient-to-r from-primary-600 to-blue-600 rounded-xl p-4 sm:p-6 text-white">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
-                <h2 className="text-xl font-bold">快速开始</h2>
+                <h2 className="text-lg sm:text-xl font-bold">快速开始</h2>
                 <p className="text-blue-100 mt-1">创建订单或添加客户，开始您的业务流程</p>
               </div>
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-3">
                 <button
                   onClick={() => navigate('/quotes')}
-                  className="flex items-center gap-2 bg-white text-primary-600 px-6 py-3 rounded-lg font-medium hover:bg-gray-100 transition-colors"
+                  className="flex items-center gap-2 bg-white text-primary-600 px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-gray-100 transition-colors min-h-[44px]"
                 >
                   <Plus size={20} />
                   订单管理
                 </button>
                 <button
                   onClick={() => navigate('/customers/new')}
-                  className="flex items-center gap-2 bg-white/20 text-white px-6 py-3 rounded-lg font-medium hover:bg-white/30 transition-colors"
+                  className="flex items-center gap-2 bg-white/20 text-white px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-white/30 transition-colors min-h-[44px]"
                 >
                   <Plus size={20} />
                   添加客户

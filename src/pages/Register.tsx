@@ -29,13 +29,13 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 to-blue-100 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
+    <div className="min-h-screen bg-gradient-to-br from-primary-50 to-blue-100 flex items-center justify-center px-4 py-6">
+      <div className="bg-white rounded-2xl shadow-xl p-6 sm:p-8 w-full max-w-md">
+        <div className="text-center mb-6 sm:mb-8">
           <div className="w-16 h-16 bg-primary-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <LogIn className="text-primary-600" size={32} />
           </div>
-          <h1 className="text-2xl font-bold text-gray-800">报价跟单系统</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">报价跟单系统</h1>
           <p className="text-gray-500 mt-2">创建新账户</p>
         </div>
 

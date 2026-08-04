@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2 } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
@@ -138,6 +138,9 @@ export default function BagQuote() {
   const [orderInfo, setOrderInfo] = useState<OrderInfo>(DEFAULT_ORDER_INFO)
   const [productImages, setProductImages] = useState<string[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  // 图片拖拽排序状态：draggedIndex = 被拖拽的图片索引，dragOverIndex = 悬停目标索引
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
   const [loading, setLoading] = useState(false)
@@ -184,6 +187,13 @@ export default function BagQuote() {
 
   useEffect(() => {
     fetchStyleOptions().then(setStyleOptions)
+  }, [])
+
+  // 进入页面时停留在最上方：SPA 的 pushState 导航不会重置窗口滚动位置，
+  // 会沿用前一页（如订单列表）的滚动位置，导致进入编辑页时下滑到在线表格。
+  // 用 useLayoutEffect 在浏览器绘制前同步滚回顶部，避免视觉闪烁。
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0)
   }, [])
 
   useEffect(() => {
@@ -430,6 +440,19 @@ export default function BagQuote() {
       ? { ...loadedFormulas }
       : { ...template.formulas }
 
+    // VTable 初始化时会对其内部元素（如 sheet tab）调用 element.scrollIntoView，
+    // 导致窗口平滑滚动到表格区域，覆盖进入页面时的顶部位置。
+    // 临时将 scrollIntoView 置为空操作以阻止该行为，初始化完成后恢复原方法。
+    const origScrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function () { /* no-op during VTable init */ }
+    let sivRestored = false
+    const restoreSIV = () => {
+      if (sivRestored) return
+      sivRestored = true
+      Element.prototype.scrollIntoView = origScrollIntoView
+    }
+    const sivTimer = setTimeout(restoreSIV, 1000)
+
     const sheet = new VTableSheet(sheetContainerRef.current, {
       undoRedo: { show: true },
       VTablePluginModules: [
@@ -647,6 +670,8 @@ export default function BagQuote() {
       }
       clearTimeout(initTimer1)
       clearTimeout(initTimer2)
+      clearTimeout(sivTimer)
+      restoreSIV()
       resizeObserver.disconnect()
       menuObserver.disconnect()
       sheet.release()
@@ -696,6 +721,38 @@ export default function BagQuote() {
 
   const handleImageRemove = (index: number) => {
     setProductImages((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // === 图片拖拽排序（原生 HTML5 Drag & Drop） ===
+  const handleImageDragStart = (index: number) => {
+    setDraggedIndex(index)
+  }
+  const handleImageDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    if (draggedIndex !== null && draggedIndex !== index) {
+      setDragOverIndex(index)
+    }
+  }
+  const handleImageDragEnd = () => {
+    setDraggedIndex(null)
+    setDragOverIndex(null)
+  }
+  const handleImageDrop = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (draggedIndex === null || draggedIndex === index) {
+      setDraggedIndex(null)
+      setDragOverIndex(null)
+      return
+    }
+    setProductImages((prev) => {
+      const next = [...prev]
+      const [moved] = next.splice(draggedIndex, 1)
+      next.splice(index, 0, moved)
+      return next
+    })
+    setDraggedIndex(null)
+    setDragOverIndex(null)
   }
 
   const updateOrderField = async (field: keyof OrderInfo, value: string) => {
@@ -826,9 +883,9 @@ export default function BagQuote() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* 顶部悬浮栏（sticky 使其限定在 main 内容区内，不覆盖左侧菜单栏） */}
-      <div className="shrink-0 sticky top-0 z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100">
-        <div className="px-6 py-2">
-          <div className="flex items-center justify-between">
+      <div className="shrink-0 sticky top-14 md:top-0 z-30 md:z-50 bg-white/95 backdrop-blur-sm shadow-sm border-b border-gray-100">
+        <div className="px-4 sm:px-6 py-2">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 bg-blue-100 rounded-lg flex items-center justify-center">
                 <ShoppingBag className="text-blue-600" size={20} />
@@ -838,20 +895,20 @@ export default function BagQuote() {
                 <p className="text-[11px] text-gray-500 leading-tight">订单信息管理</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-end">
+              <button onClick={() => navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
                 <ArrowLeft size={16} />
                 返回列表
               </button>
-              <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50">
+              <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
                 <Save size={16} />
                 {showSaveSuccess ? '保存成功' : '保存'}
               </button>
-              <button onClick={handleExportWithTable} disabled={exporting || !isEditMode} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title={!isEditMode ? '请先保存订单' : '导出订单及在线表格到 Excel（保留公式）'}>
+              <button onClick={handleExportWithTable} disabled={exporting || !isEditMode} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[40px] sm:min-h-0" title={!isEditMode ? '请先保存订单' : '导出订单及在线表格到 Excel（保留公式）'}>
                 {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 {exporting ? '导出中...' : '导出 Excel'}
               </button>
-              <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors">
+              <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
                 <RotateCcw size={16} />
                 重置
               </button>
@@ -860,8 +917,10 @@ export default function BagQuote() {
         </div>
       </div>
 
-      {/* 主内容区域（shrink-0：订单信息区按内容高度，不压缩） */}
-      <div className="shrink-0 px-6 pt-4 pb-0 w-full">
+      {/* 主内容区域（shrink-0：订单信息区按内容高度，不压缩）
+          min-w-0 + overflow-hidden：允许 flex 子元素收缩，使状态流转的 overflow-x-auto 生效，
+          避免 480px 最小宽度撑破 375px 移动端视口 */}
+      <div className="shrink-0 px-4 sm:px-6 pt-4 pb-0 w-full min-w-0 overflow-hidden">
         {/* 状态流转（位于卖价上方） */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
           <div className="flex items-center justify-between gap-3 mb-2">
@@ -903,7 +962,8 @@ export default function BagQuote() {
             </div>
           </div>
 
-          <div className="flex items-center px-1">
+          <div className="overflow-x-auto">
+            <div className="flex items-center px-1 min-w-[480px] sm:min-w-0">
             {STATUS_OPTIONS.map((option, index) => {
               const isCurrent = option.value === status
               const isPast = option.value < status
@@ -943,6 +1003,7 @@ export default function BagQuote() {
                 </div>
               )
             })}
+            </div>
           </div>
         </div>
 
@@ -1041,7 +1102,7 @@ export default function BagQuote() {
                       setPriceWithTax(val !== null ? Number((val * 1.1).toFixed(2)) : null)
                     }}
                     placeholder="0.00"
-                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
+                    className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
                   />
                 </div>
                 <div className="flex items-center gap-1">
@@ -1053,7 +1114,7 @@ export default function BagQuote() {
                     value={priceWithTax !== null ? priceWithTax.toFixed(2) : ''}
                     onChange={(e) => setPriceWithTax(e.target.value === '' ? null : Number(e.target.value))}
                     placeholder="0.00"
-                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
+                    className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
                   />
                 </div>
                 <div className="w-px h-5 bg-gray-200" />
@@ -1062,14 +1123,14 @@ export default function BagQuote() {
                   <span className="text-[11px] text-gray-400">单个利润</span>
                   <span className="text-[10px] text-red-400">不含税</span>
                   <span className="text-[11px] text-red-400">¥</span>
-                  <div className="w-24 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded text-right">
+                  <div className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded text-right">
                     {profitPerNoTax.toFixed(2)}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-green-500">含税</span>
                   <span className="text-[11px] text-green-500">¥</span>
-                  <div className="w-24 px-1.5 py-0.5 text-sm font-bold text-green-700 bg-green-50/40 border border-green-200 rounded text-right">
+                  <div className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-green-700 bg-green-50/40 border border-green-200 rounded text-right">
                     {profitPerWithTax.toFixed(2)}
                   </div>
                 </div>
@@ -1079,14 +1140,14 @@ export default function BagQuote() {
                   <span className="text-[11px] text-gray-500">利润总额</span>
                   <span className="text-[10px] text-red-400">不含税</span>
                   <span className="text-[11px] text-red-400">¥</span>
-                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
+                  <div className="w-28 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
                     {profitTotalNoTax.toFixed(2)}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-green-600">含税</span>
                   <span className="text-[11px] text-green-600">¥</span>
-                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-green-800 bg-green-100/50 border border-green-300 rounded text-right">
+                  <div className="w-28 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-green-800 bg-green-100/50 border border-green-300 rounded text-right">
                     {profitTotalWithTax.toFixed(2)}
                   </div>
                 </div>
@@ -1107,7 +1168,7 @@ export default function BagQuote() {
                     value={sellPrices.noTax !== null ? sellPrices.noTax.toFixed(2) : ''}
                     onChange={(e) => setSellPrices(prev => ({ ...prev, noTax: e.target.value === '' ? null : Number(e.target.value) }))}
                     placeholder="0.00"
-                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
+                    className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
                   />
                 </div>
                 <div className="flex items-center gap-1">
@@ -1120,7 +1181,7 @@ export default function BagQuote() {
                     value={sellPrices.withTax !== null ? sellPrices.withTax.toFixed(2) : ''}
                     onChange={(e) => setSellPrices(prev => ({ ...prev, withTax: e.target.value === '' ? null : Number(e.target.value) }))}
                     placeholder="0.00"
-                    className="w-24 px-1.5 py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
+                    className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
                   />
                 </div>
                 <div className="w-px h-5 bg-gray-200" />
@@ -1129,14 +1190,14 @@ export default function BagQuote() {
                   <span className="text-[11px] text-gray-500">销售总额</span>
                   <span className="text-[10px] text-red-400">不含税</span>
                   <span className="text-[11px] text-red-400">¥</span>
-                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
+                  <div className="w-28 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-red-700 bg-red-100/50 border border-red-300 rounded text-right">
                     {sellTotalNoTax.toFixed(2)}
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-blue-500">含税</span>
                   <span className="text-[11px] text-blue-500">¥</span>
-                  <div className="w-28 px-1.5 py-0.5 text-sm font-bold text-blue-700 bg-blue-100/50 border border-blue-300 rounded text-right">
+                  <div className="w-28 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-blue-700 bg-blue-100/50 border border-blue-300 rounded text-right">
                     {sellTotalWithTax.toFixed(2)}
                   </div>
                 </div>
@@ -1145,7 +1206,7 @@ export default function BagQuote() {
               {/* 表单字段 - 密集网格。LG:6列 MD:4列 SM:2列
               同行规则：客户+打样费+箱规 / 大货日期+天数 / 面料+工艺+手提 / 收货地址+备注 */}
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5">
-                {/* 行1：客户名称 + 打样费/天 + 箱规 */}
+                {/* 行1：客户名称 + 订单状态(只读) + 打样费/天 + 箱规 */}
                 <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
                   <CustomerSelect
@@ -1156,8 +1217,22 @@ export default function BagQuote() {
                     placeholder="请选择或输入客户名称"
                   />
                 </div>
+                {/* 订单状态（只读，不可修改） */}
+                <div className="col-span-1 md:col-span-1 lg:col-span-1">
+                  <label className="block text-xs text-gray-400 mb-0.5">订单状态</label>
+                  <div className={`px-2 py-1 text-sm font-semibold rounded text-center ${
+                    status === 1 ? 'bg-blue-100 text-blue-700' :
+                    status === 2 ? 'bg-yellow-100 text-yellow-700' :
+                    status === 3 ? 'bg-purple-100 text-purple-700' :
+                    status === 4 ? 'bg-orange-100 text-orange-700' :
+                    status === 5 ? 'bg-green-100 text-green-700' :
+                    'bg-gray-100 text-gray-700'
+                  }`}>
+                    {OrderStatus.getLabel(status)}
+                  </div>
+                </div>
                 {/* 打样费与打样天数合并为文本输入框，格式：费用/天数 */}
-                <div className="col-span-1 md:col-span-1 lg:col-span-2">
+                <div className="col-span-1 md:col-span-1 lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">打样费/天</label>
                   <input
                     type="text"
@@ -1199,14 +1274,14 @@ export default function BagQuote() {
                           updateOrderField('productionTimeEnd', DateUtils.addDays(newStart, days))
                         }
                       }}
-                      className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
                     />
                     <span className="text-xs text-gray-500 shrink-0">到</span>
                     <input
                       type="date"
                       value={orderInfo.productionTimeEnd}
                       onChange={(e) => updateOrderField('productionTimeEnd', e.target.value)}
-                      className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
                     />
                     <input type="text" value={orderInfo.massDays} onChange={(e) => {
                         const newDays = e.target.value
@@ -1291,7 +1366,7 @@ export default function BagQuote() {
                     onChange={(e) => updateOrderField('shippingAddress', e.target.value)}
                     placeholder="请输入收货地址"
                     rows={3}
-                    className="w-full px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none"
                   />
                 </div>
                 <div className="col-span-2 md:col-span-2 lg:col-span-3">
@@ -1346,15 +1421,29 @@ export default function BagQuote() {
                       isDragging ? 'bg-blue-100/30 p-1' : ''
                     }`}>
                       {productImages.map((img, index) => (
-                        <div key={index} className="relative aspect-square">
-                          <div 
+                        <div
+                          key={index}
+                          className={`relative aspect-square cursor-grab ${
+                            draggedIndex === index ? 'opacity-40 ring-2 ring-primary-400 ring-dashed' : ''
+                          } ${
+                            dragOverIndex === index && draggedIndex !== null && draggedIndex !== index
+                              ? 'ring-2 ring-primary-500 ring-offset-1'
+                              : ''
+                          }`}
+                          draggable
+                          onDragStart={() => handleImageDragStart(index)}
+                          onDragOver={(e) => handleImageDragOver(e, index)}
+                          onDragEnd={handleImageDragEnd}
+                          onDrop={(e) => handleImageDrop(e, index)}
+                        >
+                          <div
                             className="w-full h-full cursor-zoom-in"
                             onClick={() => { setPreviewImageSrc(img); setIsPreviewOpen(true); }}
                           >
-                            <img 
-                              src={img} 
-                              alt={`产品图片 ${index + 1}`} 
-                              className="w-full h-full object-cover rounded-lg border border-gray-200" 
+                            <img
+                              src={img}
+                              alt={`产品图片 ${index + 1}`}
+                              className="w-full h-full object-cover rounded-lg border border-gray-200"
                             />
                           </div>
                           <button
@@ -1384,7 +1473,7 @@ export default function BagQuote() {
 
         {/* 在线表格 — 全宽，填满 Layout main 容器 */}
       </div>
-      <div className="flex-1 min-h-0 px-6 pt-1 pb-4 w-full flex flex-col">
+      <div className="flex-1 min-h-0 px-4 sm:px-6 pt-1 pb-4 w-full flex flex-col min-w-0">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0">
           <div ref={sheetContainerRef} className="h-full w-full" style={{ minHeight: 400 }} />
         </div>

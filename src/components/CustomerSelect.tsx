@@ -96,7 +96,7 @@ export default function CustomerSelect({ value, onChange, onAddressChange, place
           value={value}
           onChange={handleInputChange}
           placeholder={placeholder}
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+          className="w-full px-2 py-1 pr-7 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
           readOnly={isOpen}
         />
         <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">

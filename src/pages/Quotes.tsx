@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
@@ -54,6 +54,22 @@ interface GroupedQuotes {
   quotes: Quote[]
 }
 
+// 生成分页页码序列：始终包含首页与末页，当前页前后各展示若干页，超出部分用省略号占位
+// 例：current=1,total=20 → [1,2,3,'...',20]；current=10,total=20 → [1,'...',9,10,11,'...',20]
+const getPageNumbers = (current: number, total: number): (number | 'ellipsis')[] => {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1)
+  }
+  const pages: (number | 'ellipsis')[] = [1]
+  if (current > 3) pages.push('ellipsis')
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+  for (let i = start; i <= end; i++) pages.push(i)
+  if (current < total - 2) pages.push('ellipsis')
+  pages.push(total)
+  return pages
+}
+
 export default function Quotes() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [groupedQuotes, setGroupedQuotes] = useState<GroupedQuotes[]>([])
@@ -69,6 +85,10 @@ export default function Quotes() {
   // 款式选项与产品列表：从产品管理模块动态获取
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  // 分页：每页条数可设置（默认 20），currentPage 从 1 开始
+  const [pageSize, setPageSize] = useState(20)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [filteredCount, setFilteredCount] = useState(0)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -77,9 +97,14 @@ export default function Quotes() {
     api.products.getAll().then((data: Product[]) => setProducts(data))
   }, [])
 
+  // 筛选条件变化时重置到第 1 页
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, statusFilter, customerFilter, styleFilter])
+
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products])
+  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products, currentPage, pageSize])
 
   const fetchQuotes = async () => {
     setLoading(true)
@@ -93,30 +118,42 @@ export default function Quotes() {
     setLoading(false)
   }
 
-  const groupQuotes = () => {
-    let filtered = quotes.filter((quote) => {
-      const matchesSearch = 
+  // 筛选逻辑（不含分页）：返回所有符合条件的订单
+  const getFilteredQuotes = () => {
+    return quotes.filter((quote) => {
+      const matchesSearch =
         quote.quote_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(searchTerm.toLowerCase())
-      
-      const matchesStatus = 
+
+      const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'active' && quote.status < 6) ||
         quote.status === parseInt(statusFilter)
-      
-      const matchesCustomer = !customerFilter || 
+
+      const matchesCustomer = !customerFilter ||
         quote.customerName.toLowerCase().includes(customerFilter.toLowerCase())
-      
-      const matchesStyle = !styleFilter || 
+
+      const matchesStyle = !styleFilter ||
         quote.productStyle.toLowerCase().includes(styleFilter.toLowerCase()) ||
         getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(styleFilter.toLowerCase())
-      
+
       return matchesSearch && matchesStatus && matchesCustomer && matchesStyle
     })
+  }
+
+  const groupQuotes = () => {
+    const filtered = getFilteredQuotes()
+
+    // 记录筛选后总数
+    setFilteredCount(filtered.length)
+
+    // 分页：取当前页的数据
+    const startIndex = (currentPage - 1) * pageSize
+    const paginated = filtered.slice(startIndex, startIndex + pageSize)
 
     const grouped: Record<string, Quote[]> = {}
-    filtered.forEach((quote) => {
+    paginated.forEach((quote) => {
       if (!grouped[quote.customerName]) {
         grouped[quote.customerName] = []
       }
@@ -179,8 +216,8 @@ export default function Quotes() {
     setExporting(true)
     setExportError('')
     try {
-      // 收集当前筛选后的所有订单 ID
-      const orderIds = groupedQuotes.flatMap((g) => g.quotes.map((q) => q.id))
+      // 收集当前筛选后的所有订单 ID（不限分页）
+      const orderIds = getFilteredQuotes().map((q) => q.id)
       if (orderIds.length === 0) {
         setExportError('没有可导出的订单')
         setExporting(false)
@@ -230,13 +267,13 @@ export default function Quotes() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 sm:p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">订单管理</h1>
           <p className="text-gray-500 mt-1">管理所有订单</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap gap-2 sm:gap-3">
           <button
             onClick={() => { setExportError(''); setShowExportDialog(true) }}
             disabled={exporting}
@@ -255,7 +292,7 @@ export default function Quotes() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col h-[calc(100vh-200px)]">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-[60vh] h-auto sm:h-[calc(100vh-200px)]">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 flex-shrink-0">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1">
             <div className="relative">
@@ -317,7 +354,8 @@ export default function Quotes() {
             <p className="text-gray-500 mt-4">加载中...</p>
           </div>
         ) : (
-          <div className="flex-1 overflow-auto">
+          <>
+          <div className="flex-1 overflow-auto min-h-0">
             <div className="min-w-[1764px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
@@ -328,6 +366,7 @@ export default function Quotes() {
                   <div className="w-24 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">数量</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">面料</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">工艺</div>
+                  <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单状态</div>
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">成本价</div>
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(不含税)</div>
@@ -335,7 +374,6 @@ export default function Quotes() {
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(不含税)</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(含税)</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">做货到期时间</div>
-                  <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单状态</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">创建日期</div>
                   <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0 sticky right-0 bg-gray-50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">操作</div>
                 </div>
@@ -430,6 +468,15 @@ export default function Quotes() {
                               {quote.process}
                             </TooltipCell>
 
+                            {/* 订单状态 */}
+                            <div className="w-36 px-4 py-4 flex-shrink-0">
+                              <span
+                                className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(quote.status)}`}
+                              >
+                                {getStatusLabel(quote.status)}
+                              </span>
+                            </div>
+
                             {/* 成本价 */}
                             <div className="w-28 px-4 py-4 flex-shrink-0">
                               <span className="text-gray-600 font-medium text-sm">
@@ -480,15 +527,6 @@ export default function Quotes() {
                                   {getProductionDeadline(quote)}
                                 </span>
                               </div>
-                            </div>
-
-                            {/* 订单状态 */}
-                            <div className="w-36 px-4 py-4 flex-shrink-0">
-                              <span
-                                className={`px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(quote.status)}`}
-                              >
-                                {getStatusLabel(quote.status)}
-                              </span>
                             </div>
 
                             {/* 创建日期 */}
@@ -560,6 +598,114 @@ export default function Quotes() {
               )}
             </div>
           </div>
+
+            {/* 分页控制：移出滚动区作为固定底部页脚，避免与操作列(sticky right-0)在右下角视觉重叠 */}
+            {filteredCount > 0 && (() => {
+              const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize))
+              const pageNumbers = getPageNumbers(currentPage, totalPages)
+              // 当前页实际展示的子订单数（末页可能不足 pageSize）
+              const currentPageCount = Math.max(0, Math.min(pageSize, filteredCount - (currentPage - 1) * pageSize))
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-t border-gray-200 bg-white flex-shrink-0">
+                  {/* 左侧：子订单统计 + 每页条数设置 */}
+                  <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
+                    <span>
+                      子订单总数 <span className="font-semibold text-gray-800">{filteredCount}</span> 条
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      当前页 <span className="font-semibold text-primary-600">{currentPageCount}</span> 条
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      第 <span className="font-semibold text-primary-600">{currentPage}</span> / {totalPages} 页
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-500">每页</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
+                        className="px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none cursor-pointer bg-white"
+                        title="设置每页显示条数"
+                      >
+                        {[10, 20, 50, 100].map((s) => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                      <span className="text-gray-500">条</span>
+                    </div>
+                  </div>
+                  {/* 右侧：页码导航 + 跳转 */}
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1">
+                      {/* 上一页：整合为左侧箭头 */}
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        disabled={currentPage <= 1}
+                        className="w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center border border-gray-200 text-gray-700 rounded-lg hover:bg-primary-50 hover:border-primary-300 hover:text-primary-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:border-gray-200 disabled:hover:text-gray-700"
+                        title="上一页"
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      {/* 页码：点击直接设置当前页 */}
+                      {pageNumbers.map((p, i) =>
+                        p === 'ellipsis' ? (
+                          <span key={`ellipsis-${i}`} className="w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center text-sm text-gray-400 select-none">…</span>
+                        ) : (
+                          <button
+                            key={`page-${p}`}
+                            onClick={() => setCurrentPage(p)}
+                            className={`w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center text-sm rounded-lg transition-colors ${
+                              p === currentPage
+                                ? 'bg-primary-600 text-white border border-primary-600 font-semibold'
+                                : 'border border-gray-200 text-gray-700 hover:bg-primary-50 hover:border-primary-300 hover:text-primary-700'
+                            }`}
+                          >
+                            {p}
+                          </button>
+                        )
+                      )}
+                      {/* 下一页：整合为右侧箭头 */}
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={currentPage >= totalPages}
+                        className="w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center border border-gray-200 text-gray-700 rounded-lg hover:bg-primary-50 hover:border-primary-300 hover:text-primary-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:border-gray-200 disabled:hover:text-gray-700"
+                        title="下一页"
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                    {/* 跳转：直接输入页码设置 */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-1 text-sm text-gray-500">
+                        <span>跳至</span>
+                        <input
+                          key={`jump-${currentPage}`}
+                          type="number"
+                          min={1}
+                          max={totalPages}
+                          defaultValue={currentPage}
+                          className="w-12 px-2 py-1 text-center text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return
+                            const v = parseInt(e.currentTarget.value, 10)
+                            if (!isNaN(v)) setCurrentPage(Math.min(totalPages, Math.max(1, v)))
+                            e.currentTarget.blur()
+                          }}
+                          onBlur={(e) => {
+                            const v = parseInt(e.currentTarget.value, 10)
+                            if (!isNaN(v)) setCurrentPage(Math.min(totalPages, Math.max(1, v)))
+                          }}
+                        />
+                        <span>页</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
+          </>
         )}
       </div>
 
@@ -607,7 +753,7 @@ export default function Quotes() {
               <div className="flex items-center justify-between text-sm mt-2">
                 <span className="text-gray-600">订单数量</span>
                 <span className="font-semibold text-primary-600">
-                  {groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0)} 个
+                  {filteredCount} 个
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm mt-2">
@@ -633,7 +779,7 @@ export default function Quotes() {
               </button>
               <button
                 onClick={handleExport}
-                disabled={exporting || groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0) === 0}
+                disabled={exporting || filteredCount === 0}
                 className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {exporting ? (

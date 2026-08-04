@@ -68,17 +68,17 @@ export default function OrderDetail() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="flex items-center gap-4 mb-6">
+      <div className="p-4 sm:p-6">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
           <button
             onClick={() => navigate('/orders')}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-2xl font-bold text-gray-800">订单详情</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">订单详情</h1>
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 sm:p-8 text-center">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           <p className="text-gray-500 mt-4">加载中...</p>
         </div>
@@ -88,17 +88,17 @@ export default function OrderDetail() {
 
   if (!order) {
     return (
-      <div className="p-6">
-        <div className="flex items-center gap-4 mb-6">
+      <div className="p-4 sm:p-6">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
           <button
             onClick={() => navigate('/orders')}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             <ArrowLeft size={20} />
           </button>
-          <h1 className="text-2xl font-bold text-gray-800">订单详情</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">订单详情</h1>
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 sm:p-8 text-center">
           <p className="text-gray-500">订单不存在</p>
         </div>
       </div>
@@ -106,40 +106,38 @@ export default function OrderDetail() {
   }
 
   return (
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate('/orders')}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowLeft size={20} />
-            </button>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">订单详情</h1>
-              <p className="text-gray-500 mt-1">{(order as { order_number: string }).order_number}</p>
-            </div>
+      <div className="p-4 sm:p-6">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+          <button
+            onClick={() => navigate('/orders')}
+            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">订单详情</h1>
+            <p className="text-gray-500 mt-1 truncate">{(order as { order_number: string }).order_number}</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+          <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <ShoppingCart className="text-primary-600" size={20} />
-                <h2 className="text-lg font-semibold text-gray-800">基本信息</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-gray-800">基本信息</h2>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="min-w-0">
                   <label className="block text-sm text-gray-500">订单号</label>
-                  <p className="font-medium text-gray-900">{order.order_number || '-'}</p>
+                  <p className="font-medium text-gray-900 truncate">{order.order_number || '-'}</p>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-500">状态</label>
                   <select
                     value={status}
                     onChange={(e) => handleStatusChange(e.target.value)}
-                    className={`mt-1 px-3 py-1 inline-flex text-sm font-semibold rounded-full border border-transparent ${getStatusColor(status)} focus:outline-none focus:ring-2 focus:ring-primary-500`}
+                    className={`mt-1 px-3 py-1 inline-flex text-sm font-semibold rounded-full border border-transparent ${getStatusColor(status)} focus:outline-none focus:ring-2 focus:ring-primary-500 min-h-[44px]`}
                   >
                     {statusOptions.map((option) => (
                       <option key={option.value} value={option.value} className="bg-white text-gray-800">
@@ -152,35 +150,35 @@ export default function OrderDetail() {
                   <label className="block text-sm text-gray-500">创建时间</label>
                   <p className="text-gray-900">{order.created_at ? new Date(order.created_at).toLocaleString() : '-'}</p>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <label className="block text-sm text-gray-500">报价单号</label>
-                  <p className="text-gray-900">{order.quote_id ? `QT-${order.quote_id.slice(0, 8)}` : '直接创建'}</p>
+                  <p className="text-gray-900 truncate">{order.quote_id ? `QT-${order.quote_id.slice(0, 8)}` : '直接创建'}</p>
                 </div>
               </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Building className="text-primary-600" size={20} />
-                <h2 className="text-lg font-semibold text-gray-800">客户信息</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-gray-800">客户信息</h2>
               </div>
               {order.customer ? (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="min-w-0">
                     <label className="block text-sm text-gray-500">客户名称</label>
-                    <p className="font-medium text-gray-900">{order.customer.name}</p>
+                    <p className="font-medium text-gray-900 truncate">{order.customer.name}</p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-sm text-gray-500">联系人</label>
-                    <p className="text-gray-900">{order.customer.contact_person || '-'}</p>
+                    <p className="text-gray-900 truncate">{order.customer.contact_person || '-'}</p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-sm text-gray-500">电话</label>
-                    <p className="text-gray-900">{order.customer.phone || '-'}</p>
+                    <p className="text-gray-900 truncate">{order.customer.phone || '-'}</p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <label className="block text-sm text-gray-500">邮箱</label>
-                    <p className="text-gray-900">{order.customer.email || '-'}</p>
+                    <p className="text-gray-900 truncate">{order.customer.email || '-'}</p>
                   </div>
                 </div>
               ) : (
@@ -188,13 +186,13 @@ export default function OrderDetail() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <Package className="text-primary-600" size={20} />
-                <h2 className="text-lg font-semibold text-gray-800">产品明细</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-gray-800">产品明细</h2>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <table className="w-full min-w-[480px]">
                   <thead>
                     <tr className="bg-gray-50">
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500">产品名称</th>
@@ -229,13 +227,13 @@ export default function OrderDetail() {
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl p-6 text-white">
+          <div className="space-y-4 sm:space-y-6">
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl p-4 sm:p-6 text-white">
               <h3 className="text-sm font-medium text-green-100 mb-2">订单总额</h3>
-              <p className="text-3xl font-bold">¥{(order.total_amount || 0).toLocaleString()}</p>
+              <p className="text-2xl sm:text-3xl font-bold">¥{(order.total_amount || 0).toLocaleString()}</p>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
               <div className="flex items-center gap-2 mb-4">
                 <User className="text-primary-600" size={20} />
                 <h3 className="font-semibold text-gray-800">处理人</h3>
@@ -243,16 +241,16 @@ export default function OrderDetail() {
               <p className="text-gray-600">用户 #{order.user_id ? order.user_id.slice(0, 8) : '-'}</p>
             </div>
 
-            <div className="bg-gray-50 rounded-xl p-6">
+            <div className="bg-gray-50 rounded-xl p-4 sm:p-6">
               <h3 className="font-semibold text-gray-800 mb-2">时间线</h3>
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <div className="w-2 h-2 bg-green-500 rounded-full shrink-0"></div>
                   <span className="text-sm text-gray-600">创建于 {order.created_at ? new Date(order.created_at).toLocaleString() : '-'}</span>
                 </div>
                 {order.updated_at !== order.created_at && (
                   <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                    <div className="w-2 h-2 bg-blue-500 rounded-full shrink-0"></div>
                     <span className="text-sm text-gray-600">更新于 {order.updated_at ? new Date(order.updated_at).toLocaleString() : '-'}</span>
                   </div>
                 )}
