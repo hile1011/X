@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
+import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
 import type { Product } from '../types'
 
@@ -44,14 +45,8 @@ export interface Quote {
   updated_at: string
 }
 
-const STATUS_OPTIONS = [
-  { value: 1, label: '报价中' },
-  { value: 2, label: '打样中' },
-  { value: 3, label: '做货中' },
-  { value: 4, label: '已发货未收款' },
-  { value: 5, label: '已发货已收款' },
-  { value: 6, label: '结束' },
-]
+// 订单状态选项统一使用 OrderStatus 枚举类，消除重复定义
+const STATUS_OPTIONS = OrderStatus.getAll()
 
 interface GroupedQuotes {
   customerName: string

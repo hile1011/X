@@ -5,6 +5,7 @@ import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
+import { OrderStatus } from '../constants/OrderStatus'
 
 interface OrderInfo {
   unitPrice: string
@@ -48,14 +49,8 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   massDays: '',
 }
 
-const STATUS_OPTIONS = [
-  { value: 1, label: '报价中' },
-  { value: 2, label: '打样中' },
-  { value: 3, label: '做货中' },
-  { value: 4, label: '已发货未收款' },
-  { value: 5, label: '已发货已收款' },
-  { value: 6, label: '结束' },
-]
+// 订单状态选项统一使用 OrderStatus 枚举类，消除重复定义
+const STATUS_OPTIONS = OrderStatus.getAll()
 
 // 在线表格初始数据（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
 // 根据款式类型定义不同的表格模版

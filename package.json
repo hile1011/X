@@ -17,7 +17,12 @@
     "test:watch": "vitest",
     "db:seed": "tsx api/seed.ts",
     "db:migrate": "tsx api/migrate.ts",
-    "db:reset": "tsx api/reset.ts"
+    "db:reset": "tsx api/reset.ts",
+    "env:build": "bash scripts/build.sh",
+    "env:start": "bash scripts/start.sh",
+    "env:stop": "bash scripts/stop.sh",
+    "env:restart": "bash scripts/restart.sh",
+    "env:status": "bash scripts/status.sh"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -49,6 +54,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
     "jsdom": "^29.1.1",

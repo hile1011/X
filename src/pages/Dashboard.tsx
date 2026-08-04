@@ -3,16 +3,24 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
+import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
 
-const STATUS_OPTIONS = [
-  { value: 1, label: '报价中', color: 'bg-blue-100 text-blue-700', bgColor: 'bg-blue-500' },
-  { value: 2, label: '打样中', color: 'bg-yellow-100 text-yellow-700', bgColor: 'bg-yellow-500' },
-  { value: 3, label: '做货中', color: 'bg-purple-100 text-purple-700', bgColor: 'bg-purple-500' },
-  { value: 4, label: '已发货未收款', color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500' },
-  { value: 5, label: '已发货已收款', color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500' },
-  { value: 6, label: '结束', color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500' },
-]
+// 订单状态对应的 UI 颜色样式（Dashboard 专属，value/label 来自 OrderStatus 枚举类）
+const STATUS_COLORS: Record<number, { color: string; bgColor: string }> = {
+  1: { color: 'bg-blue-100 text-blue-700', bgColor: 'bg-blue-500' },
+  2: { color: 'bg-yellow-100 text-yellow-700', bgColor: 'bg-yellow-500' },
+  3: { color: 'bg-purple-100 text-purple-700', bgColor: 'bg-purple-500' },
+  4: { color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500' },
+  5: { color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500' },
+  6: { color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500' },
+}
+
+// 合并 OrderStatus 枚举数据与 UI 颜色样式，消除 value/label 重复定义
+const STATUS_OPTIONS = OrderStatus.getAll().map((o) => ({
+  ...o,
+  ...STATUS_COLORS[o.value],
+}))
 
 // 默认选中的订单状态：打样中、做货中、已发货未收款
 const DEFAULT_SELECTED_STATUSES = [2, 3, 4]

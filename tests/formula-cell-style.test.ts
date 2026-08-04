@@ -13,39 +13,25 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
+import { StyleConstants } from '../src/constants/StyleConstants'
+import { TableConstants } from '../src/constants/TableConstants'
+import { SheetTemplateManager } from '../src/templates/SheetTemplateManager'
 
-const SHEET_KEY = 'sheet1'
-const COL_WIDTHS = [100, 90, 80, 80, 80, 90, 90, 90, 90, 90, 80, 120, 110, 130, 100, 120]
-const TEST_COLUMNS = COL_WIDTHS.map((width, field) => ({ field, width }))
+const SHEET_KEY = TableConstants.SHEET_KEY
+const TEST_COLUMNS = TableConstants.COL_WIDTHS.map((width, field) => ({ field, width }))
 
-// 浅橙色（与 BagQuote.tsx 的 SC.formulaBg 一致）
-const FORMULA_BG = '#F8CBAD'
+// 浅橙色（与 StyleConstants.COLORS.formulaBg 一致）
+const FORMULA_BG = StyleConstants.COLORS.formulaBg
 // 标题行背景色
-const HEADER_BG = '#4472C4'
-const HEADER_COLOR = '#FFFFFF'
+const HEADER_BG = StyleConstants.COLORS.headerBg
+const HEADER_COLOR = StyleConstants.COLORS.headerColor
 
-// ============================ 模拟 BagQuote.tsx 的样式逻辑 ============================
-
-const SC = {
-  yellow: '#FFFF00', blue: '#91AADF', orange: '#F4B382',
-  darkOrange: '#EE822F', lightOrange: '#F8CBAD', red: '#FF0000', black: '#000000',
-  headerBg: '#4472C4', headerColor: '#FFFFFF',
-  formulaBg: '#F8CBAD',
-}
-const BORDER = { borderColor: SC.black, borderLineWidth: 1 }
+// ============================ 使用 StyleConstants 的样式逻辑 ============================
 
 const cellStyleOverrides = new Map<string, Record<string, unknown>>()
 let activeFormulaManager: any = null
 
-const cs = (
-  bg?: string, color = SC.black, size = 10, bold = true, border = true,
-): Record<string, unknown> => ({
-  bgColor: bg, color, fontSize: size + 4,
-  fontWeight: bold ? 'bold' : 'normal',
-  ...(border ? BORDER : {}),
-})
-
-/** 与 BagQuote.tsx 的 getCellStyle 完全一致 */
+/** 与 BagQuote.tsx 的 getCellStyle 完全一致（使用 StyleConstants） */
 const getCellStyle = (args: { row: number; col: number; table?: any }): Record<string, unknown> => {
   const { row, col, table } = args
   let isTitleRow = false
@@ -58,7 +44,9 @@ const getCellStyle = (args: { row: number; col: number; table?: any }): Record<s
       }
     }
   }
-  const style = isTitleRow ? cs(SC.headerBg, SC.headerColor) : cs(undefined)
+  const style = isTitleRow
+    ? StyleConstants.buildCellStyle(StyleConstants.COLORS.headerBg, StyleConstants.COLORS.headerColor)
+    : StyleConstants.buildCellStyle(undefined)
 
   let hasFormula = false
   if (activeFormulaManager?.getCellFormula) {
@@ -66,40 +54,18 @@ const getCellStyle = (args: { row: number; col: number; table?: any }): Record<s
     hasFormula = !!formula
   }
   if (hasFormula) {
-    style.bgColor = SC.formulaBg
+    style.bgColor = StyleConstants.COLORS.formulaBg
   }
 
   const override = cellStyleOverrides.get(`${col},${row}`)
   return override ? { ...style, ...override } : style
 }
 
-// ============================ 测试数据（款式1：无底无侧普通袋） ============================
+// ============================ 测试数据（款式1：无底无侧普通袋，来自 SheetTemplateManager） ============================
 
-const TEMPLATE_DATA: (string | number | null)[][] = [
-  [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', '带刀手提条数'],
-  ['成品', 7200, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null],
-  ['正反面', 7200, 38, 40, 0, 3, 10, 41, 90, 154, 280, 31, 2160, 3.7561, 907.2, 12342.8571],
-  ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 403.2, 25.6667, 169.344, null],
-  [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '参考卖价', '含税价', '实际卖价', null, null, null, null],
-  ['正反面', 0.51, 0.4059, 4.4, 1.4058, 0.05, 0.1, 725.76, 1.03, 2.6467, null, null, null, null, null, null],
-  ['手提', null, 0, 4.4, 0.2968, null, null, 135.48, 1.03, 0.3251, null, null, null, null, null, null],
-  ['汇总', null, null, null, null, null, null, null, null, 2.97, null, null, null, null, null, null],
-  ['参考卖价', null, null, null, null, null, null, null, 0.45, 3.42, 3.76, null, null, null, null, null],
-  ['利润', null, null, null, null, null, null, null, null, 3240, null, null, null, null, null, null],
-]
-
-const TEMPLATE_FORMULAS: Record<string, string> = {
-  B3: '=B2', C3: '=C2', D3: '=D2', E3: '=E2', H3: '=F3+C3', I3: '=(D3*2+E3+G3)',
-  L3: '=MOD(J3,MIN(H3,I3))', M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100', N3: '=J3/(MIN(H3,I3))',
-  O3: '=M3*K3*1.5/1000', P3: '=M3*4/(I4/100)',
-  B4: '=B2', I4: '=D4', L4: '=MOD(J4,MIN(H4,I4))', M4: '=I4/100*2*B4/INT(J4/H4)',
-  N4: '=J4/(MIN(H4,I4))', O4: '=M4*K4*1.5/1000',
-  A6: '=A3', C6: '=H3*I3*1.1/10000', E6: '=D6*M3/B3+CEILING(M3/100,1)*15/B3+0.04',
-  H6: '=O3*0.8', J6: '=(B6+C6+F6+E6+H6/B3)*I6+G6',
-  A7: '=A4', E7: '=D7*M4/B4+CEILING(M4/100,1)*15/B4+0.04', H7: '=O4*0.8',
-  J7: '=(B7+C7+E7+F7+H7/B4)*I7+G7',
-  J8: '=SUM(J6:J7)', J9: '=J8+I9', K9: '=J9*1.1', J10: '=(J9-J8)*B2',
-}
+const _template = SheetTemplateManager.getTemplate('1')
+const TEMPLATE_DATA: (string | number | null)[][] = _template.data
+const TEMPLATE_FORMULAS: Record<string, string> = _template.formulas
 
 // ============================ 测试辅助函数 ============================
 

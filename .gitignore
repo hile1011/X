@@ -1,6 +1,7 @@
 node_modules/
 dist/
 build/
+coverage/
 .env
 .env.local
 .env.*.local
@@ -9,7 +10,6 @@ build/
 .vscode/
 .trae/
 *.log
-*.md
 *.xlsx
 data/
 *.db

@@ -1,23 +1,11 @@
 /**
  * 前端工具函数 单元测试
- * 测试目标：BagQuote.tsx 中的 addDaysToDate 等纯函数逻辑
+ * 测试目标：DateUtils.addDays 等纯函数逻辑
  *
- * 注：由于 addDaysToDate 定义在组件文件内未导出，此处独立实现同逻辑进行测试，
- * 确保函数行为正确。后续可重构为独立工具模块导出。
+ * 重构后：addDaysToDate 已提取为 DateUtils.addDays，此处直接导入测试
  */
 import { describe, it, expect } from 'vitest'
-
-/**
- * 日期加天数计算（与 BagQuote.tsx 中的 addDaysToDate 同逻辑）
- * 结束日期 = 开始日期 + 大货天数
- */
-function addDaysToDate(dateStr: string, days: number): string {
-  if (!dateStr || !days || isNaN(days)) return ''
-  const date = new Date(dateStr)
-  if (isNaN(date.getTime())) return ''
-  date.setDate(date.getDate() + days)
-  return date.toISOString().split('T')[0]
-}
+import { DateUtils } from '../src/utils/DateUtils'
 
 /**
  * 收货地址拼接（与 CustomerSelect.tsx handleSelect 同逻辑）
@@ -66,41 +54,41 @@ function generateQuoteNumber(customerName: string, timestamp: string, productSty
 
 // ============================ 测试 ============================
 
-describe('addDaysToDate - 日期联动计算', () => {
+describe('DateUtils.addDays - 日期联动计算', () => {
   it('开始日期 + 大货天数 = 结束日期', () => {
-    expect(addDaysToDate('2026-07-31', 30)).toBe('2026-08-30')
+    expect(DateUtils.addDays('2026-07-31', 30)).toBe('2026-08-30')
   })
 
   it('跨月计算正确', () => {
-    expect(addDaysToDate('2026-01-31', 1)).toBe('2026-02-01')
+    expect(DateUtils.addDays('2026-01-31', 1)).toBe('2026-02-01')
   })
 
   it('跨年计算正确', () => {
-    expect(addDaysToDate('2026-12-31', 1)).toBe('2027-01-01')
+    expect(DateUtils.addDays('2026-12-31', 1)).toBe('2027-01-01')
   })
 
   it('闰年2月计算正确', () => {
-    expect(addDaysToDate('2024-02-28', 1)).toBe('2024-02-29')
+    expect(DateUtils.addDays('2024-02-28', 1)).toBe('2024-02-29')
   })
 
   it('非闰年2月计算正确', () => {
-    expect(addDaysToDate('2026-02-28', 1)).toBe('2026-03-01')
+    expect(DateUtils.addDays('2026-02-28', 1)).toBe('2026-03-01')
   })
 
   it('天数为 0 时返回空字符串', () => {
-    expect(addDaysToDate('2026-07-31', 0)).toBe('')
+    expect(DateUtils.addDays('2026-07-31', 0)).toBe('')
   })
 
   it('天数为负时正确回退日期', () => {
-    expect(addDaysToDate('2026-07-31', -5)).toBe('2026-07-26')
+    expect(DateUtils.addDays('2026-07-31', -5)).toBe('2026-07-26')
   })
 
   it('开始日期为空时返回空', () => {
-    expect(addDaysToDate('', 30)).toBe('')
+    expect(DateUtils.addDays('', 30)).toBe('')
   })
 
   it('无效日期返回空', () => {
-    expect(addDaysToDate('invalid-date', 30)).toBe('')
+    expect(DateUtils.addDays('invalid-date', 30)).toBe('')
   })
 })
 
