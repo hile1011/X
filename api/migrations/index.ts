@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 9
+export const CURRENT_SCHEMA_VERSION = 10
 
 export interface Migration {
   version: number
@@ -577,6 +577,30 @@ const migrations: Migration[] = [
           sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
           paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas,
           created_at, updated_at FROM quotes_backup;
+        DROP TABLE quotes_backup;
+      `)
+    },
+  },
+  {
+    version: 10,
+    name: 'add-production-step-status',
+    description: 'V0.4.3：新增 productionStepStatus 字段持久化做货流程各步骤的状态（步骤id→pending/in_progress/completed），使做货中状态下设置的生产流程内容可保存',
+    up: (db: any) => {
+      // productionStepStatus 存储 JSON 字符串：{ "1": "completed", "2": "in_progress", ... }
+      db.exec(`ALTER TABLE quotes ADD COLUMN productionStepStatus TEXT DEFAULT '{}'`)
+    },
+    down: (db: any) => {
+      // 重建 quotes 表移除 productionStepStatus 列
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS quotes_backup AS SELECT * FROM quotes;
+        DROP TABLE quotes;
+        CREATE TABLE quotes AS SELECT id, user_id, customer_id, quote_number, customerName,
+          shippingAddress, productStyle, productSpec, fabricMaterial, process, handleMaterial,
+          handleSpec, quantity, boxSpec, remark, sampleFee, sampleDays, massDays, unitPrice,
+          productionTimeStart, productionTimeEnd, costPrice, priceWithTax, sellPriceNoTax,
+          sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime, shippingTime,
+          paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas,
+          allFormulas, created_at, updated_at FROM quotes_backup;
         DROP TABLE quotes_backup;
       `)
     },

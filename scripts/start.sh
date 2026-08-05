@@ -116,10 +116,12 @@ _start_backend() {
 
     # 通过环境变量注入端口/数据库路径，覆盖 api/.env 默认值，实现多环境隔离
     # （dotenv override 默认 false，已存在的 process.env 优先）
+    # nohup：确保进程在脚本退出后不被 SIGHUP 终止（非交互式 shell 无 job control）
     PORT="$BACKEND_PORT" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
-      node "$PROJECT_ROOT/api/dist/index.js" >> "$_app_log" 2>&1 &
+      nohup node "$PROJECT_ROOT/api/dist/index.js" >> "$_app_log" 2>&1 &
     _pid=$!
     pid_write "$_pid"
+    disown 2>/dev/null || true
     log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $DB_PATH)"
 
     # 健康检查
@@ -144,11 +146,16 @@ _start_backend() {
   else
     # 开发模式：使用 tsx watch
     log_info "模式: 前台开发模式 (tsx watch)"
+    _backend_log="$LOG_DIR/app-dev-backend.log"
+    : > "$_backend_log"
+    # nohup + disown：确保进程在脚本退出后继续运行（非交互式 shell 无 job control）
     PORT="$BACKEND_PORT" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
-      npx tsx watch api/index.ts &
+      nohup npx tsx watch api/index.ts >> "$_backend_log" 2>&1 &
     _pid=$!
     pid_write "$_pid"
+    disown 2>/dev/null || true
     log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $DB_PATH)"
+    log_dim "后端日志: $_backend_log"
 
     # 等待端口就绪
     log_info "等待端口就绪..."
@@ -179,9 +186,13 @@ _start_frontend() {
 
   log_step "启动前端开发服务器 (端口: $FRONTEND_PORT)"
 
-  npx vite --port "$FRONTEND_PORT" --host &
+  _frontend_log="$LOG_DIR/app-dev-frontend.log"
+  : > "$_frontend_log"
+  nohup npx vite --port "$FRONTEND_PORT" --host >> "$_frontend_log" 2>&1 &
   _frontend_pid=$!
+  disown 2>/dev/null || true
   log_info "前端启动中 (PID: $_frontend_pid)"
+  log_dim "前端日志: $_frontend_log"
 
   if wait_for_port "$FRONTEND_PORT" 15; then
     log_ok "前端端口 $FRONTEND_PORT 监听中"

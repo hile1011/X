@@ -158,7 +158,8 @@ _restart_rolling() {
   if [ "$ENV_NAME" = "production" ]; then
     bash "$SCRIPTS_DIR/start.sh" -e "$ENV_SHORT" -d
   else
-    bash "$SCRIPTS_DIR/start.sh" -e "$ENV_SHORT" -b -d
+    # 开发模式：启动后端(tsx watch) + 前端(vite)，不使用 -d（daemon 模式会改用 node 加载编译产物，丢失热重载）
+    bash "$SCRIPTS_DIR/start.sh" -e "$ENV_SHORT"
   fi
 
   log_info "重启后健康检查..."
@@ -186,8 +187,9 @@ _restart_blue_green() {
   # 启动新实例
   log_info "启动新实例（绿）..."
   PORT="$_new_port" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
-    node "$PROJECT_ROOT/api/dist/index.js" >> "$LOG_DIR/app-bg.log" 2>&1 &
+    nohup node "$PROJECT_ROOT/api/dist/index.js" >> "$LOG_DIR/app-bg.log" 2>&1 &
   _new_pid=$!
+  disown 2>/dev/null || true
 
   log_info "等待新实例健康检查..."
   if ! health_check "$_new_port" "$HEALTH_TIMEOUT"; then

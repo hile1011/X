@@ -115,6 +115,9 @@ export interface Quote {
   // 表格中所有单元格的公式（地址→公式字符串），加载时直接使用，不依赖模板比对
   // 新数据优先使用此字段；老数据（v9 前）为空 {} 时回退到 removedFormulaAddresses + modifiedFormulas 合并逻辑
   allFormulas: Record<string, string>
+  // 做货流程各步骤的状态（步骤id→状态），状态值：pending | in_progress | completed
+  // 仅在做货中(status=3)状态下使用，记录用户对生产流程步骤的勾选进度
+  productionStepStatus: Record<number, 'pending' | 'in_progress' | 'completed'>
   created_at: string
   updated_at: string
 }

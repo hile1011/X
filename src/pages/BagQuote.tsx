@@ -259,6 +259,7 @@ export default function BagQuote() {
           paymentTime: data.paymentTime || '',
           endTime: data.endTime || '',
         })
+        setProductionStepStatus(data.productionStepStatus || {})
         setProductImages(data.images || [])
         // 加载已保存的在线表格数据（覆盖模板默认值，后续以数据库为准）
         loadedTableDataRef.current = (data.tableData && data.tableData.length > 0) ? data.tableData : null
@@ -336,6 +337,7 @@ export default function BagQuote() {
         images: productImages,
         tableData,
         allFormulas,
+        productionStepStatus,
       }
       if (isEditMode) {
         await api.quotes.update(id!, quoteData)
