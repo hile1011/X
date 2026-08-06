@@ -1,7 +1,19 @@
 /**
  * Vitest 全局 setup — 在所有测试和模块导入之前 mock canvas 和 DOM API
  * VTable-Sheet 依赖 canvas 渲染和 lottie-web 动画，jsdom 不原生支持 canvas
+ *
+ * 同时配置 MySQL 测试数据库环境变量。
+ * 注意：不在此处关闭连接池 — setupFiles 在每个测试文件前运行，其 afterAll 会在
+ * 每个测试文件后运行，导致后续测试文件无法使用已关闭的连接池。
+ * 连接池由 tests/globalSetup.ts 的 teardown 函数在所有测试结束后统一关闭。
  */
+
+// 配置 MySQL 测试数据库环境变量（未被外部覆盖时使用默认值）
+process.env.MYSQL_HOST = process.env.MYSQL_HOST || '127.0.0.1'
+process.env.MYSQL_PORT = process.env.MYSQL_PORT || '3306'
+process.env.MYSQL_USER = process.env.MYSQL_USER || 'root'
+process.env.MYSQL_PASSWORD = process.env.MYSQL_PASSWORD ?? ''
+process.env.MYSQL_DATABASE = process.env.MYSQL_DATABASE || 'quote_system_test'
 
 // Mock Canvas getContext — 返回完整的 CanvasRenderingContext2D mock
 const createCtxMock = () => {

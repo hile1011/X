@@ -36,13 +36,13 @@
 
 | 环境 | 参数值 | 后端端口 | 前端端口 | 数据库 |
 |------|--------|----------|----------|--------|
-| 开发 | `dev` | 3001 | 5173 | data/quote-system.db |
-| 测试 | `test` | 3002 | 5174 | data/quote-system-test.db |
-| 生产 | `prod` | 3003 | 80 | data/quote-system.db |
+| 开发 | `dev` | 3001 | 5173 | quote_system |
+| 测试 | `test` | 3002 | 5174 | quote_system_test |
+| 生产 | `prod` | 3003 | 80 | quote_system |
 
 > **关于生产环境**：真正的生产部署位于独立目录 `X-PR`（端口 3002），由 [scripts/deploy.js](file:///Users/hile/Documents/work/projects/X/scripts/deploy.js) 管理。
 > 此处的 `prod` 配置用于在本项目目录内运行编译后的构建产物进行本地冒烟验证，使用 3003 端口以避免与 `dev`(3001)/`test`(3002) 冲突。
-> 启动时会通过环境变量注入 `PORT`/`DB_PATH`/`NODE_ENV` 覆盖 `api/.env` 默认值，实现多环境隔离。
+> 启动时会通过环境变量注入 `PORT`/`MYSQL_*`/`NODE_ENV` 覆盖 `api/.env` 默认值，实现多环境隔离。
 
 配置项一览：
 
@@ -51,7 +51,11 @@ ENV_NAME          # 环境名称
 BACKEND_PORT      # 后端端口
 FRONTEND_PORT     # 前端端口
 NODE_ENV           # NODE_ENV 值
-DB_PATH            # SQLite 数据库路径
+MYSQL_HOST         # MySQL 主机地址
+MYSQL_PORT         # MySQL 端口
+MYSQL_USER         # MySQL 用户名
+MYSQL_PASSWORD     # MySQL 密码
+MYSQL_DATABASE     # MySQL 数据库名称
 DATA_DIR           # 数据目录
 LOG_DIR            # 日志目录
 LOG_FILE           # 操作日志文件

@@ -1,85 +1,66 @@
-import initSqlJs from 'sql.js'
-import path from 'path'
-import fs from 'fs'
 import dotenv from 'dotenv'
+import path from 'path'
+import { pool, initDatabase, closePool, withTransaction, execMultiStatement } from './dbClient.js'
 import { MigrationRunner } from './migrations/index.js'
 
 dotenv.config({ path: path.resolve(process.cwd(), 'api/.env') })
 
-const SQL = await initSqlJs()
+async function main() {
+  await initDatabase()
 
-const dbPath = process.env.DB_PATH || './data/quote-system.db'
-const resolvedPath = path.resolve(dbPath)
+  console.log('[Reset] 删除所有表...')
 
-if (fs.existsSync(resolvedPath)) {
-  console.log(`[Reset] 删除数据库文件: ${resolvedPath}`)
-  fs.unlinkSync(resolvedPath)
-}
+  // 关闭外键检查，删除所有表，然后重新创建
+  await pool.query('SET FOREIGN_KEY_CHECKS = 0')
+  const [tables] = await pool.query('SHOW TABLES') as any
+  for (const row of tables) {
+    const tableName = Object.values(row)[0] as string
+    await pool.query(`DROP TABLE IF EXISTS \`${tableName}\``)
+  }
+  await pool.query('SET FOREIGN_KEY_CHECKS = 1')
 
-const dbDir = path.dirname(resolvedPath)
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true })
-}
+  console.log('[Reset] 所有表已删除，重新执行迁移...')
 
-const rawDb = new SQL.Database()
-
-const persist = () => {
-  const data = rawDb.export()
-  fs.writeFileSync(resolvedPath, Buffer.from(data))
-}
-
-const dbWrapper = {
-  exec: (sql: string) => rawDb.run(sql),
-  prepare: (sql: string) => ({
-    run: (...params: any[]) => {
-      const stmt = rawDb.prepare(sql)
-      stmt.bind(params)
-      stmt.step()
-      const changes = rawDb.getRowsModified()
-      stmt.free()
-      return { changes }
+  const dbConn = {
+    async exec(sql: string) {
+      await execMultiStatement(sql)
     },
-    get: (...params: any[]) => {
-      const stmt = rawDb.prepare(sql)
-      stmt.bind(params)
-      const hasRow = stmt.step()
-      const row = hasRow ? stmt.getAsObject() : null
-      stmt.free()
-      return row
-    },
-    all: (...params: any[]) => {
-      const stmt = rawDb.prepare(sql)
-      stmt.bind(params)
-      const rows: Record<string, any>[] = []
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject())
+    prepare(sql: string) {
+      const sanitize = (params: any[]) => params.map(p => (p === undefined ? null : p))
+      return {
+        async run(...params: any[]) {
+          const [result] = await pool.execute(sql, sanitize(params))
+          return { changes: (result as any).affectedRows || 0 }
+        },
+        async get(...params: any[]) {
+          const [rows] = await pool.execute(sql, sanitize(params))
+          return (rows as any[])[0] || null
+        },
+        async all(...params: any[]) {
+          const [rows] = await pool.execute(sql, sanitize(params))
+          return rows as Record<string, any>[]
+        },
       }
-      stmt.free()
-      return rows
     },
-  }),
-  transaction: (fn: () => any) => () => {
-    rawDb.run('BEGIN')
-    try {
-      const result = fn()
-      rawDb.run('COMMIT')
-      return result
-    } catch (e) {
-      rawDb.run('ROLLBACK')
-      throw e
-    }
-  },
+    transaction<T>(fn: () => Promise<T>): () => Promise<T> {
+      return () => withTransaction(async () => fn())
+    },
+  }
+
+  const runner = new MigrationRunner(dbConn)
+  const result = await runner.migrate()
+
+  console.log('[Reset] 数据库已重置')
+  if (result.applied.length > 0) {
+    console.log('[Reset] 执行的迁移:')
+    result.applied.forEach((m) => console.log(`  ✅ ${m}`))
+  }
+
+  console.log('[Reset] 提示: 运行 npm run db:seed 可填充初始数据')
+  await closePool()
 }
 
-const runner = new MigrationRunner(dbWrapper)
-const result = runner.migrate()
-
-console.log('[Reset] 数据库已重置')
-if (result.applied.length > 0) {
-  console.log('[Reset] 执行的迁移:')
-  result.applied.forEach((m) => console.log(`  ✅ ${m}`))
-}
-
-persist()
-console.log('[Reset] 提示: 运行 npm run db:seed 可填充初始数据')
-rawDb.close()
+main().catch((err) => {
+  console.error('[Reset] 失败:', err)
+  process.exit(1)
+})

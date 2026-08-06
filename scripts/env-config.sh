@@ -14,7 +14,11 @@
 #    BACKEND_PORT      后端端口
 #    FRONTEND_PORT     前端端口（dev 模式）
 #    NODE_ENV           NODE_ENV 值
-#    DB_PATH            SQLite 数据库路径
+#    MYSQL_HOST         MySQL 主机地址
+#    MYSQL_PORT         MySQL 端口
+#    MYSQL_USER         MySQL 用户名
+#    MYSQL_PASSWORD     MySQL 密码
+#    MYSQL_DATABASE     MySQL 数据库名称
 #    DATA_DIR           数据目录
 #    LOG_DIR            日志目录
 #    LOG_FILE           操作日志文件
@@ -38,7 +42,11 @@ _config_dev() {
   NODE_ENV="development"
   BACKEND_PORT=3001
   FRONTEND_PORT=5173
-  DB_PATH="$_PROJECT_ROOT/data/quote-system.db"
+  MYSQL_HOST="127.0.0.1"
+  MYSQL_PORT="3306"
+  MYSQL_USER="root"
+  MYSQL_PASSWORD=""
+  MYSQL_DATABASE="quote_system"
   DATA_DIR="$_PROJECT_ROOT/data"
   LOG_DIR="$_PROJECT_ROOT/data/logs"
   PID_FILE="$_PROJECT_ROOT/data/app-dev.pid"
@@ -57,7 +65,11 @@ _config_test() {
   NODE_ENV="test"
   BACKEND_PORT=3002
   FRONTEND_PORT=5174
-  DB_PATH="$_PROJECT_ROOT/data/quote-system-test.db"
+  MYSQL_HOST="127.0.0.1"
+  MYSQL_PORT="3306"
+  MYSQL_USER="root"
+  MYSQL_PASSWORD=""
+  MYSQL_DATABASE="quote_system_test"
   DATA_DIR="$_PROJECT_ROOT/data"
   LOG_DIR="$_PROJECT_ROOT/data/logs"
   PID_FILE="$_PROJECT_ROOT/data/app-test.pid"
@@ -78,7 +90,11 @@ _config_prod() {
   NODE_ENV="production"
   BACKEND_PORT=3003
   FRONTEND_PORT=80
-  DB_PATH="$_PROJECT_ROOT/data/quote-system.db"
+  MYSQL_HOST="127.0.0.1"
+  MYSQL_PORT="3306"
+  MYSQL_USER="root"
+  MYSQL_PASSWORD=""
+  MYSQL_DATABASE="quote_system_prod"
   DATA_DIR="$_PROJECT_ROOT/data"
   LOG_DIR="$_PROJECT_ROOT/data/logs"
   PID_FILE="$_PROJECT_ROOT/data/app-prod.pid"
@@ -120,7 +136,9 @@ config_print() {
   echo "  NODE_ENV:          $NODE_ENV"
   echo "  BACKEND_PORT:      $BACKEND_PORT"
   echo "  FRONTEND_PORT:     $FRONTEND_PORT"
-  echo "  DB_PATH:           $DB_PATH"
+  echo "  MYSQL_HOST:        $MYSQL_HOST"
+  echo "  MYSQL_PORT:        $MYSQL_PORT"
+  echo "  MYSQL_DATABASE:    $MYSQL_DATABASE"
   echo "  DATA_DIR:          $DATA_DIR"
   echo "  LOG_DIR:           $LOG_DIR"
   echo "  LOG_FILE:          $LOG_FILE"

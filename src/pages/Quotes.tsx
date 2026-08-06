@@ -5,6 +5,7 @@ import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, Che
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import type { Product } from '../types'
 
 export interface Quote {
@@ -78,7 +79,7 @@ export default function Quotes() {
   const [customerFilter, setCustomerFilter] = useState('')
   const [styleFilter, setStyleFilter] = useState('')
   const [loading, setLoading] = useState(true)
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
@@ -135,8 +136,8 @@ export default function Quotes() {
         quote.customerName.toLowerCase().includes(customerFilter.toLowerCase())
 
       const matchesStyle = !styleFilter ||
-        quote.productStyle.toLowerCase().includes(styleFilter.toLowerCase()) ||
-        getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(styleFilter.toLowerCase())
+        quote.productStyle === styleFilter ||
+        getStyleLabelFromProducts(products, quote.productStyle) === getStyleLabelFromProducts(products, styleFilter)
 
       return matchesSearch && matchesStatus && matchesCustomer && matchesStyle
     })
@@ -180,13 +181,8 @@ export default function Quotes() {
   }
 
   const handleDelete = async (id: string) => {
-    try {
-      await api.quotes.delete(id)
-      fetchQuotes()
-    } catch (error) {
-      console.error('删除订单失败:', error)
-    }
-    setShowDeleteConfirm(null)
+    await api.quotes.delete(id)
+    fetchQuotes()
   }
 
   const handleCopy = async (id: string) => {
@@ -267,8 +263,8 @@ export default function Quotes() {
   }
 
   return (
-    <div className="p-4 sm:p-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
+    <div className="p-4 sm:p-6 flex flex-col min-h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-3.5rem)] md:h-screen">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6 flex-shrink-0">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">订单管理</h1>
           <p className="text-gray-500 mt-1">管理所有订单</p>
@@ -292,7 +288,7 @@ export default function Quotes() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-[60vh] h-auto sm:h-[calc(100vh-200px)]">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-[60vh] flex-none sm:flex-1 sm:min-h-0">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 flex-shrink-0">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1">
             <div className="relative">
@@ -575,7 +571,7 @@ export default function Quotes() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    setShowDeleteConfirm(quote.id)
+                                    setDeleteTarget(quote.id)
                                   }}
                                   className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                   title="删除"
@@ -709,27 +705,15 @@ export default function Quotes() {
         )}
       </div>
 
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-sm mx-4">
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">确认删除</h3>
-            <p className="text-gray-500 mb-6">确定要删除此订单吗？此操作无法撤销。</p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowDeleteConfirm(null)}
-                className="px-4 py-2 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => handleDelete(showDeleteConfirm)}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          entityId={deleteTarget}
+          entityLabel="报价"
+          deleteFn={handleDelete}
+          deleteCheckFn={(id) => api.quotes.deleteCheck(id)}
+          onDeleted={() => fetchQuotes()}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
 
       {showExportDialog && (

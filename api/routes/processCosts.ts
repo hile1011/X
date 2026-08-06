@@ -1,6 +1,7 @@
 import express from 'express'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
+import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 
 export const processCostsRouter = express.Router()
 
@@ -8,6 +9,8 @@ processCostsRouter.get('/', asyncHandler(async (_req, res) => {
   const data = await db.processCosts.getAll()
   res.json(data)
 }))
+
+processCostsRouter.get('/:id/delete-check', asyncHandler(createDeleteCheckHandler('process_cost')))
 
 processCostsRouter.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
@@ -32,11 +35,4 @@ processCostsRouter.put('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-processCostsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  const success = await db.processCosts.delete(id)
-  if (!success) {
-    return res.status(404).json({ error: '工艺成本不存在' })
-  }
-  res.json({ message: '工艺成本已删除' })
-}))
+processCostsRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('process_cost', db.processCosts.delete)))

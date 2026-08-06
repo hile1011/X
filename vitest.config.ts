@@ -8,6 +8,12 @@ export default defineConfig({
     globals: false,
     include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     setupFiles: ['tests/setup.ts'],
+    // 测试共享 MySQL 数据库（quote_system_test），必须串行执行避免并发冲突
+    // vitest 4: singleFork 是顶级选项，不再放在 poolOptions 内
+    pool: 'forks',
+    singleFork: true,
+    fileParallelism: false,
+    globalSetup: ['tests/globalSetup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html'],

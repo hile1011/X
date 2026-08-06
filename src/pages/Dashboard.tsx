@@ -218,7 +218,8 @@ export default function Dashboard() {
     alertDate.setDate(today.getDate() + 3)
 
     const alerts = quotesData.filter((quote) => {
-      if (quote.status >= 4 && quote.status !== 4) return false
+      // 排除报价中(1)、已发货已收款(5)、结束(6)的订单
+      if (quote.status === 1 || quote.status === 5 || quote.status === 6) return false
       if (!quote.productionTimeEnd) return false
       const endDate = new Date(quote.productionTimeEnd)
       endDate.setHours(0, 0, 0, 0)

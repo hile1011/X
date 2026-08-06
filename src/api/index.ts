@@ -11,16 +11,27 @@ function getAuthToken(): string | null {
 }
 
 /**
+ * 获取当前操作人名称（用于审计日志）
+ */
+function getOperator(): string {
+  return useAuthStore.getState().user?.name || 'unknown'
+}
+
+/**
  * 构建带认证头的 fetch 选项
- * 自动附加 Authorization: Bearer <token> 头
+ * 自动附加 Authorization: Bearer <token> 头和 X-Operator 头（审计用）
  */
 function authFetch(url: string, options?: RequestInit): Promise<Response> {
   const token = getAuthToken()
+  const operator = getOperator()
   const headers: Record<string, string> = {
     ...(options?.headers as Record<string, string>),
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+  if (operator) {
+    headers['X-Operator'] = operator
   }
   return fetch(url, { ...options, headers })
 }
@@ -60,6 +71,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/orders/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/orders/${id}/delete-check`).then(handleResponse),
   },
   customers: {
     getAll: () => authFetch(`${API_BASE}/customers`).then(handleResponse),
@@ -76,6 +88,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/customers/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/customers/${id}/delete-check`).then(handleResponse),
   },
   products: {
     getAll: () => authFetch(`${API_BASE}/products`).then(handleResponse),
@@ -91,6 +104,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/products/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/products/${id}/delete-check`).then(handleResponse),
   },
   tasks: {
     getAll: () => authFetch(`${API_BASE}/tasks`).then(handleResponse),
@@ -106,6 +120,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/tasks/${id}/delete-check`).then(handleResponse),
   },
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
@@ -121,6 +136,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/quotes/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/quotes/${id}/delete-check`).then(handleResponse),
     nextStatus: (id: string) => authFetch(`${API_BASE}/quotes/${id}/next-status`, {
       method: 'POST',
       headers: jsonHeaders,
@@ -148,6 +164,7 @@ export const api = {
       body: JSON.stringify(data),
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/process-costs/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteCheck: (id: string) => authFetch(`${API_BASE}/process-costs/${id}/delete-check`).then(handleResponse),
   },
   export: {
     /** 导出订单列表（返回 Blob 用于下载） */

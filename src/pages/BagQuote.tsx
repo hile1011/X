@@ -5,6 +5,7 @@ import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
 import CustomerSelect from '../components/CustomerSelect'
+import SelectionSummaryBar from '../components/SelectionSummaryBar'
 import { findTablePositions } from '../services/tableLocator'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
@@ -14,6 +15,7 @@ import { TableConstants } from '../constants/TableConstants'
 import { ExcelUtils } from '../utils/ExcelUtils'
 import { DateUtils } from '../utils/DateUtils'
 import { SheetTemplateManager } from '../templates/SheetTemplateManager'
+import { computeSelectionSummary, type SelectionSummary, type CellRangeLike } from '../utils/SelectionSummary'
 
 interface OrderInfo {
   unitPrice: string
@@ -168,6 +170,8 @@ export default function BagQuote() {
 
   const sheetContainerRef = useRef<HTMLDivElement>(null)
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
+  // 新增保存后切换到编辑模式时，跳过 loadQuote（数据刚保存，无需重新加载）
+  const skipNextLoadRef = useRef(false)
   // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
   // 新增订单时为 null，使用模板数据初始化。
   const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
@@ -184,6 +188,8 @@ export default function BagQuote() {
   const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
   // 款式选项：从产品管理模块动态获取（code 1-6 对应在线表格模板）
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
+  // 选中单元格汇总结果：null 表示当前无选区
+  const [selectionSummary, setSelectionSummary] = useState<SelectionSummary | null>(null)
 
   useEffect(() => {
     fetchStyleOptions().then(setStyleOptions)
@@ -198,6 +204,11 @@ export default function BagQuote() {
 
   useEffect(() => {
     if (isEditMode) {
+      // 新增保存后切换到编辑模式时跳过重新加载（数据刚保存，无需再次请求）
+      if (skipNextLoadRef.current) {
+        skipNextLoadRef.current = false
+        return
+      }
       loadQuote()
     } else if (customerId) {
       // 从客户详情跳转过来，预填充客户信息
@@ -342,7 +353,12 @@ export default function BagQuote() {
       if (isEditMode) {
         await api.quotes.update(id!, quoteData)
       } else {
-        await api.quotes.create(quoteData)
+        const created = await api.quotes.create(quoteData)
+        // 新增保存后切换到编辑模式（替换 URL，不返回列表页），避免重复保存创建多个订单
+        if (created?.id) {
+          skipNextLoadRef.current = true
+          navigate(`/quotes/${created.id}/edit`, { replace: true })
+        }
       }
       setShowSaveSuccess(true)
       setTimeout(() => setShowSaveSuccess(false), 3000)
@@ -351,9 +367,6 @@ export default function BagQuote() {
       // 同步 allFormulasRef 为最新保存的内容，避免后续款式切换误判为有未保存编辑
       allFormulasRef.current = Object.keys(allFormulas).length > 0 ? allFormulas : allFormulasRef.current
       saved = true
-      if (!isEditMode) {
-        navigate('/quotes')
-      }
     } catch (error: any) {
       console.error('保存报价失败:', error)
       setSaveError(error?.message || '保存失败，请重试')
@@ -610,9 +623,40 @@ export default function BagQuote() {
       // 实时刷新单元格样式：用户可能新增/删除/修改公式，需重新检测公式单元格并应用浅橙背景
       // invalidate 使 VTable 丢弃渲染缓存并重新调用 getCellStyle，确保公式高亮实时更新
       try { activeTable?.invalidate?.() } catch { /* VTable 未就绪时忽略 */ }
+      // 选中单元格的值发生变化时，实时更新汇总状态栏
+      computeCurrentSummary()
     }
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
+    }
+
+    // === 选中单元格汇总计算 ===
+    // 读取当前选区范围并计算 求和/平均值/计数/数值计数/最小值/最大值。
+    // getSelectedCellRanges 支持非连续多选区；getCellOriginValue 读取原始值（含公式结果）。
+    // 无选区时返回 null，状态栏显示提示文本。
+    const computeCurrentSummary = () => {
+      try {
+        const ranges = activeTable?.getSelectedCellRanges?.() as CellRangeLike[] | undefined
+        if (!ranges || ranges.length === 0) {
+          setSelectionSummary(null)
+          return
+        }
+        const summary = computeSelectionSummary(ranges, (col, row) =>
+          activeTable?.getCellOriginValue?.(col, row),
+        )
+        setSelectionSummary(summary)
+      } catch {
+        // VTable 未就绪时忽略，后续事件会重新触发
+      }
+    }
+    // 选区变化（鼠标框选、键盘 Shift+方向键、Ctrl 多选等）时重新计算
+    const onSelectionChanged = () => computeCurrentSummary()
+    // 选区清除时清空汇总
+    const onSelectionClear = () => setSelectionSummary(null)
+    if (activeTable?.on) {
+      activeTable.on('selected_changed', onSelectionChanged)
+      activeTable.on('selected_clear', onSelectionClear)
+      activeTable.on('drag_select_end', onSelectionChanged)
     }
 
     // 监听新增列事件，确保新增列也有样式和字段格式化函数
@@ -668,6 +712,9 @@ export default function BagQuote() {
     return () => {
       if (activeTable?.off) {
         activeTable.off('change_cell_value', onCellChange)
+        activeTable.off('selected_changed', onSelectionChanged)
+        activeTable.off('selected_clear', onSelectionClear)
+        activeTable.off('drag_select_end', onSelectionChanged)
         activeTable.off('add_column', onAddColumn)
       }
       clearTimeout(initTimer1)
@@ -681,6 +728,8 @@ export default function BagQuote() {
       activeFormulaManager = null
       cellStyleOverrides.clear()
       cellFormatOverrides.clear()
+      // 重置汇总状态栏，避免重建表格后残留旧选区数据
+      setSelectionSummary(null)
     }
   }, [orderInfo.productStyle, tableDataVersion])
 
@@ -757,19 +806,13 @@ export default function BagQuote() {
     setDragOverIndex(null)
   }
 
-  const updateOrderField = async (field: keyof OrderInfo, value: string) => {
-    // 切换款式时：若有未保存编辑则提示保存或丢弃，然后加载新款式模板
+  const updateOrderField = (field: keyof OrderInfo, value: string) => {
+    // 切换款式时：若有未保存编辑则提示确认，确认=切换款式，取消=不切换
     if (field === 'productStyle' && value !== orderInfo.productStyle) {
-      let canSwitch = true
       if (isTableDirty) {
-        const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确定"先保存当前内容后切换款式，点击"取消"放弃修改并切换。')
-        if (ok) {
-          // 保存失败则中止款式切换，避免丢失编辑
-          const saved = await handleSave()
-          canSwitch = saved
-        }
+        const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确认"切换款式（未保存的修改将丢失），点击"取消"保持当前款式。')
+        if (!ok) return // 取消：不切换款式
       }
-      if (!canSwitch) return
       // 清除所有表格相关状态，加载新款式模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
       loadedTableDataRef.current = null
       allFormulasRef.current = {}
@@ -1476,8 +1519,9 @@ export default function BagQuote() {
         {/* 在线表格 — 全宽，填满 Layout main 容器 */}
       </div>
       <div className="flex-1 min-h-0 px-4 sm:px-6 pt-1 pb-4 w-full flex flex-col min-w-0">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0">
-          <div ref={sheetContainerRef} className="h-full w-full" style={{ minHeight: 400 }} />
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0 flex flex-col">
+          <div ref={sheetContainerRef} className="flex-1 min-h-0 w-full" style={{ minHeight: 400 }} />
+          <SelectionSummaryBar summary={selectionSummary} />
         </div>
       </div>
 

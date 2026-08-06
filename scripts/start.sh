@@ -28,6 +28,10 @@ set -eo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 
+# 显式切换到项目根目录，确保后续命令（vite/tsx）在正确的 cwd 下运行
+# （通过管道或子shell调用时，cwd 可能不是项目根目录）
+cd "$PROJECT_ROOT"
+
 _start_help() {
   print_help_header "start.sh — 环境启动命令" "启动主应用程序及所有相关服务，支持前台/守护进程模式"
   echo "用法: bash scripts/start.sh [选项]"
@@ -114,15 +118,19 @@ _start_backend() {
     _app_log="$LOG_DIR/app-$ENV_SHORT.log"
     : > "$_app_log"
 
-    # 通过环境变量注入端口/数据库路径，覆盖 api/.env 默认值，实现多环境隔离
+    # 通过环境变量注入端口/MySQL配置，覆盖 api/.env 默认值，实现多环境隔离
     # （dotenv override 默认 false，已存在的 process.env 优先）
     # nohup：确保进程在脚本退出后不被 SIGHUP 终止（非交互式 shell 无 job control）
-    PORT="$BACKEND_PORT" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
+    PORT="$BACKEND_PORT" \
+      MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
+      MYSQL_USER="$MYSQL_USER" MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+      MYSQL_DATABASE="$MYSQL_DATABASE" \
+      NODE_ENV="$NODE_ENV" \
       nohup node "$PROJECT_ROOT/api/dist/index.js" >> "$_app_log" 2>&1 &
     _pid=$!
     pid_write "$_pid"
     disown 2>/dev/null || true
-    log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $DB_PATH)"
+    log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $MYSQL_DATABASE)"
 
     # 健康检查
     log_info "等待健康检查（超时: ${HEALTH_TIMEOUT}s）..."
@@ -149,12 +157,17 @@ _start_backend() {
     _backend_log="$LOG_DIR/app-dev-backend.log"
     : > "$_backend_log"
     # nohup + disown：确保进程在脚本退出后继续运行（非交互式 shell 无 job control）
-    PORT="$BACKEND_PORT" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
-      nohup npx tsx watch api/index.ts >> "$_backend_log" 2>&1 &
+    # 直接使用 node_modules/.bin/tsx，避免 npx 包装器改变 cwd
+    PORT="$BACKEND_PORT" \
+      MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
+      MYSQL_USER="$MYSQL_USER" MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+      MYSQL_DATABASE="$MYSQL_DATABASE" \
+      NODE_ENV="$NODE_ENV" \
+      nohup "$PROJECT_ROOT/node_modules/.bin/tsx" watch "$PROJECT_ROOT/api/index.ts" >> "$_backend_log" 2>&1 &
     _pid=$!
     pid_write "$_pid"
     disown 2>/dev/null || true
-    log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $DB_PATH)"
+    log_info "后端启动中 (PID: $_pid | 端口: $BACKEND_PORT | DB: $MYSQL_DATABASE)"
     log_dim "后端日志: $_backend_log"
 
     # 等待端口就绪
@@ -188,7 +201,8 @@ _start_frontend() {
 
   _frontend_log="$LOG_DIR/app-dev-frontend.log"
   : > "$_frontend_log"
-  nohup npx vite --port "$FRONTEND_PORT" --host >> "$_frontend_log" 2>&1 &
+  # 直接使用 node_modules/.bin/vite，避免 npx 包装器改变 cwd
+  nohup "$PROJECT_ROOT/node_modules/.bin/vite" --port "$FRONTEND_PORT" --host >> "$_frontend_log" 2>&1 &
   _frontend_pid=$!
   disown 2>/dev/null || true
   log_info "前端启动中 (PID: $_frontend_pid)"

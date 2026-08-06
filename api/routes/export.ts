@@ -26,9 +26,9 @@ export const exportRouter = express.Router()
  * value 可能是款式 code（1-6）或产品 id（无 code 的产品），故同时按 code 和 id 建映射。
  * 返回 null 时由 excelExport 内部硬编码 getStyleLabel 兜底。
  */
-function buildStyleLabelResolver(): ((code: string) => string) | null {
+async function buildStyleLabelResolver(): Promise<((code: string) => string) | null> {
   try {
-    const products = db.products.getAll()
+    const products = await db.products.getAll()
     if (products.length === 0) return null
     const styleMap = new Map<string, string>()
     for (const p of products) {
@@ -55,12 +55,12 @@ exportRouter.post(
     let orders
     if (orderIds && orderIds.length > 0) {
       // 按指定 ID 获取，保持传入顺序
-      const all = db.quotes.getAll()
+      const all = await db.quotes.getAll()
       const idSet = new Set(orderIds)
       orders = all.filter((q) => idSet.has(q.id))
     } else {
       // 导出全部
-      orders = db.quotes.getAll()
+      orders = await db.quotes.getAll()
     }
 
     if (orders.length === 0) {
@@ -68,7 +68,7 @@ exportRouter.post(
     }
 
     try {
-      const styleLabelResolver = buildStyleLabelResolver() || undefined
+      const styleLabelResolver = (await buildStyleLabelResolver()) || undefined
       const workbook = await generateOrdersExcel(orders, styleLabelResolver)
       const buffer = await workbookToBuffer(workbook)
       const filename = generateFileName('OrderExport')
@@ -104,7 +104,7 @@ exportRouter.post(
       return res.status(400).json({ error: '缺少订单 ID' })
     }
 
-    const order = db.quotes.getById(orderId)
+    const order = await db.quotes.getById(orderId)
     if (!order) {
       return res.status(404).json({ error: '订单不存在' })
     }
@@ -114,7 +114,7 @@ exportRouter.post(
     }
 
     try {
-      const styleLabelResolver = buildStyleLabelResolver() || undefined
+      const styleLabelResolver = (await buildStyleLabelResolver()) || undefined
       const workbook = await generateOrderWithTableExcel(order, {
         data: tableData.data,
         formulas: tableData.formulas || {},

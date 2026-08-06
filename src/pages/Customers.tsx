@@ -2,12 +2,14 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Plus, Search, Eye, Edit, Trash2, Users, Building2, Mail, Phone } from 'lucide-react'
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import type { Customer } from '../types'
 
 export default function Customers() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -22,10 +24,8 @@ export default function Customers() {
   }
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('确定要删除这个客户吗？')) {
-      await api.customers.delete(id)
-      fetchCustomers()
-    }
+    await api.customers.delete(id)
+    fetchCustomers()
   }
 
   const filteredCustomers = customers.filter((customer) => {
@@ -120,7 +120,7 @@ export default function Customers() {
                       <Edit size={18} />
                     </button>
                     <button
-                      onClick={() => handleDelete(customer.id)}
+                      onClick={() => setDeleteTarget(customer.id)}
                       className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                       title="删除"
                     >
@@ -138,6 +138,17 @@ export default function Customers() {
             </div>
           )}
         </div>
+
+        {deleteTarget && (
+          <DeleteConfirmDialog
+            entityId={deleteTarget}
+            entityLabel="客户"
+            deleteFn={handleDelete}
+            deleteCheckFn={(id) => api.customers.deleteCheck(id)}
+            onDeleted={() => fetchCustomers()}
+            onClose={() => setDeleteTarget(null)}
+          />
+        )}
       </div>
   )
 }

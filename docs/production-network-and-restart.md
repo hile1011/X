@@ -24,7 +24,11 @@ PR 环境 `.env` 配置（位于 `/Users/hile/Documents/work/projects/X-PR/.env`
 
 ```env
 PORT=3002
-DB_PATH=./data/quote-system.db
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=quote_system
 NODE_ENV=production
 EXPORT_STORAGE_PATH=./exports
 # HOST 留空 = 绑定所有接口（默认，支持外部访问）

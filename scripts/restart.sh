@@ -27,6 +27,9 @@ set -eo pipefail
 # shellcheck source=lib/common.sh
 source "$(dirname "$0")/lib/common.sh"
 
+# 显式切换到项目根目录，确保后续命令在正确的 cwd 下运行
+cd "$PROJECT_ROOT"
+
 _restart_help() {
   print_help_header "restart.sh — 环境重启命令" "平滑重启应用程序，支持滚动重启和蓝绿部署"
   echo "用法: bash scripts/restart.sh [选项]"
@@ -60,16 +63,22 @@ done
 load_config "$BUILD_ENV"
 
 # ---------- 回滚机制 ----------
-# 重启前备份当前数据库和状态
+# 重启前备份当前状态（MySQL 数据库通过 mysqldump 备份）
 _restart_backup() {
   log_info "创建重启前备份..."
   _backup_dir="$DATA_DIR/backup/restart-$(date +%Y%m%d_%H%M%S)"
   mkdir -p "$_backup_dir"
 
-  # 备份数据库
-  if [ -f "$DB_PATH" ]; then
-    cp "$DB_PATH" "$_backup_dir/quote-system.db"
-    log_info "数据库已备份: $_backup_dir/quote-system.db"
+  # 备份 MySQL 数据库
+  if command -v mysqldump >/dev/null 2>&1; then
+    mysqldump -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" > "$_backup_dir/${MYSQL_DATABASE}.sql" 2>/dev/null
+    if [ $? -eq 0 ]; then
+      log_info "数据库已备份: $_backup_dir/${MYSQL_DATABASE}.sql"
+    else
+      log_warn "数据库备份失败（非致命）"
+    fi
+  else
+    log_warn "mysqldump 不可用，跳过数据库备份"
   fi
 
   # 记录当前 PID
@@ -105,10 +114,14 @@ _restart_rollback() {
   log_info "停止当前服务..."
   bash "$SCRIPTS_DIR/stop.sh" -e "$ENV_SHORT" -f 2>/dev/null || true
 
-  # 恢复数据库
-  if [ -f "$_backup_dir/quote-system.db" ]; then
-    cp "$_backup_dir/quote-system.db" "$DB_PATH"
-    log_ok "数据库已恢复"
+  # 恢复 MySQL 数据库
+  if [ -f "$_backup_dir/${MYSQL_DATABASE}.sql" ]; then
+    mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" < "$_backup_dir/${MYSQL_DATABASE}.sql" 2>/dev/null
+    if [ $? -eq 0 ]; then
+      log_ok "数据库已恢复"
+    else
+      log_error "数据库恢复失败"
+    fi
   fi
 
   # 重新启动
@@ -186,7 +199,11 @@ _restart_blue_green() {
 
   # 启动新实例
   log_info "启动新实例（绿）..."
-  PORT="$_new_port" DB_PATH="$DB_PATH" NODE_ENV="$NODE_ENV" \
+  PORT="$_new_port" \
+    MYSQL_HOST="$MYSQL_HOST" MYSQL_PORT="$MYSQL_PORT" \
+    MYSQL_USER="$MYSQL_USER" MYSQL_PASSWORD="$MYSQL_PASSWORD" \
+    MYSQL_DATABASE="$MYSQL_DATABASE" \
+    NODE_ENV="$NODE_ENV" \
     nohup node "$PROJECT_ROOT/api/dist/index.js" >> "$LOG_DIR/app-bg.log" 2>&1 &
   _new_pid=$!
   disown 2>/dev/null || true

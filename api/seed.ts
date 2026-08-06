@@ -1,33 +1,8 @@
-import initSqlJs from 'sql.js'
-import path from 'path'
-import fs from 'fs'
 import dotenv from 'dotenv'
+import path from 'path'
+import { pool, closePool } from './dbClient.js'
 
 dotenv.config({ path: path.resolve(process.cwd(), 'api/.env') })
-
-const SQL = await initSqlJs()
-
-const dbPath = process.env.DB_PATH || './data/quote-system.db'
-const dbDir = path.dirname(path.resolve(dbPath))
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true })
-}
-
-const resolvedPath = path.resolve(dbPath)
-let db: any
-if (fs.existsSync(resolvedPath)) {
-  const fileBuffer = fs.readFileSync(resolvedPath)
-  db = new SQL.Database(fileBuffer)
-} else {
-  db = new SQL.Database()
-}
-
-const persist = () => {
-  if (dbPath !== ':memory:') {
-    const data = db.export()
-    fs.writeFileSync(resolvedPath, Buffer.from(data))
-  }
-}
 
 const customers = [
   { id: 'cust-001', name: '上海科技有限公司', contact_person: '张三', phone: '13800138001', email: 'zhangsan@shanghai-tech.com', address: '上海市浦东新区张江高科技园区', industry: 'IT' },
@@ -51,38 +26,44 @@ const processCosts = [
   { id: 'pc-004', name: '丝网印刷', cost: 0.3, formula: '印刷面积 × 单价 × 色数' },
 ]
 
-const seed = () => {
+async function seed() {
   for (const c of customers) {
-    db.run(`INSERT OR IGNORE INTO customers (id, name, contact_person, phone, email, address, industry)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`, [c.id, c.name, c.contact_person, c.phone, c.email, c.address, c.industry])
+    await pool.execute(
+      `INSERT IGNORE INTO customers (id, name, contact_person, phone, email, address, industry)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [c.id, c.name, c.contact_person, c.phone, c.email, c.address, c.industry]
+    )
   }
 
   for (const p of products) {
-    db.run(`INSERT OR IGNORE INTO products (id, name, sku, description, price, category, stock)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`, [p.id, p.name, p.sku, p.description, p.price, p.category, p.stock])
+    await pool.execute(
+      `INSERT IGNORE INTO products (id, name, sku, description, price, category, stock)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [p.id, p.name, p.sku, p.description, p.price, p.category, p.stock]
+    )
   }
 
   for (const pc of processCosts) {
-    db.run(`INSERT OR IGNORE INTO process_costs (id, name, cost, formula)
-      VALUES (?, ?, ?, ?)`, [pc.id, pc.name, pc.cost, pc.formula])
+    await pool.execute(
+      `INSERT IGNORE INTO process_costs (id, name, cost, formula)
+      VALUES (?, ?, ?, ?)`,
+      [pc.id, pc.name, pc.cost, pc.formula]
+    )
   }
+
+  const [custRows] = await pool.execute('SELECT COUNT(*) as c FROM customers') as any
+  const [prodRows] = await pool.execute('SELECT COUNT(*) as c FROM products') as any
+  const [pcRows] = await pool.execute('SELECT COUNT(*) as c FROM process_costs') as any
+
+  console.log('[Seed] 数据初始化完成:')
+  console.log(`  客户: ${custRows[0].c} 条`)
+  console.log(`  产品: ${prodRows[0].c} 条`)
+  console.log(`  工艺成本: ${pcRows[0].c} 条`)
+
+  await closePool()
 }
 
-seed()
-
-const countRows = (table: string) => {
-  const stmt = db.prepare(`SELECT COUNT(*) as c FROM ${table}`)
-  stmt.step()
-  const row = stmt.getAsObject()
-  stmt.free()
-  return row.c
-}
-
-console.log('[Seed] 数据初始化完成:')
-console.log(`  客户: ${countRows('customers')} 条`)
-console.log(`  产品: ${countRows('products')} 条`)
-console.log(`  工艺成本: ${countRows('process_costs')} 条`)
-
-persist()
-console.log(`[Seed] 数据已保存至: ${resolvedPath}`)
-db.close()
+seed().catch((err) => {
+  console.error('[Seed] 失败:', err)
+  process.exit(1)
+})

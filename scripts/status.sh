@@ -67,12 +67,14 @@ _check_env_status() {
     fi
   fi
 
-  # 数据库状态
-  local db_status="不存在"
-  if [ -f "$DB_PATH" ]; then
-    local db_size
-    db_size="$(du -h "$DB_PATH" 2>/dev/null | cut -f1)"
-    db_status="$db_size"
+  # MySQL 数据库状态
+  local db_status="不可用"
+  if command -v mysql >/dev/null 2>&1; then
+    local db_check
+    db_check="$(mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} -e "SELECT COUNT(*) as cnt FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE'" "$MYSQL_DATABASE" -s -N 2>/dev/null)"
+    if [ -n "$db_check" ] && [ "$db_check" -gt 0 ] 2>/dev/null; then
+      db_status="${db_check}表"
+    fi
   fi
 
   # 输出

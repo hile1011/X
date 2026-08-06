@@ -1,6 +1,7 @@
 import express from 'express'
-import { db, isDefaultStyleProduct } from '../db.js'
+import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
+import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 
 export const productsRouter = express.Router()
 
@@ -8,6 +9,8 @@ productsRouter.get('/', asyncHandler(async (_req, res) => {
   const data = await db.products.getAll()
   res.json(data)
 }))
+
+productsRouter.get('/:id/delete-check', asyncHandler(createDeleteCheckHandler('product')))
 
 productsRouter.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
@@ -71,15 +74,4 @@ productsRouter.put('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-productsRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  // 默认款式不可删除（数据库默认存储的 6 个款式受保护）
-  if (isDefaultStyleProduct(id)) {
-    return res.status(400).json({ error: '默认款式不可删除' })
-  }
-  const success = await db.products.delete(id)
-  if (!success) {
-    return res.status(404).json({ error: '产品不存在' })
-  }
-  res.json({ message: '产品已删除' })
-}))
+productsRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('product', db.products.delete)))

@@ -1,17 +1,13 @@
 #!/bin/bash
 # ============================================================
-#  Quote Order System - V0.6 Production Deployment Script
+#  Quote Order System - Production Deployment Script
 #  Deploys X (source/dev) to X-PR (production/pre-release)
 #
-#  Key changes in V0.6:
-#    - 在线表格公式单元格浅橙色实时高亮（#F8CBAD）
-#    - 修复产品编辑按钮导航错误（→ /products/:id/edit）
-#    - 修复编辑页取消按钮返回目标错误（→ /products）
-#    - 修复 Products.tsx 缺少 API 错误处理
-#    - 订单编辑页布局优化（移除 max-w-7xl，字段重排，flex 比例控制）
-#    - 新增 88 个单元测试（总 451 个测试通过）
-#    - 数据库 schema 无变更（V0.5 的 v9 schema 完全兼容）
+#  Key changes (latest):
+#    - 数据库从 SQLite 迁移至 MySQL（mysql2/promise 连接池）
+#    - Schema 版本 v10（含 productionStepStatus 字段）
 #    - PR backend port: 3002 (independent from dev's 3001)
+#    - 共用 MySQL 实例，quote_system 数据库
 # ============================================================
 set -eo pipefail
 
@@ -20,14 +16,22 @@ TARGET_DIR="/Users/hile/Documents/work/projects/X-PR"
 
 # PR 环境端口（独立于开发环境 3001）
 PR_PORT=3002
-APP_VERSION="0.6.0"
-DB_SCHEMA_VERSION=9
+APP_VERSION="0.9.0"
+DB_SCHEMA_VERSION=10
+
+# MySQL 配置
+MYSQL_HOST="127.0.0.1"
+MYSQL_PORT="3306"
+MYSQL_USER="root"
+MYSQL_PASSWORD=""
+MYSQL_DATABASE="quote_system"
 
 echo "============================================"
-echo "  Quote Order System - V0.6 Deployment"
+echo "  Quote Order System - Deployment"
 echo "  Source:  $SOURCE_DIR (dev)"
 echo "  Target:  $TARGET_DIR (PR)"
 echo "  Port:    $PR_PORT (independent from dev 3001)"
+echo "  DB:      MySQL $MYSQL_HOST:$MYSQL_PORT/$MYSQL_DATABASE"
 echo "============================================"
 echo ""
 
@@ -42,14 +46,20 @@ if [ ! -d "$TARGET_DIR" ]; then
 fi
 
 # ------------------------------------------------------------
-# [1/10] 备份现有数据
+# [1/10] 备份现有数据（MySQL mysqldump）
 # ------------------------------------------------------------
 echo "[1/10] Backing up existing data..."
 BACKUP_DIR="$TARGET_DIR/data/backup/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
-if [ -f "$TARGET_DIR/data/quote-system.db" ]; then
-  cp "$TARGET_DIR/data/quote-system.db" "$BACKUP_DIR/"
-  echo "      Database backed up to $BACKUP_DIR/"
+# 备份 MySQL 数据库
+if command -v mysqldump >/dev/null 2>&1; then
+  if mysqldump -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" > "$BACKUP_DIR/${MYSQL_DATABASE}.sql" 2>/dev/null; then
+    echo "      MySQL database backed up to $BACKUP_DIR/${MYSQL_DATABASE}.sql"
+  else
+    echo "      [WARN] mysqldump failed (non-fatal)"
+  fi
+else
+  echo "      [WARN] mysqldump not available, skipping database backup"
 fi
 if [ -f "$TARGET_DIR/.env" ]; then
   cp "$TARGET_DIR/.env" "$BACKUP_DIR/"
@@ -121,21 +131,30 @@ mkdir -p "$TARGET_DIR/data/uploads"
 mkdir -p "$TARGET_DIR/data/logs"
 mkdir -p "$TARGET_DIR/exports"
 
-# 写入 .env，强制使用 PORT=3002 避免与开发环境冲突
+# 写入 .env，配置 MySQL 连接参数，强制使用 PORT=3002 避免与开发环境冲突
 cat > "$TARGET_DIR/.env" << EOF
 PORT=$PR_PORT
-DB_PATH=./data/quote-system.db
+MYSQL_HOST=$MYSQL_HOST
+MYSQL_PORT=$MYSQL_PORT
+MYSQL_USER=$MYSQL_USER
+MYSQL_PASSWORD=$MYSQL_PASSWORD
+MYSQL_DATABASE=$MYSQL_DATABASE
 NODE_ENV=production
 EXPORT_STORAGE_PATH=./exports
 RATE_LIMIT_MAX=100
 RATE_LIMIT_WINDOW_MS=60000
+# HOST 留空 = 绑定所有接口（支持外部访问）
 EOF
-echo "      .env written (PORT=$PR_PORT, NODE_ENV=production)"
+echo "      .env written (PORT=$PR_PORT, MySQL=$MYSQL_DATABASE, NODE_ENV=production)"
 
 # 同步 .env.production 模板
 cat > "$TARGET_DIR/.env.production" << EOF
 PORT=$PR_PORT
-DB_PATH=./data/quote-system.db
+MYSQL_HOST=$MYSQL_HOST
+MYSQL_PORT=$MYSQL_PORT
+MYSQL_USER=$MYSQL_USER
+MYSQL_PASSWORD=$MYSQL_PASSWORD
+MYSQL_DATABASE=$MYSQL_DATABASE
 NODE_ENV=production
 EXPORT_STORAGE_PATH=./exports
 RATE_LIMIT_MAX=100
@@ -258,25 +277,8 @@ else
   echo "      [WARN] Health check response: $HEALTH"
 fi
 
-# 9b. 验证数据库 schema 版本（通过 schema_migrations 表）
-DB_VERSION=$(cd "$TARGET_DIR" && node -e "
-import('sql.js').then(async (mod) => {
-  const initSqlJs = mod.default;
-  const SQL = await initSqlJs();
-  const fs = await import('fs');
-  const path = await import('path');
-  const dbPath = path.resolve('./data/quote-system.db');
-  if (!fs.existsSync(dbPath)) { console.log('NO_DB'); return; }
-  const buf = fs.readFileSync(dbPath);
-  const db = new SQL.Database(buf);
-  const stmt = db.prepare('SELECT MAX(version) as v FROM schema_migrations');
-  stmt.step();
-  const row = stmt.getAsObject();
-  console.log(row.v || 0);
-  stmt.free();
-  db.close();
-});
-" 2>/dev/null)
+# 9b. 验证数据库 schema 版本（通过 MySQL schema_migrations 表）
+DB_VERSION=$(mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" -s -N -e "SELECT MAX(version) FROM schema_migrations" 2>/dev/null || echo "0")
 echo "      Database schema version: v$DB_VERSION (target: v$DB_SCHEMA_VERSION)"
 
 # 9c. 端口验证
@@ -295,53 +297,26 @@ else
   echo "      [INFO] Dev port 3001 not currently in use"
 fi
 
-# 9e. V0.5 专属验证：确认迁移 v9 已应用（quotes 表 allFormulas 字段 + 老数据已初始化）
-echo "      --- V0.5 Specific Verifications ---"
-ALLFORMULAS_CHECK=$(cd "$TARGET_DIR" && node -e "
-import('sql.js').then(async (mod) => {
-  const initSqlJs = mod.default;
-  const SQL = await initSqlJs();
-  const fs = await import('fs');
-  const path = await import('path');
-  const dbPath = path.resolve('./data/quote-system.db');
-  if (!fs.existsSync(dbPath)) { console.log('NO_DB'); return; }
-  const buf = fs.readFileSync(dbPath);
-  const db = new SQL.Database(buf);
-  try {
-    // 检查 quotes 表是否有 allFormulas 列
-    const colStmt = db.prepare(\"PRAGMA table_info(quotes)\");
-    const cols = [];
-    while (colStmt.step()) { cols.push(colStmt.getAsObject().name); }
-    colStmt.free();
-    if (!cols.includes('allFormulas')) { console.log('NO_ALLFORMULAS_COLUMN'); db.close(); return; }
-    if (!cols.includes('modifiedFormulas')) { console.log('NO_MODIFIEDFORMULAS_COLUMN'); db.close(); return; }
-    // 统计已有订单数和 allFormulas 已初始化的订单数
-    const totalStmt = db.prepare(\"SELECT COUNT(*) as c FROM quotes\");
-    totalStmt.step();
-    const total = totalStmt.getAsObject().c;
-    totalStmt.free();
-    const initStmt = db.prepare(\"SELECT COUNT(*) as c FROM quotes WHERE allFormulas IS NOT NULL AND allFormulas != '{}'\");
-    initStmt.step();
-    const initialized = initStmt.getAsObject().c;
-    initStmt.free();
-    console.log('TOTAL_QUOTES:' + total + '|INITIALIZED:' + initialized);
-  } catch(e) { console.log('ERROR:' + e.message); }
-  db.close();
-});
-" 2>/dev/null)
-if echo "$ALLFORMULAS_CHECK" | grep -q "TOTAL_QUOTES:"; then
-  TOTAL=$(echo "$ALLFORMULAS_CHECK" | sed -n 's/.*TOTAL_QUOTES:\([0-9]*\).*/\1/p')
-  INITED=$(echo "$ALLFORMULAS_CHECK" | sed -n 's/.*INITIALIZED:\([0-9]*\).*/\1/p')
-  echo "      [OK] Migration v9 applied: quotes.allFormulas column exists"
-  echo "      [INFO] Quotes: total=$TOTAL, allFormulas initialized=$INITED"
-elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_ALLFORMULAS_COLUMN"; then
-  echo "      [WARN] quotes.allFormulas column not found (migration v9 may not have applied)"
-elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_MODIFIEDFORMULAS_COLUMN"; then
-  echo "      [WARN] quotes.modifiedFormulas column not found (migration v8 may not have applied)"
-elif echo "$ALLFORMULAS_CHECK" | grep -q "NO_DB"; then
-  echo "      [INFO] No database file (fresh install will create on next start)"
+# 9e. 验证迁移 v10 已应用（quotes 表 productionStepStatus 字段 + v9 allFormulas 字段）
+echo "      --- Migration Verifications (v9/v10) ---"
+# 检查 quotes 表是否存在 allFormulas 和 productionStepStatus 列
+COLS_CHECK=$(mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" -s -N -e "SELECT GROUP_CONCAT(COLUMN_NAME) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='$MYSQL_DATABASE' AND TABLE_NAME='quotes' AND COLUMN_NAME IN ('allFormulas','modifiedFormulas','productionStepStatus')" 2>/dev/null)
+if echo "$COLS_CHECK" | grep -q "allFormulas" && echo "$COLS_CHECK" | grep -q "modifiedFormulas"; then
+  echo "      [OK] Migration v8/v9 applied: quotes.allFormulas + modifiedFormulas columns exist"
+  if echo "$COLS_CHECK" | grep -q "productionStepStatus"; then
+    echo "      [OK] Migration v10 applied: quotes.productionStepStatus column exists"
+  else
+    echo "      [WARN] quotes.productionStepStatus column not found (migration v10 may not have applied)"
+  fi
+  # 统计订单数和 allFormulas 已初始化的订单数
+  COUNT_CHECK=$(mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" ${MYSQL_PASSWORD:+-p"$MYSQL_PASSWORD"} "$MYSQL_DATABASE" -s -N -e "SELECT CONCAT(total, '|', initialized) FROM (SELECT (SELECT COUNT(*) FROM quotes) AS total, (SELECT COUNT(*) FROM quotes WHERE allFormulas IS NOT NULL AND allFormulas != '{}' AND allFormulas != '') AS initialized) t" 2>/dev/null)
+  if [ -n "$COUNT_CHECK" ]; then
+    TOTAL=$(echo "$COUNT_CHECK" | cut -d'|' -f1)
+    INITED=$(echo "$COUNT_CHECK" | cut -d'|' -f2)
+    echo "      [INFO] Quotes: total=$TOTAL, allFormulas initialized=$INITED"
+  fi
 else
-  echo "      [WARN] allFormulas check result: $ALLFORMULAS_CHECK"
+  echo "      [WARN] quotes.allFormulas/modifiedFormulas columns not found (migrations v8/v9 may not have applied)"
 fi
 
 # 9f. V0.5 验证：API 返回单个 quote 时包含 allFormulas 字段
@@ -363,10 +338,11 @@ echo "      Done"
 # ------------------------------------------------------------
 echo ""
 echo "============================================"
-echo "  V0.6 Deployment Complete!"
+echo "  Deployment Complete!"
 echo "============================================"
 echo ""
 echo "  Application Version: v$APP_VERSION"
+echo "  Database Engine:     MySQL"
 echo "  Database Schema:     v$DB_VERSION"
 echo "  PR Service Port:    $PR_PORT"
 echo "  Dev Service Port:   3001 (separate)"

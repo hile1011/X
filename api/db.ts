@@ -1,132 +1,74 @@
-import initSqlJs from 'sql.js'
-import path from 'path'
-import fs from 'fs'
+import { pool, initDatabase, withTransaction, closePool, execMultiStatement } from './dbClient.js'
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from './migrations/index.js'
 import type { Customer, Product, Order, OrderItem, Task, Quote, ProcessCost } from './types/index.js'
 
-const SQL = await initSqlJs()
-
+/**
+ * 异步数据库包装器
+ *
+ * 使用 mysql2 连接池实现，提供 exec/prepare/transaction/close 接口。
+ * 所有方法返回 Promise。事务通过 withTransaction 实现，使用独占连接保证原子性。
+ */
 interface WrappedDatabase {
-  exec(sql: string): void
+  exec(sql: string): Promise<void>
   prepare(sql: string): {
-    run(...params: any[]): { changes: number }
-    get(...params: any[]): Record<string, any> | null
-    all(...params: any[]): Record<string, any>[]
+    run(...params: any[]): Promise<{ changes: number }>
+    get(...params: any[]): Promise<Record<string, any> | null>
+    all(...params: any[]): Promise<Record<string, any>[]>
   }
-  transaction<T>(fn: () => T): () => T
-  export(): Uint8Array
-  close(): void
-  pragma(pragma: string): void
+  transaction<T>(fn: () => Promise<T>): () => Promise<T>
+  close(): Promise<void>
 }
 
-function createWrapper(db: any): WrappedDatabase {
+function createWrapper(): WrappedDatabase {
   const wrapper: WrappedDatabase = {
-    exec(sql: string) {
-      db.run(sql)
+    async exec(sql: string) {
+      await execMultiStatement(sql)
     },
     prepare(sql: string) {
-      // 将 undefined 参数转为 null，防止 sql.js 绑定时报错
       const sanitize = (params: any[]) => params.map(p => (p === undefined ? null : p))
       return {
-        run(...params: any[]) {
-          const stmt = db.prepare(sql)
-          stmt.bind(sanitize(params))
-          stmt.step()
-          const changes = db.getRowsModified()
-          stmt.free()
-          return { changes }
+        async run(...params: any[]) {
+          const [result] = await pool.execute(sql, sanitize(params))
+          return { changes: (result as any).affectedRows || 0 }
         },
-        get(...params: any[]) {
-          const stmt = db.prepare(sql)
-          stmt.bind(sanitize(params))
-          const hasRow = stmt.step()
-          const row = hasRow ? stmt.getAsObject() : null
-          stmt.free()
-          return row
+        async get(...params: any[]) {
+          const [rows] = await pool.execute(sql, sanitize(params))
+          return (rows as any[])[0] || null
         },
-        all(...params: any[]) {
-          const stmt = db.prepare(sql)
-          stmt.bind(sanitize(params))
-          const rows: Record<string, any>[] = []
-          while (stmt.step()) {
-            rows.push(stmt.getAsObject())
-          }
-          stmt.free()
-          return rows
+        async all(...params: any[]) {
+          const [rows] = await pool.execute(sql, sanitize(params))
+          return rows as Record<string, any>[]
         },
       }
     },
-    transaction<T>(fn: () => T): () => T {
-      return () => {
-        db.run('BEGIN')
-        try {
-          const result = fn()
-          db.run('COMMIT')
-          return result
-        } catch (e) {
-          db.run('ROLLBACK')
-          throw e
-        }
-      }
+    transaction<T>(fn: () => Promise<T>): () => Promise<T> {
+      return () => withTransaction(async () => fn())
     },
-    export(): Uint8Array {
-      return db.export()
-    },
-    close(): void {
-      db.close()
-    },
-    pragma(pragmaStr: string): void {
-      db.run(`PRAGMA ${pragmaStr}`)
+    async close() {
+      await closePool()
     },
   }
   return wrapper
 }
 
-const dbPath = process.env.DB_PATH || './data/quote-system.db'
-const dbDir = path.dirname(path.resolve(dbPath))
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true })
-}
+// 启动时初始化数据库并运行迁移
+await initDatabase()
 
-let rawDb: any
-const resolvedPath = path.resolve(dbPath)
-
-if (dbPath === ':memory:') {
-  rawDb = new SQL.Database()
-} else if (fs.existsSync(resolvedPath)) {
-  const fileBuffer = fs.readFileSync(resolvedPath)
-  rawDb = new SQL.Database(fileBuffer)
-} else {
-  rawDb = new SQL.Database()
-}
-
-rawDb.run('PRAGMA foreign_keys = ON')
-
-const dbConn = createWrapper(rawDb)
-
-const persist = () => {
-  if (dbPath !== ':memory:') {
-    const data = rawDb.export()
-    fs.writeFileSync(resolvedPath, Buffer.from(data))
-  }
-}
-
+const dbConn = createWrapper()
 const runner = new MigrationRunner(dbConn)
-const currentVersion = runner.getCurrentVersion()
+const currentVersion = await runner.getCurrentVersion()
 
 if (currentVersion < CURRENT_SCHEMA_VERSION) {
   console.log(`[DB] Schema version ${currentVersion} -> ${CURRENT_SCHEMA_VERSION}, running migrations...`)
-  const result = runner.migrate()
+  const result = await runner.migrate()
   result.applied.forEach((m) => console.log(`[DB]   Applied: ${m}`))
   if (result.skipped.length > 0) {
     result.skipped.forEach((m) => console.log(`[DB]   Skipped: ${m}`))
   }
-  console.log(`[DB] Schema migrated to v${runner.getCurrentVersion()}`)
+  console.log(`[DB] Schema migrated to v${await runner.getCurrentVersion()}`)
 } else {
   console.log(`[DB] Schema at latest version v${currentVersion}`)
 }
-
-persist()
 
 const PRODUCT_STYLE_OPTIONS = [
   { value: '1', label: '无底无侧普通袋' },
@@ -145,17 +87,14 @@ export function isDefaultStyleProduct(id: string): boolean {
   return DEFAULT_STYLE_PRODUCT_IDS.includes(id)
 }
 
-const getStyleLabel = (value: string): string => {
-  // 优先从 products 表查询（动态数据源：款式标签由产品管理模块维护）
-  // value 可能是款式 code（1-6）或产品 id（无 code 的产品），按 code 或 id 匹配
-  const row = dbConn.prepare('SELECT name FROM products WHERE code = ? OR id = ?').get(value, value) as { name?: string } | undefined
+const getStyleLabel = async (value: string): Promise<string> => {
+  const row = await dbConn.prepare('SELECT name FROM products WHERE code = ? OR id = ?').get(value, value) as { name?: string } | undefined
   if (row?.name) return row.name
-  // 兜底：硬编码默认款式（保证迁移前/异常场景/测试仍可用）
   const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
   return option ? option.label : value
 }
 
-const timeNow = () => new Date().toISOString()
+const timeNow = () => new Date().toISOString().slice(0, 19).replace('T', ' ')
 
 function toCamelRow(row: Record<string, any>): any {
   const result: Record<string, any> = {}
@@ -169,157 +108,149 @@ export const dbApi = {
   db: dbConn,
   runner,
 
-  getSchemaVersion(): number {
+  async getSchemaVersion(): Promise<number> {
     return runner.getCurrentVersion()
   },
 
   customers: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM customers ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM customers ORDER BY updated_at DESC').all()
       return rows.map(toCamelRow) as Customer[]
     },
-    getById: (id: string) => {
-      const row = dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
       return row ? (toCamelRow(row) as Customer) : null
     },
-    getByName: (name: string) => {
-      const row = dbConn.prepare('SELECT * FROM customers WHERE name = ?').get(name)
+    getByName: async (name: string) => {
+      const row = await dbConn.prepare('SELECT * FROM customers WHERE name = ?').get(name)
       return row ? (toCamelRow(row) as Customer) : null
     },
-    create: (data: Partial<Customer>) => {
+    create: async (data: Partial<Customer>) => {
       const id = `cust-${Date.now()}`
-      dbConn.prepare(`INSERT INTO customers (id, name, contact_person, phone, email, address, industry)
+      await dbConn.prepare(`INSERT INTO customers (id, name, contact_person, phone, email, address, industry)
         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.name || '', data.contact_person || '', data.phone || '',
         data.email || '', data.address || '', data.industry || ''
       )
-      persist()
-      return dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id) as Customer
-    },
-    update: (id: string, data: Partial<Customer>) => {
-      const existing = dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
-      if (!existing) return null
-      const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, industry=?, updated_at=?
-        WHERE id=?`).run(row.name, row.contact_person, row.phone, row.email, row.address, row.industry, row.updated_at, id)
-      persist()
+      const row = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
       return row as Customer
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM customers WHERE id = ?').run(id)
-      persist()
+    update: async (id: string, data: Partial<Customer>) => {
+      const existing = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
+      if (!existing) return null
+      const row = { ...existing, ...data, updated_at: timeNow() }
+      await dbConn.prepare(`UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, industry=?, updated_at=?
+        WHERE id=?`).run(row.name, row.contact_person, row.phone, row.email, row.address, row.industry, row.updated_at, id)
+      return row as Customer
+    },
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM customers WHERE id = ?').run(id)
       return info.changes > 0
     },
   },
 
   products: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM products ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM products ORDER BY updated_at DESC').all()
       return rows.map(toCamelRow) as Product[]
     },
-    getById: (id: string) => {
-      const row = dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
       return row ? (toCamelRow(row) as Product) : null
     },
-    create: (data: Partial<Product>) => {
+    create: async (data: Partial<Product>) => {
       const id = `prod-${Date.now()}`
-      dbConn.prepare(`INSERT INTO products (id, name, sku, code, description, price, category, stock)
+      await dbConn.prepare(`INSERT INTO products (id, name, sku, code, description, price, category, stock)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.name || '', data.sku || '', data.code ?? '', data.description || '',
         data.price || 0, data.category || '', data.stock || 0
       )
-      persist()
-      return dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id) as Product
-    },
-    update: (id: string, data: Partial<Product>) => {
-      const existing = dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
-      if (!existing) return null
-      const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE products SET name=?, sku=?, code=?, description=?, price=?, category=?, stock=?, updated_at=?
-        WHERE id=?`).run(row.name, row.sku, row.code ?? '', row.description, row.price, row.category, row.stock, row.updated_at, id)
-      persist()
+      const row = await dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
       return row as Product
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM products WHERE id = ?').run(id)
-      persist()
+    update: async (id: string, data: Partial<Product>) => {
+      const existing = await dbConn.prepare('SELECT * FROM products WHERE id = ?').get(id)
+      if (!existing) return null
+      const row = { ...existing, ...data, updated_at: timeNow() }
+      await dbConn.prepare(`UPDATE products SET name=?, sku=?, code=?, description=?, price=?, category=?, stock=?, updated_at=?
+        WHERE id=?`).run(row.name, row.sku, row.code ?? '', row.description, row.price, row.category, row.stock, row.updated_at, id)
+      return row as Product
+    },
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM products WHERE id = ?').run(id)
       return info.changes > 0
     },
   },
 
   orders: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM orders ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM orders ORDER BY updated_at DESC').all()
       return rows.map(toCamelRow) as Order[]
     },
-    getById: (id: string) => {
-      const order = dbConn.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Order | null
+    getById: async (id: string) => {
+      const order = await dbConn.prepare('SELECT * FROM orders WHERE id = ?').get(id) as Order | null
       if (!order) return null
-      const items = dbConn.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id) as OrderItem[]
-      const customer = dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(order.customer_id) as Customer | null
+      const items = await dbConn.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id) as OrderItem[]
+      const customer = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(order.customer_id) as Customer | null
       return { ...(toCamelRow(order) as Order), items, customer }
     },
-    update: (id: string, data: Partial<Order>) => {
-      const existing = dbConn.prepare('SELECT * FROM orders WHERE id = ?').get(id)
+    update: async (id: string, data: Partial<Order>) => {
+      const existing = await dbConn.prepare('SELECT * FROM orders WHERE id = ?').get(id)
       if (!existing) return null
       const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE orders SET user_id=?, customer_id=?, quote_id=?, order_number=?, status=?, total_amount=?, remarks=?, updated_at=?
+      await dbConn.prepare(`UPDATE orders SET user_id=?, customer_id=?, quote_id=?, order_number=?, status=?, total_amount=?, remarks=?, updated_at=?
         WHERE id=?`).run(
         row.user_id, row.customer_id, row.quote_id, row.order_number, row.status,
         row.total_amount, row.remarks, row.updated_at, id
       )
-      persist()
       return row as Order
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM orders WHERE id = ?').run(id)
-      dbConn.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
-      persist()
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM orders WHERE id = ?').run(id)
+      await dbConn.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
       return info.changes > 0
     },
   },
 
   tasks: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM tasks ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM tasks ORDER BY updated_at DESC').all()
       return rows.map(toCamelRow) as Task[]
     },
-    getById: (id: string) => {
-      const row = dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       return row ? (toCamelRow(row) as Task) : null
     },
-    create: (data: Partial<Task>) => {
+    create: async (data: Partial<Task>) => {
       const id = `task-${Date.now()}`
-      dbConn.prepare(`INSERT INTO tasks (id, user_id, order_id, title, description, status, due_date)
+      await dbConn.prepare(`INSERT INTO tasks (id, user_id, order_id, title, description, status, due_date)
         VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.order_id || '', data.title || '',
         data.description || '', data.status || 'pending', data.due_date || ''
       )
-      persist()
-      return dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Task
-    },
-    update: (id: string, data: Partial<Task>) => {
-      const existing = dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
-      if (!existing) return null
-      const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE tasks SET user_id=?, order_id=?, title=?, description=?, status=?, due_date=?, updated_at=?
-        WHERE id=?`).run(row.user_id, row.order_id, row.title, row.description, row.status, row.due_date, row.updated_at, id)
-      persist()
+      const row = await dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
       return row as Task
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM tasks WHERE id = ?').run(id)
-      persist()
+    update: async (id: string, data: Partial<Task>) => {
+      const existing = await dbConn.prepare('SELECT * FROM tasks WHERE id = ?').get(id)
+      if (!existing) return null
+      const row = { ...existing, ...data, updated_at: timeNow() }
+      await dbConn.prepare(`UPDATE tasks SET user_id=?, order_id=?, title=?, description=?, status=?, due_date=?, updated_at=?
+        WHERE id=?`).run(row.user_id, row.order_id, row.title, row.description, row.status, row.due_date, row.updated_at, id)
+      return row as Task
+    },
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM tasks WHERE id = ?').run(id)
       return info.changes > 0
     },
   },
 
   quotes: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM quotes ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC').all()
       return rows.map((r) => {
         const c = toCamelRow(r)
-        c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
+        c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
         c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
         c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
         c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
@@ -328,11 +259,11 @@ export const dbApi = {
         return c as Quote
       }) as Quote[]
     },
-    getById: (id: string) => {
-      const row = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
       if (!row) return null
       const c = toCamelRow(row)
-      c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : c.images
+      c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
       c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
       c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
       c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
@@ -340,16 +271,17 @@ export const dbApi = {
       c.productionStepStatus = typeof (c as any).productionStepStatus === 'string' ? JSON.parse((c as any).productionStepStatus || '{}') : ((c as any).productionStepStatus || {})
       return c as Quote
     },
-    create: (data: Partial<Quote>) => {
+    create: async (data: Partial<Quote>) => {
       const now = new Date()
       const today = now.toISOString().split('T')[0]
       const timestamp = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       const customerName = data.customerName || ''
       const productStyle = data.productStyle || '1'
-      const quoteNumber = `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
+      const styleLabel = await getStyleLabel(productStyle)
+      const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
       const id = `quote-${Date.now()}`
 
-      dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
@@ -371,7 +303,6 @@ export const dbApi = {
         JSON.stringify(data.allFormulas || {}),
         JSON.stringify(data.productionStepStatus || {})
       )
-      persist()
 
       return {
         id, quote_number: quoteNumber, customerName,
@@ -404,10 +335,9 @@ export const dbApi = {
         created_at: timeNow(), updated_at: timeNow(),
       }
     },
-    update: (id: string, data: Partial<Quote>) => {
-      const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+    update: async (id: string, data: Partial<Quote>) => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
-      // 解析 existing 中的 JSON 字段（tableData/images/removedFormulaAddresses/modifiedFormulas/allFormulas 存储为字符串）
       const existingParsed = toCamelRow(existing) as Quote
       existingParsed.images = typeof (existingParsed as any).images === 'string' ? JSON.parse((existingParsed as any).images || '[]') : (existingParsed.images || [])
       existingParsed.tableData = typeof (existingParsed as any).tableData === 'string' ? JSON.parse((existingParsed as any).tableData || '[]') : (existingParsed.tableData || [])
@@ -420,22 +350,22 @@ export const dbApi = {
       if (data.customerName !== undefined || data.productStyle !== undefined) {
         const customerName = data.customerName !== undefined ? data.customerName : existing.customerName
         const productStyle = data.productStyle !== undefined ? data.productStyle : existing.productStyle
+        const styleLabel = await getStyleLabel(productStyle)
         const timestampMatch = existing.quote_number.match(/\d{14}/)
         const timestamp = timestampMatch ? timestampMatch[0] : ''
-        updatedQuote.quote_number = `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
+        updatedQuote.quote_number = `${customerName}-${styleLabel}-${timestamp}`
       }
 
       if (data.images !== undefined) {
         updatedQuote.images = data.images
       }
-      // tableData/removedFormulaAddresses/modifiedFormulas/allFormulas/productionStepStatus 持久化为 JSON 字符串；返回给前端时保持数组/对象形式
       const tableDataJson = JSON.stringify(updatedQuote.tableData || [])
       const removedFormulaAddressesJson = JSON.stringify(updatedQuote.removedFormulaAddresses || [])
       const modifiedFormulasJson = JSON.stringify(updatedQuote.modifiedFormulas || {})
       const allFormulasJson = JSON.stringify(updatedQuote.allFormulas || {})
       const productionStepStatusJson = JSON.stringify(updatedQuote.productionStepStatus || {})
 
-      dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, shippingAddress=?,
+      await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, shippingAddress=?,
         productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
@@ -452,11 +382,10 @@ export const dbApi = {
         updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
         JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson, updatedQuote.updated_at, id
       )
-      persist()
       return updatedQuote
     },
-    nextStatus: (id: string) => {
-      const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+    nextStatus: async (id: string) => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
       const today = new Date().toISOString().split('T')[0]
       let newStatus = existing.status
@@ -472,7 +401,7 @@ export const dbApi = {
       }
 
       const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, ...updates, updated_at: timeNow() }
-      dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, updated_at=? WHERE id=?`).run(
+      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, updated_at=? WHERE id=?`).run(
         newStatus,
         updates.sampleTime || existing.sampleTime,
         updates.productionStartTime || existing.productionStartTime,
@@ -481,11 +410,10 @@ export const dbApi = {
         updates.endTime || existing.endTime,
         updated.updated_at, id
       )
-      persist()
       return updated
     },
-    prevStatus: (id: string) => {
-      const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+    prevStatus: async (id: string) => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
       let newStatus = existing.status
       switch (existing.status) {
@@ -497,55 +425,50 @@ export const dbApi = {
         case 1: return toCamelRow(existing) as Quote
       }
       const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, updated_at: timeNow() }
-      dbConn.prepare('UPDATE quotes SET status=?, updated_at=? WHERE id=?').run(newStatus, updated.updated_at, id)
-      persist()
+      await dbConn.prepare('UPDATE quotes SET status=?, updated_at=? WHERE id=?').run(newStatus, updated.updated_at, id)
       return updated
     },
-    endQuote: (id: string) => {
-      const existing = dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+    endQuote: async (id: string) => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
       if (existing.status !== 1 && existing.status !== 2) return toCamelRow(existing) as Quote
       const today = new Date().toISOString().split('T')[0]
       const updated = { ...(toCamelRow(existing) as Quote), status: 6, endTime: today, updated_at: timeNow() }
-      dbConn.prepare('UPDATE quotes SET status=?, endTime=?, updated_at=? WHERE id=?').run(6, today, updated.updated_at, id)
-      persist()
+      await dbConn.prepare('UPDATE quotes SET status=?, endTime=?, updated_at=? WHERE id=?').run(6, today, updated.updated_at, id)
       return updated
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM quotes WHERE id = ?').run(id)
-      persist()
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM quotes WHERE id = ?').run(id)
       return info.changes > 0
     },
   },
 
   processCosts: {
-    getAll: () => {
-      const rows = dbConn.prepare('SELECT * FROM process_costs ORDER BY updated_at DESC').all()
+    getAll: async () => {
+      const rows = await dbConn.prepare('SELECT * FROM process_costs ORDER BY updated_at DESC').all()
       return rows.map(toCamelRow) as ProcessCost[]
     },
-    getById: (id: string) => {
-      const row = dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
       return row ? (toCamelRow(row) as ProcessCost) : null
     },
-    create: (data: Partial<ProcessCost>) => {
+    create: async (data: Partial<ProcessCost>) => {
       const id = `pc-${Date.now()}`
-      dbConn.prepare('INSERT INTO process_costs (id, name, cost, formula) VALUES (?, ?, ?, ?)')
+      await dbConn.prepare('INSERT INTO process_costs (id, name, cost, formula) VALUES (?, ?, ?, ?)')
         .run(id, data.name || '', data.cost || 0, data.formula || '')
-      persist()
-      return dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id) as ProcessCost
-    },
-    update: (id: string, data: Partial<ProcessCost>) => {
-      const existing = dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
-      if (!existing) return null
-      const row = { ...existing, ...data, updated_at: timeNow() }
-      dbConn.prepare('UPDATE process_costs SET name=?, cost=?, formula=?, updated_at=? WHERE id=?')
-        .run(row.name, row.cost, row.formula, row.updated_at, id)
-      persist()
+      const row = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
       return row as ProcessCost
     },
-    delete: (id: string) => {
-      const info = dbConn.prepare('DELETE FROM process_costs WHERE id = ?').run(id)
-      persist()
+    update: async (id: string, data: Partial<ProcessCost>) => {
+      const existing = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
+      if (!existing) return null
+      const row = { ...existing, ...data, updated_at: timeNow() }
+      await dbConn.prepare('UPDATE process_costs SET name=?, cost=?, formula=?, updated_at=? WHERE id=?')
+        .run(row.name, row.cost, row.formula, row.updated_at, id)
+      return row as ProcessCost
+    },
+    delete: async (id: string) => {
+      const info = await dbConn.prepare('DELETE FROM process_costs WHERE id = ?').run(id)
       return info.changes > 0
     },
   },

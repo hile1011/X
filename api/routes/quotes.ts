@@ -1,6 +1,7 @@
 import express from 'express'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
+import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 
 export const quotesRouter = express.Router()
 
@@ -8,6 +9,8 @@ quotesRouter.get('/', asyncHandler(async (_req, res) => {
   const data = await db.quotes.getAll()
   res.json(data)
 }))
+
+quotesRouter.get('/:id/delete-check', asyncHandler(createDeleteCheckHandler('quote')))
 
 quotesRouter.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
@@ -32,14 +35,7 @@ quotesRouter.put('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-quotesRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  const success = await db.quotes.delete(id)
-  if (!success) {
-    return res.status(404).json({ error: '报价不存在' })
-  }
-  res.json({ message: '报价已删除' })
-}))
+quotesRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('quote', db.quotes.delete)))
 
 // 状态流转接口：进入下一节点
 quotesRouter.post('/:id/next-status', asyncHandler(async (req, res) => {

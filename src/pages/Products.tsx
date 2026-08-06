@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Plus, Search, Eye, Edit, Trash2, Package, Tag, DollarSign } from 'lucide-react'
 import { isDefaultStyleProduct } from '../services/productStyles'
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import type { Product } from '../types'
 
 export default function Products() {
@@ -10,6 +11,7 @@ export default function Products() {
   const [searchTerm, setSearchTerm] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [loading, setLoading] = useState(true)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -30,14 +32,8 @@ export default function Products() {
   }
 
   const handleDelete = async (id: string) => {
-    if (window.confirm('确定要删除这个产品吗？')) {
-      try {
-        await api.products.delete(id)
-        fetchProducts()
-      } catch (error) {
-        alert((error as Error).message || '删除失败')
-      }
-    }
+    await api.products.delete(id)
+    fetchProducts()
   }
 
   const categories = ['all', ...new Set(products.map((p) => p.category).filter(Boolean))]
@@ -148,7 +144,7 @@ export default function Products() {
                     </button>
                     {!isDefaultStyleProduct(product.id) && (
                       <button
-                        onClick={() => handleDelete(product.id)}
+                        onClick={() => setDeleteTarget(product.id)}
                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         title="删除"
                       >
@@ -167,6 +163,17 @@ export default function Products() {
             </div>
           )}
         </div>
+
+        {deleteTarget && (
+          <DeleteConfirmDialog
+            entityId={deleteTarget}
+            entityLabel="产品"
+            deleteFn={handleDelete}
+            deleteCheckFn={(id) => api.products.deleteCheck(id)}
+            onDeleted={() => fetchProducts()}
+            onClose={() => setDeleteTarget(null)}
+          />
+        )}
       </div>
   )
 }

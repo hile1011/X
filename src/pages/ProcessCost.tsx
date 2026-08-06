@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, Save, X } from 'lucide-react'
 import { api } from '../api'
+import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import type { ProcessCost as ProcessCostType } from '../types'
 
 interface ProcessCostFormData {
@@ -47,11 +48,11 @@ export default function ProcessCost() {
     setShowForm(true)
   }
 
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+
   const handleDelete = async (id: string) => {
-    if (confirm('确定要删除这个工艺成本吗？')) {
-      await api.processCosts.delete(id)
-      loadProcessCosts()
-    }
+    await api.processCosts.delete(id)
+    loadProcessCosts()
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -204,7 +205,7 @@ export default function ProcessCost() {
                         <Edit2 size={18} />
                       </button>
                       <button
-                        onClick={() => handleDelete(item.id)}
+                        onClick={() => setDeleteTarget(item.id)}
                         className="text-red-600 hover:text-red-900 p-2 min-h-[44px] min-w-[44px] inline-flex items-center justify-center rounded-lg hover:bg-red-50 ml-1"
                         title="删除"
                       >
@@ -218,6 +219,17 @@ export default function ProcessCost() {
           </table>
         </div>
       </div>
+
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          entityId={deleteTarget}
+          entityLabel="工艺成本"
+          deleteFn={handleDelete}
+          deleteCheckFn={(id) => api.processCosts.deleteCheck(id)}
+          onDeleted={() => loadProcessCosts()}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   )
 }

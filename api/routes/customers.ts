@@ -1,6 +1,7 @@
 import express from 'express'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
+import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 
 export const customersRouter = express.Router()
 
@@ -8,6 +9,8 @@ customersRouter.get('/', asyncHandler(async (_req, res) => {
   const data = await db.customers.getAll()
   res.json(data)
 }))
+
+customersRouter.get('/:id/delete-check', asyncHandler(createDeleteCheckHandler('customer')))
 
 customersRouter.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params
@@ -73,11 +76,4 @@ customersRouter.put('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-customersRouter.delete('/:id', asyncHandler(async (req, res) => {
-  const { id } = req.params
-  const success = await db.customers.delete(id)
-  if (!success) {
-    return res.status(404).json({ error: '客户不存在' })
-  }
-  res.json({ message: '客户已删除' })
-}))
+customersRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('customer', db.customers.delete)))

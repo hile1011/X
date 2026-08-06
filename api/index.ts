@@ -13,6 +13,7 @@ import { bagQuoteRouter } from './routes/bagQuote.js'
 import { quotesRouter } from './routes/quotes.js'
 import { processCostsRouter } from './routes/processCosts.js'
 import { exportRouter } from './routes/export.js'
+import { operationLogsRouter } from './routes/operationLogs.js'
 
 const envPath = fs.existsSync(path.resolve(process.cwd(), '.env'))
   ? path.resolve(process.cwd(), '.env')
@@ -47,6 +48,7 @@ app.use('/api/bag-quote', bagQuoteRouter)
 app.use('/api/quotes', quotesRouter)
 app.use('/api/process-costs', processCostsRouter)
 app.use('/api/export', exportRouter)
+app.use('/api/operation-logs', operationLogsRouter)
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
