@@ -4,6 +4,63 @@
 
 ---
 
+## [v1.0.0] - 2026-08-06
+
+### 🎯 核心主题：数据库迁移 SQLite → MySQL + 数据删除控制机制 + 在线表格汇总计算
+
+> ⚠️ **重大变更（Breaking Change）**：数据库系统从 SQLite 完整迁移至 MySQL。生产环境部署前必须完成数据库迁移，详见下方「数据库迁移」章节。
+
+### 🗄️ 重大变更 - 数据库迁移（SQLite → MySQL）
+
+- **连接层重构**：新增 `api/dbClient.ts`，基于 `mysql2/promise` 连接池实现，支持事务（`withTransaction`）、多语句执行（`execMultiStatement`）、独占连接保证原子性
+- **全量代码适配**：`api/db.ts`、`api/migrate.ts`、`api/reset.ts`、`api/seed.ts` 及所有路由文件改为异步数据库操作，适配 MySQL 语法（占位符 `?`、`INSERT...ON DUPLICATE KEY`、生成列等）
+- **依赖清理**：移除 `sql.js` 依赖及 `api/sqljs.d.ts` 类型声明
+- **数据迁移工具**：新增 `api/migrate-sqlite-to-mysql.ts`，按外键依赖顺序迁移表数据，含行数校验与 JSON 完整性验证
+- **Schema 版本升级 v10 → v11**：新增 `operation_logs` 表（操作日志持久化）
+- **测试适配**：测试套件改用 `quote_system_test` MySQL 数据库，串行执行（`singleFork: true` + `fileParallelism: false`），新增 `tests/globalSetup.ts` 管理连接池生命周期
+- **文档更新**：新增《SQLite 到 MySQL 迁移指南》，更新《数据库文档》《技术架构文档》《ENV-MANAGEMENT》
+
+### ✨ 新增功能
+
+#### 数据删除控制机制
+- **二次确认流程**：`DeleteConfirmDialog` 组件展示待删除数据关键信息（ID、名称），提供「确认删除」「取消」选项
+- **关联关系检测**：`deleteGuard` 服务检测 6 种实体（客户、产品、报价、订单、任务、工艺成本）的外键引用、业务活跃状态及逻辑关联
+- **阻止删除展示**：检测到关联时立即阻止操作，向用户展示具体关联信息及无法删除原因
+- **审计日志**：`auditLog` 服务记录所有删除尝试（含成功与被阻止），`operation_logs` 表持久化操作人、时间、数据 ID 及操作结果
+
+#### 在线表格选中单元格汇总计算
+- 自动检测多单元格选择（连续/非连续区域）
+- 实时计算求和、平均值、计数、最小值、最大值
+- `SelectionSummaryBar` 状态栏 UI 组件，支持指标自定义（localStorage 持久化偏好）
+- 数值格式化支持（货币、百分比），处理空单元格与非数值边界情况
+
+#### 环境配置系统
+- `environments/` 目录管理 development / production / test 三套独立配置
+- `scripts/start.js` 根据 `--env` 参数动态加载环境配置，含参数校验
+- `package.json` 新增 `start:dev` / `start:test` / `start:prod` 启动命令
+
+### 🐛 Bug 修复
+
+- **客户选择显示错误**：搜索选择客户后输入框显示搜索词而非完整客户名称 → 改为直接显示客户名称
+- **新增订单保存跳转列表**：新增订单保存后返回列表页 → 改为留在编辑页面（`navigate` replace + `skipNextLoadRef`）
+- **交期预警包含报价中订单**：交期预警纳入状态 1（报价中）订单 → 排除报价中状态
+- **订单列表排序未按状态生效**：`updated_at` 唯一时间戳导致状态排序失效 → 调整为 `status ASC, updated_at DESC, customerName ASC`
+- **款式查询条件失效**：`includes` 子串匹配误匹配 → 改为精确匹配 + 标签比对
+- **列表底部空白布局**：固定高度计算偏移过大 → flexbox 自适应布局
+- **脚本 cwd 错误**：`npx` 包装器改变工作目录导致 Vite 找不到 `index.html` → 改用直接二进制路径 + 显式 `cd`
+
+### 📦 部署相关
+
+- `deploy-to-pr.sh` / `scripts/deploy.js` 备份方式改为 `mysqldump`，Schema 版本标记为 v11
+- 脚本后台进程使用 `nohup ... & disown` 确保非交互式 shell 存活
+
+### ✅ 测试
+
+- 592 项测试全部通过（20 个测试文件）
+- MySQL 连接、数据完整性（10 客户 / 12 产品 / 12 报价）验证通过
+
+---
+
 ## [v0.8.0] - 2026-08-04
 
 ### 🎯 核心主题：移动端响应式全面改造 + UI 交互增强
