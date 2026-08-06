@@ -16,8 +16,8 @@ TARGET_DIR="/Users/hile/Documents/work/projects/X-PR"
 
 # PR 环境端口（独立于开发环境 3001）
 PR_PORT=3002
-APP_VERSION="0.9.0"
-DB_SCHEMA_VERSION=10
+APP_VERSION="1.0.0"
+DB_SCHEMA_VERSION=11
 
 # MySQL 配置
 MYSQL_HOST="127.0.0.1"
