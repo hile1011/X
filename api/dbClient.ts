@@ -10,6 +10,16 @@
  *   MYSQL_DATABASE 数据库名（默认 quote_system）
  */
 import mysql, { type Pool, type PoolConnection, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise'
+import dotenv from 'dotenv'
+import path from 'path'
+import fs from 'fs'
+
+// ESM 模块导入会在 index.ts 的 dotenv.config() 之前执行（import 会被提升），
+// 因此必须在读取环境变量之前先加载 .env，否则 MYSQL_DATABASE 等配置始终为默认值。
+const envPath = fs.existsSync(path.resolve(process.cwd(), '.env'))
+  ? path.resolve(process.cwd(), '.env')
+  : path.resolve(process.cwd(), 'api/.env')
+dotenv.config({ path: envPath })
 
 const host = process.env.MYSQL_HOST || '127.0.0.1'
 const port = Number(process.env.MYSQL_PORT) || 3306

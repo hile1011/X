@@ -9,13 +9,13 @@ const __dirname = path.dirname(__filename)
 const sourceDir = '/Users/hile/Documents/work/projects/X'
 const targetDir = '/Users/hile/Documents/work/projects/X-PR'
 
-// PR 环境 MySQL 配置（与开发环境共用同一 MySQL 实例，但使用同一业务数据库 quote_system）
-// 注意：开发环境(3001)和 PR 环境(3002)共享 quote_system 数据库，由 NODE_ENV 区分行为
+// PR 环境 MySQL 配置（与开发环境共用同一 MySQL 实例，生产使用独立业务数据库 quote_system_prod）
+// 注意：开发环境(3001)使用 quote_system，PR 环境(3002)使用 quote_system_prod，数据相互隔离
 const MYSQL_HOST = '127.0.0.1'
 const MYSQL_PORT = '3306'
 const MYSQL_USER = 'root'
 const MYSQL_PASSWORD = ''
-const MYSQL_DATABASE = 'quote_system'
+const MYSQL_DATABASE = 'quote_system_prod'
 
 console.log('============================================')
 console.log('  Production Deployment via Node.js')

@@ -5,9 +5,9 @@
 #
 #  Key changes (latest):
 #    - 数据库从 SQLite 迁移至 MySQL（mysql2/promise 连接池）
-#    - Schema 版本 v10（含 productionStepStatus 字段）
+#    - Schema 版本 v11（含 productionStepStatus 字段 + operation_logs 表）
 #    - PR backend port: 3002 (independent from dev's 3001)
-#    - 共用 MySQL 实例，quote_system 数据库
+#    - 共用 MySQL 实例，生产环境使用 quote_system_prod 数据库（独立于开发环境 quote_system）
 # ============================================================
 set -eo pipefail
 
@@ -24,7 +24,7 @@ MYSQL_HOST="127.0.0.1"
 MYSQL_PORT="3306"
 MYSQL_USER="root"
 MYSQL_PASSWORD=""
-MYSQL_DATABASE="quote_system"
+MYSQL_DATABASE="quote_system_prod"
 
 echo "============================================"
 echo "  Quote Order System - Deployment"
