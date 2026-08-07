@@ -38,6 +38,7 @@
     "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "helmet": "^7.2.0",
+    "html2canvas": "^1.4.1",
     "lucide-react": "^0.395.0",
     "multer": "^2.2.0",
     "mysql2": "^3.23.2",

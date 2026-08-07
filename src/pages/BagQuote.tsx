@@ -1,11 +1,13 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2 } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
 import CustomerSelect from '../components/CustomerSelect'
 import SelectionSummaryBar from '../components/SelectionSummaryBar'
+import { PrintPreviewModal } from '../components/PrintPreviewModal'
+import type { Quote } from './Quotes'
 import { findTablePositions } from '../services/tableLocator'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
@@ -151,6 +153,9 @@ export default function BagQuote() {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>('')
   const [showCopySuccess, setShowCopySuccess] = useState(false)
+  const [quoteNumber, setQuoteNumber] = useState<string>('')
+  const [createdAt, setCreatedAt] = useState<string>('')
+  const [printQuote, setPrintQuote] = useState<Quote | null>(null)
   const [status, setStatus] = useState<number>(1)
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
@@ -237,6 +242,8 @@ export default function BagQuote() {
     try {
       const data = await api.quotes.getById(id!)
       if (data) {
+        setQuoteNumber(data.quote_number || '')
+        setCreatedAt(data.created_at || '')
         setOrderInfo({
           unitPrice: data.unitPrice || '',
           productionTimeStart: data.productionTimeStart || DateUtils.today(),
@@ -288,6 +295,50 @@ export default function BagQuote() {
       console.error('加载报价失败:', error)
     }
     setLoading(false)
+  }
+
+  // 打印：从当前编辑状态和表格实例构造 Quote 对象，打开打印预览
+  const handleOpenPrint = () => {
+    // 从表格实例提取当前二维数据
+    let tableData: (string | number | null)[][] = []
+    const sheet = sheetInstanceRef.current
+    if (sheet) {
+      const ws = sheet.getActiveSheet()
+      const activeTable = ws?.tableInstance as any
+      const rowCount = activeTable?.rowCount ?? 0
+      const colCount = activeTable?.colCount ?? 16
+      for (let r = 0; r < rowCount; r++) {
+        const rowData: (string | number | null)[] = []
+        for (let c = 0; c < colCount; c++) {
+          rowData.push(activeTable.getCellOriginValue?.(c, r) ?? null)
+        }
+        tableData.push(rowData)
+      }
+    }
+
+    const quote: Quote = {
+      id: id || '',
+      user_id: '',
+      customer_id: '',
+      quote_number: quoteNumber || id || '',
+      ...orderInfo,
+      costPrice: costPrice || 0,
+      priceWithTax: priceWithTax || 0,
+      sellPriceNoTax: sellPrices.noTax || 0,
+      sellPriceWithTax: sellPrices.withTax || 0,
+      status: status as 1 | 2 | 3 | 4 | 5 | 6,
+      quoteTime: statusTimeNodes.quoteTime,
+      sampleTime: statusTimeNodes.sampleTime,
+      productionStartTime: statusTimeNodes.productionStartTime,
+      shippingTime: statusTimeNodes.shippingTime,
+      paymentTime: statusTimeNodes.paymentTime,
+      endTime: statusTimeNodes.endTime,
+      images: productImages,
+      tableData,
+      created_at: createdAt,
+      updated_at: '',
+    }
+    setPrintQuote(quote)
   }
 
   const handleSave = async (): Promise<boolean> => {
@@ -997,6 +1048,10 @@ export default function BagQuote() {
                 {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 {exporting ? '导出中...' : '导出 Excel'}
               </button>
+              <button onClick={handleOpenPrint} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors min-h-[40px] sm:min-h-0" title="打印订单">
+                <Printer size={16} />
+                打印
+              </button>
               <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
                 <RotateCcw size={16} />
                 重置
@@ -1618,6 +1673,14 @@ export default function BagQuote() {
           <X size={20} />
           <span className="font-medium">{exportError}</span>
         </div>
+      )}
+
+      {printQuote && (
+        <PrintPreviewModal
+          quote={printQuote}
+          styleLabel={styleOptions.find((s) => s.value === orderInfo.productStyle)?.label || orderInfo.productStyle}
+          onClose={() => setPrintQuote(null)}
+        />
       )}
     </div>
   )

@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
+import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import type { Product } from '../types'
 
 export interface Quote {
@@ -42,6 +43,10 @@ export interface Quote {
   paymentTime: string
   endTime: string
   images: string[]
+  // 在线表格二维数据（用户编辑后的值）
+  tableData?: (string | number | null)[][]
+  // 用户已删除的公式地址列表
+  removedFormulaAddresses?: string[]
   created_at: string
   updated_at: string
 }
@@ -80,6 +85,7 @@ export default function Quotes() {
   const [styleFilter, setStyleFilter] = useState('')
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [printTarget, setPrintTarget] = useState<Quote | null>(null)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
@@ -148,30 +154,42 @@ export default function Quotes() {
   const groupQuotes = () => {
     const filtered = getFilteredQuotes()
 
-    // 记录筛选后总数（订单维度，用于分页计算）
+    // 记录筛选后订单总数（用于导出等场景）
     setFilteredCount(filtered.length)
-    // 记录筛选后客户总数（客户名称维度，一个客户下多条订单只算一个）
-    setFilteredCustomerCount(new Set(filtered.map((q) => q.customerName)).size)
 
-    // 分页：取当前页的数据
-    const startIndex = (currentPage - 1) * pageSize
-    const paginated = filtered.slice(startIndex, startIndex + pageSize)
-
+    // 先按客户名称分组（一个客户下多条订单归为一组）
     const grouped: Record<string, Quote[]> = {}
-    paginated.forEach((quote) => {
+    filtered.forEach((quote) => {
       if (!grouped[quote.customerName]) {
         grouped[quote.customerName] = []
       }
       grouped[quote.customerName].push(quote)
     })
 
-    setGroupedQuotes(
-      Object.entries(grouped).map(([customerName, quotes]) => ({
-        customerName,
-        expanded: true,
-        quotes,
-      }))
-    )
+    // 所有客户分组（保持插入顺序）
+    const allGroups = Object.entries(grouped).map(([customerName, quotes]) => ({
+      customerName,
+      expanded: true,
+      quotes,
+    }))
+
+    // 客户总数（客户名称维度去重）
+    const customerCount = allGroups.length
+    setFilteredCustomerCount(customerCount)
+
+    // 边界保护：当前页超出总页数时自动修正到最后一页
+    const maxPage = Math.max(1, Math.ceil(customerCount / pageSize))
+    const safePage = Math.min(currentPage, maxPage)
+    if (safePage !== currentPage) {
+      setCurrentPage(safePage)
+      return // 修正后由 useEffect 重新触发，避免用越界页码计算分页
+    }
+
+    // 按客户维度分页：每页显示 pageSize 个客户（而非 pageSize 条订单）
+    const startIndex = (safePage - 1) * pageSize
+    const paginatedGroups = allGroups.slice(startIndex, startIndex + pageSize)
+
+    setGroupedQuotes(paginatedGroups)
   }
 
   const toggleGroup = (customerName: string) => {
@@ -575,6 +593,16 @@ export default function Quotes() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
+                                    setPrintTarget(quote)
+                                  }}
+                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                  title="打印订单"
+                                >
+                                  <Printer size={16} />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
                                     setDeleteTarget(quote.id)
                                   }}
                                   className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -600,8 +628,9 @@ export default function Quotes() {
           </div>
 
             {/* 分页控制：移出滚动区作为固定底部页脚，避免与操作列(sticky right-0)在右下角视觉重叠 */}
-            {filteredCount > 0 && (() => {
-              const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize))
+            {filteredCustomerCount > 0 && (() => {
+              // 页数统计基于客户总数（与底部汇总口径一致）
+              const totalPages = Math.max(1, Math.ceil(filteredCustomerCount / pageSize))
               const pageNumbers = getPageNumbers(currentPage, totalPages)
               return (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-t border-gray-200 bg-white flex-shrink-0">
@@ -625,13 +654,13 @@ export default function Quotes() {
                         value={pageSize}
                         onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
                         className="px-2 py-1 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none cursor-pointer bg-white"
-                        title="设置每页显示条数"
+                        title="设置每页显示客户数"
                       >
                         {[10, 20, 50, 100].map((s) => (
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
-                      <span className="text-gray-500">条</span>
+                      <span className="text-gray-500">个客户</span>
                     </div>
                   </div>
                   {/* 右侧：页码导航 + 跳转 */}
@@ -783,6 +812,14 @@ export default function Quotes() {
             </div>
           </div>
         </div>
+      )}
+
+      {printTarget && (
+        <PrintPreviewModal
+          quote={printTarget}
+          styleLabel={getStyleLabelFromProducts(products, printTarget.productStyle)}
+          onClose={() => setPrintTarget(null)}
+        />
       )}
     </div>
   )
