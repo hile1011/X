@@ -50,7 +50,7 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   productStyle: '1',
   productSpec: '',
   fabricMaterial: '10安涤棉新本色',
-  process: '单面数码uv印刷',
+  process: '单面数码uv印刷+口头2.5cm',
   handleMaterial: '帆布手提',
   handleSpec: '',
   quantity: '',
@@ -150,6 +150,7 @@ export default function BagQuote() {
   const [saveError, setSaveError] = useState<string>('')
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>('')
+  const [showCopySuccess, setShowCopySuccess] = useState(false)
   const [status, setStatus] = useState<number>(1)
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
@@ -245,7 +246,7 @@ export default function BagQuote() {
           productStyle: data.productStyle || '1',
           productSpec: data.productSpec || '',
           fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
-          process: data.process || '单面数码uv印刷',
+          process: data.process || '单面数码uv印刷+口头2.5cm',
           handleMaterial: data.handleMaterial || '帆布手提',
           handleSpec: data.handleSpec || '',
           quantity: data.quantity || '',
@@ -826,6 +827,45 @@ export default function BagQuote() {
     setProductImages([])
   }
 
+  // 复制报价：将订单信息格式化为文本，方便粘贴到聊天工具中报价
+  // 即使部分数据为空也保留标签前缀，保持格式一致
+  const handleCopyQuote = () => {
+    const styleLabel = styleOptions.find((s) => s.value === orderInfo.productStyle)?.label || ''
+
+    const productParts = [
+      orderInfo.productSpec,
+      styleLabel,
+      orderInfo.handleSpec ? `手提宽度${orderInfo.handleSpec}` : '',
+    ].filter(Boolean)
+
+    const sampleParts = [
+      orderInfo.sampleFee ? `${orderInfo.sampleFee}元` : '',
+      orderInfo.sampleDays ? `${orderInfo.sampleDays}个` : '',
+      '大货可退',
+    ].filter(Boolean)
+
+    const lines: string[] = [
+      `数量：${orderInfo.quantity}`,
+      `成品：${productParts.join('-')}`,
+      `材质：${orderInfo.fabricMaterial}`,
+      `工艺：${orderInfo.process}`,
+      `价格：${sellPrices.noTax !== null ? sellPrices.noTax.toFixed(2) : ''}元/个  含运不含税`,
+      `箱规：${orderInfo.boxSpec}`,
+      `打样：${sampleParts.join(' ')}`,
+      `交期：${orderInfo.massDays}天`,
+    ]
+    if (orderInfo.remark) lines.push(`备注：${orderInfo.remark}`)
+
+    const text = lines.join('\n')
+    navigator.clipboard.writeText(text).then(() => {
+      setShowCopySuccess(true)
+      setTimeout(() => setShowCopySuccess(false), 2000)
+    }).catch(() => {
+      setSaveError('复制失败，请手动选择文本复制')
+      setTimeout(() => setSaveError(''), 3000)
+    })
+  }
+
   const handleNextStatus = async () => {
     if (!isEditMode || status === 6) return
     setLoading(true)
@@ -944,6 +984,10 @@ export default function BagQuote() {
               <button onClick={() => navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
                 <ArrowLeft size={16} />
                 返回列表
+              </button>
+              <button onClick={handleCopyQuote} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0" title="复制订单信息为文本格式，方便报价">
+                <ClipboardList size={16} />
+                {showCopySuccess ? '已复制' : '复制报价'}
               </button>
               <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
                 <Save size={16} />

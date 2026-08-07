@@ -68,7 +68,7 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   shippingAddress: '',
   productStyle: '1',
   fabricMaterial: '10安涤棉新本色',
-  process: '单面数码uv印刷',
+  process: '单面数码uv印刷+口头2.5cm',
   handleMaterial: '帆布手提',
   boxSpec: '',
   remark: '',

@@ -27,7 +27,13 @@ const port = Number(process.env.PORT) || 3001
 const host = process.env.HOST || undefined
 const isProd = process.env.NODE_ENV === 'production'
 
-app.use(helmet())
+app.use(helmet({
+  // 本地开发/局域网调试环境，简化安全头配置
+  // 禁用 CSP：避免阻断脚本加载
+  contentSecurityPolicy: false,
+  // 禁用 HSTS：避免浏览器强制升级到 HTTPS
+  hsts: false,
+}))
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 

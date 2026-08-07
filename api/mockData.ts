@@ -191,7 +191,7 @@ export const mockQuotes: Quote[] = [
     productStyle: '1',
     productSpec: '38*40*0',
     fabricMaterial: '10安涤棉新本色',
-    process: '单面数码uv印刷',
+    process: '单面数码uv印刷+口头2.5cm',
     handleMaterial: '帆布手提',
     handleSpec: '',
     quantity: '7200',

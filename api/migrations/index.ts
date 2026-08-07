@@ -90,7 +90,7 @@ const migrations: Migration[] = [
           productStyle VARCHAR(64) DEFAULT '1',
           productSpec VARCHAR(255) DEFAULT '',
           fabricMaterial VARCHAR(255) DEFAULT '10安涤棉新本色',
-          process VARCHAR(255) DEFAULT '单面数码uv印刷',
+          process VARCHAR(255) DEFAULT '单面数码uv印刷+口头2.5cm',
           handleMaterial VARCHAR(255) DEFAULT '帆布手提',
           handleSpec VARCHAR(255) DEFAULT '',
           quantity VARCHAR(255) DEFAULT '',

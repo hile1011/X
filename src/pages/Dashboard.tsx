@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
@@ -267,6 +267,8 @@ export default function Dashboard() {
     let monthlyProfitNoTax = 0
     let monthlyProfitWithTax = 0
     let orderCount = 0
+    // 按状态分组计数：做货中(3) / 已发货未收款(4) / 已发货已收款(5)
+    const statusCounts: Record<number, number> = { 3: 0, 4: 0, 5: 0 }
 
     productionQuotes.forEach((quote) => {
       const quantity = parseFloat(quote.quantity) || 0
@@ -278,13 +280,25 @@ export default function Dashboard() {
       monthlyProfitNoTax += quantity * (sellNoTax - cost)
       monthlyProfitWithTax += quantity * (sellWithTax - priceWithTax)
       orderCount++
+      if (statusCounts[quote.status] !== undefined) statusCounts[quote.status]++
+    })
+
+    // 打样中订单数：按 sampleTime 在所选月份过滤（打样中订单无做货开始时间，单独口径统计）
+    const sampleQuotesInMonth = quotes.filter((quote) => {
+      if (quote.status !== 2) return false
+      const sampleDate = new Date(quote.sampleTime)
+      if (isNaN(sampleDate.getTime())) return false
+      return sampleDate >= monthStart && sampleDate <= monthEnd
     })
 
     return {
       monthlyRevenue: Math.round(monthlyRevenue * 100) / 100,
       monthlyProfitNoTax: Math.round(monthlyProfitNoTax * 100) / 100,
       monthlyProfitWithTax: Math.round(monthlyProfitWithTax * 100) / 100,
-      orderCount,
+      // 总笔数包含打样中订单（做货中+已发货未收款+已发货已收款+打样中）
+      orderCount: orderCount + sampleQuotesInMonth.length,
+      statusCounts,
+      sampleCount: sampleQuotesInMonth.length,
     }
   }, [quotes, selectedMonth])
 
@@ -640,6 +654,32 @@ export default function Dashboard() {
               </div>
               <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${profitMode === 'noTax' ? 'bg-red-50' : 'bg-green-50'}`}>
                 <Activity className={profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'} size={24} />
+              </div>
+            </div>
+          </div>
+
+          {/* 当月订单总个数（含状态明细） */}
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-500 flex items-center">
+                  {monthLabel}订单总个数
+                  <StatTooltip>
+                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                    <p>• 时间范围：做货开始时间在所选月份</p>
+                    <p>• 下方明细按状态分组显示</p>
+                  </StatTooltip>
+                </p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{monthlyStats.orderCount} 笔</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                  <span className="text-xs text-blue-600">做货中 {monthlyStats.statusCounts[3]}</span>
+                  <span className="text-xs text-amber-600">已发货未收款 {monthlyStats.statusCounts[4]}</span>
+                  <span className="text-xs text-green-600">已发货已收款 {monthlyStats.statusCounts[5]}</span>
+                  <span className="text-xs text-yellow-600">打样中 {monthlyStats.sampleCount}</span>
+                </div>
+              </div>
+              <div className="w-12 h-12 bg-indigo-50 rounded-lg flex items-center justify-center">
+                <ShoppingBag className="text-indigo-600" size={24} />
               </div>
             </div>
           </div>

@@ -289,7 +289,7 @@ export const dbApi = {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
-        data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷',
+        data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
         data.handleMaterial || '帆布手提', data.handleSpec || '',
         data.quantity || '', data.boxSpec || '', data.remark || '',
         data.sampleFee || '', data.sampleDays || '', data.massDays || '',
@@ -310,7 +310,7 @@ export const dbApi = {
         shippingAddress: data.shippingAddress || '', productStyle,
         productSpec: data.productSpec || '',
         fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
-        process: data.process || '单面数码uv印刷',
+        process: data.process || '单面数码uv印刷+口头2.5cm',
         handleMaterial: data.handleMaterial || '帆布手提',
         handleSpec: data.handleSpec || '',
         quantity: data.quantity || '', boxSpec: data.boxSpec || '',

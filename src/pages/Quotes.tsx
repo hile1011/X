@@ -90,6 +90,8 @@ export default function Quotes() {
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [filteredCount, setFilteredCount] = useState(0)
+  // 筛选后的客户总数（以客户名称维度统计，一个客户下多条订单只算一个）
+  const [filteredCustomerCount, setFilteredCustomerCount] = useState(0)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -146,8 +148,10 @@ export default function Quotes() {
   const groupQuotes = () => {
     const filtered = getFilteredQuotes()
 
-    // 记录筛选后总数
+    // 记录筛选后总数（订单维度，用于分页计算）
     setFilteredCount(filtered.length)
+    // 记录筛选后客户总数（客户名称维度，一个客户下多条订单只算一个）
+    setFilteredCustomerCount(new Set(filtered.map((q) => q.customerName)).size)
 
     // 分页：取当前页的数据
     const startIndex = (currentPage - 1) * pageSize
@@ -599,18 +603,16 @@ export default function Quotes() {
             {filteredCount > 0 && (() => {
               const totalPages = Math.max(1, Math.ceil(filteredCount / pageSize))
               const pageNumbers = getPageNumbers(currentPage, totalPages)
-              // 当前页实际展示的子订单数（末页可能不足 pageSize）
-              const currentPageCount = Math.max(0, Math.min(pageSize, filteredCount - (currentPage - 1) * pageSize))
               return (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-t border-gray-200 bg-white flex-shrink-0">
-                  {/* 左侧：子订单统计 + 每页条数设置 */}
+                  {/* 左侧：客户统计 + 每页条数设置 */}
                   <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
                     <span>
-                      子订单总数 <span className="font-semibold text-gray-800">{filteredCount}</span> 条
+                      客户总数 <span className="font-semibold text-gray-800">{filteredCustomerCount}</span> 个
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>
-                      当前页 <span className="font-semibold text-primary-600">{currentPageCount}</span> 条
+                      当前页 <span className="font-semibold text-primary-600">{groupedQuotes.length}</span> 个
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>
