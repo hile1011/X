@@ -641,7 +641,7 @@ export default function Quotes() {
               const pageNumbers = getPageNumbers(currentPage, totalPages)
               return (
                 <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 border-t border-gray-200 bg-white flex-shrink-0">
-                  {/* 左侧：客户统计 + 每页条数设置 */}
+                  {/* 左侧：客户统计 + 订单统计 + 每页条数设置 */}
                   <div className="flex items-center gap-2 text-sm text-gray-600 flex-wrap">
                     <span>
                       客户总数 <span className="font-semibold text-gray-800">{filteredCustomerCount}</span> 个
@@ -649,6 +649,14 @@ export default function Quotes() {
                     <span className="text-gray-300">·</span>
                     <span>
                       当前页 <span className="font-semibold text-primary-600">{groupedQuotes.length}</span> 个
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      订单总数 <span className="font-semibold text-gray-800">{filteredCount}</span> 个
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      当前页订单 <span className="font-semibold text-primary-600">{groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0)}</span> 个
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>
