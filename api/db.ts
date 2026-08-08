@@ -104,6 +104,19 @@ function toCamelRow(row: Record<string, any>): any {
   return result
 }
 
+/** 解析大字段的 JSON */
+function parseLargeFields(row: any) {
+  const c = toCamelRow(row)
+  const parse = (val: string, defaultVal: any) => typeof val === 'string' ? JSON.parse(val || (defaultVal === '[]' ? '[]' : '{}')) : (val || defaultVal === '[]' ? [] : {})
+  ;(c as any).images = parse(c.images, '[]')
+  ;(c as any).tableData = parse(c.tableData, '[]')
+  ;(c as any).removedFormulaAddresses = parse((c as any).removedFormulaAddresses, '[]')
+  ;(c as any).modifiedFormulas = parse((c as any).modifiedFormulas, '{}')
+  ;(c as any).allFormulas = parse((c as any).allFormulas, '{}')
+  ;(c as any).productionStepStatus = parse((c as any).productionStepStatus, '{}')
+  return c
+}
+
 export const dbApi = {
   db: dbConn,
   runner,
@@ -246,22 +259,6 @@ export const dbApi = {
   },
 
   quotes: {
-    /** 大字段列表（存储大量 JSON，列表查询不加载） */
-    _LARGE_FIELDS: ['images', 'tableData', 'removedFormulaAddresses', 'modifiedFormulas', 'allFormulas', 'productionStepStatus'] as const,
-    
-    /** 解析大字段的 JSON */
-    _parseLargeFields(row: any) {
-      const c = toCamelRow(row)
-      const parse = (val: string, defaultVal: any) => typeof val === 'string' ? JSON.parse(val || (defaultVal === '[]' ? '[]' : '{}')) : (val || defaultVal === '[]' ? [] : {})
-      ;(c as any).images = parse(c.images, '[]')
-      ;(c as any).tableData = parse(c.tableData, '[]')
-      ;(c as any).removedFormulaAddresses = parse((c as any).removedFormulaAddresses, '[]')
-      ;(c as any).modifiedFormulas = parse((c as any).modifiedFormulas, '{}')
-      ;(c as any).allFormulas = parse((c as any).allFormulas, '{}')
-      ;(c as any).productionStepStatus = parse((c as any).productionStepStatus, '{}')
-      return c
-    },
-
     /** 列表查询：只查基本字段，不加载 longtext 大字段 */
     getAll: async () => {
       const rows = await dbConn.prepare(`SELECT id, user_id, customer_id, quote_number, customerName, shippingAddress,
@@ -275,7 +272,7 @@ export const dbApi = {
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
       if (!row) return null
-      return (this as any)._parseLargeFields(row) as Quote
+      return parseLargeFields(row) as Quote
     },
     create: async (data: Partial<Quote>) => {
       const now = new Date()
