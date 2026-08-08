@@ -130,6 +130,8 @@ interface Quote {
 export default function Dashboard() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [alertQuotes, setAlertQuotes] = useState<Quote[]>([])
+  // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
+  const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const [selectedStatuses, setSelectedStatuses] = useState<number[]>(getInitialStatuses)
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [selectedMonth, setSelectedMonth] = useState<string>(getInitialMonth)
@@ -208,8 +210,12 @@ export default function Dashboard() {
   }, [])
 
   const fetchData = async () => {
-    const quotesData = await api.quotes.getAll() as Quote[]
+    const [quotesData, flags] = await Promise.all([
+      api.quotes.getAll() as Promise<Quote[]>,
+      api.quotes.getImageFlags() as Promise<Record<string, boolean>>,
+    ])
     setQuotes(quotesData)
+    setImageFlags(flags || {})
 
     // 交期预警（3天内）
     const today = new Date()
@@ -830,17 +836,28 @@ export default function Dashboard() {
                       >
                         <div className="w-56 shrink-0 flex items-center gap-2">
                           {/* 产品首图 */}
-                          {quote.images && quote.images.length > 0 ? (
+                          {imageFlags[quote.id] ? (
                             <img
-                              src={quote.images[0]}
+                              src={api.quotes.getThumbnailUrl(quote.id)}
                               alt="产品图"
+                              loading="lazy"
                               className="w-10 h-10 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+                              onError={(e) => {
+                                const target = e.currentTarget
+                                target.style.display = 'none'
+                                const placeholder = target.nextElementSibling as HTMLElement
+                                if (placeholder) placeholder.style.display = 'flex'
+                              }}
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
                               <span className="text-xs font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
                             </div>
                           )}
+                          {/* onError 时的占位符（默认隐藏） */}
+                          <div className="w-10 h-10 rounded-lg bg-gray-100 items-center justify-center flex-shrink-0" style={{ display: 'none' }}>
+                            <span className="text-xs font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
+                          </div>
                           {/* 文字信息 */}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 mb-0.5">

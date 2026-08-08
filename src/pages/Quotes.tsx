@@ -596,9 +596,11 @@ export default function Quotes() {
                                   <Copy size={16} />
                                 </button>
                                 <button
-                                  onClick={(e) => {
+                                  onClick={async (e) => {
                                     e.stopPropagation()
-                                    setPrintTarget(quote)
+                                    // 打印需要完整数据（含 images），通过 getById 获取
+                                    const fullQuote = await api.quotes.getById(quote.id)
+                                    setPrintTarget(fullQuote || quote)
                                   }}
                                   className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                                   title="打印订单"
