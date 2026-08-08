@@ -259,15 +259,19 @@ export const dbApi = {
   },
 
   quotes: {
-    /** 列表查询：只查基本字段，不加载 longtext 大字段 */
+    /** 列表查询：只查基本字段 + images（列表需要显示缩略图），不加载其他 longtext 大字段 */
     getAll: async () => {
       const rows = await dbConn.prepare(`SELECT id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
-        productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
+        productionStartTime, shippingTime, paymentTime, endTime, images, created_at, updated_at
         FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC`).all()
-      return rows.map((r) => toCamelRow(r)) as Quote[]
+      return rows.map((r) => {
+        const c = toCamelRow(r)
+        ;(c as any).images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
+        return c
+      }) as Quote[]
     },
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
