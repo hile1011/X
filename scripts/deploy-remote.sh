@@ -291,16 +291,20 @@ step_package_upload() {
     log INFO "备份远程当前版本..."
     remote_exec "cd ${REMOTE_DIR} && tar czf /tmp/X-backup-\$(date +%Y%m%d_%H%M%S).tar.gz --exclude=node_modules --exclude=.env --exclude=dist_backup_* . 2>/dev/null || true" "备份远程代码"
 
+    # 获取远程文件名（不含路径）
+    local src_filename=$(basename "$src_tarball")
+    local dist_filename=$(basename "$dist_tarball")
+
     # 上传源码
     log INFO "上传源码到服务器..."
     if [[ "${DRY_RUN:-false}" != "true" ]]; then
         sshpass -p "$REMOTE_PASS" scp -F /dev/null \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "$src_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
+            "$src_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/${src_filename}" 2>&1 | tee -a "$LOG_FILE"
         check_error $? "上传源码失败" "false"
     fi
-    remote_exec "cd ${REMOTE_DIR} && tar xzf $(basename $src_tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压源码"
+    remote_exec "cd ${REMOTE_DIR} && tar xzf /tmp/${src_filename} 2>&1 | grep -v 'LIBARCHIVE' || true" "解压源码"
 
     # 上传构建产物
     log INFO "上传构建产物到服务器..."
@@ -308,10 +312,10 @@ step_package_upload() {
         sshpass -p "$REMOTE_PASS" scp -F /dev/null \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "$dist_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
+            "$dist_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/${dist_filename}" 2>&1 | tee -a "$LOG_FILE"
         check_error $? "上传构建产物失败" "false"
     fi
-    remote_exec "cd ${REMOTE_DIR} && rm -rf dist dist_backup_* api/dist 2>/dev/null; tar xzf $(basename $dist_tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压构建产物"
+    remote_exec "cd ${REMOTE_DIR} && rm -rf dist dist_backup_* api/dist 2>/dev/null; tar xzf /tmp/${dist_filename} 2>&1 | grep -v 'LIBARCHIVE' || true" "解压构建产物"
 
     log INFO "打包与上传完成 ✅"
 }
@@ -331,8 +335,8 @@ step_restart_service() {
     # 确保 .env 存在
     remote_exec "test -f ${REMOTE_DIR}/.env && echo '.env exists' || echo '.env missing'" "检查 .env 配置"
 
-    # 重启 PM2
-    remote_exec "cd ${REMOTE_DIR} && pm2 restart ${APP_NAME} --env production 2>&1 || pm2 start api/dist/index.js --name '${APP_NAME}' --env production 2>&1" "重启 PM2 服务"
+    # 重启 PM2（确保读取最新的 .env 配置）
+    remote_exec "cd ${REMOTE_DIR} && pm2 restart ${APP_NAME} --update-env 2>&1 || pm2 start api/dist/index.js --name '${APP_NAME}' 2>&1" "重启 PM2 服务"
     check_error $? "PM2 重启失败" "false"
 
     remote_exec "pm2 save 2>&1" "保存 PM2 进程列表"
@@ -427,7 +431,7 @@ do_rollback() {
     remote_exec "cd ${REMOTE_DIR} && tar xzf ${backup_file} 2>&1 | grep -v 'LIBARCHIVE' || true" "恢复代码"
 
     # 重启服务
-    remote_exec "cd ${REMOTE_DIR} && pm2 restart ${APP_NAME} --env production 2>&1 || pm2 start api/dist/index.js --name '${APP_NAME}' --env production 2>&1" "重启服务"
+    remote_exec "cd ${REMOTE_DIR} && pm2 restart ${APP_NAME} --update-env 2>&1 || pm2 start api/dist/index.js --name '${APP_NAME}' 2>&1" "重启服务"
 
     # 验证
     sleep 5
