@@ -1402,44 +1402,7 @@ export default function BagQuote() {
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
-                {/* 行2：大货日期/天数 + 款式 + 数量 + 产品规格 */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs text-gray-400 mb-0.5">大货日期/天数</label>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={orderInfo.productionTimeStart}
-                      onChange={(e) => {
-                        const newStart = e.target.value
-                        updateOrderField('productionTimeStart', newStart)
-                        // 联动：大货天数有值时，自动计算结束日期 = 开始日期 + 大货天数
-                        const days = Number(orderInfo.massDays)
-                        if (newStart && days) {
-                          updateOrderField('productionTimeEnd', DateUtils.addDays(newStart, days))
-                        }
-                      }}
-                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
-                    />
-                    <span className="text-xs text-gray-500 shrink-0">到</span>
-                    <input
-                      type="date"
-                      value={orderInfo.productionTimeEnd}
-                      onChange={(e) => updateOrderField('productionTimeEnd', e.target.value)}
-                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
-                    />
-                    <input type="text" value={orderInfo.massDays} onChange={(e) => {
-                        const newDays = e.target.value
-                        updateOrderField('massDays', newDays)
-                        // 联动：开始日期有值时，自动计算结束日期 = 开始日期 + 大货天数
-                        const days = Number(newDays)
-                        if (orderInfo.productionTimeStart && days) {
-                          updateOrderField('productionTimeEnd', DateUtils.addDays(orderInfo.productionTimeStart, days))
-                        }
-                      }}
-                      placeholder="天数"
-                      className="w-16 px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors shrink-0" />
-                  </div>
-                </div>
+                {/* 行2：款式 + 数量 + 产品规格 + 大货日期 + 天数 */}
                 <div className="lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">款式</label>
                   <select
@@ -1464,6 +1427,46 @@ export default function BagQuote() {
                   <label className="block text-xs text-gray-400 mb-0.5">产品规格(CM)</label>
                   <input type="text" value={orderInfo.productSpec} onChange={(e) => updateOrderField('productSpec', e.target.value)}
                     placeholder="产品规格"
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
+                </div>
+                <div className="col-span-2 md:col-span-2 lg:col-span-2">
+                  <label className="block text-xs text-gray-400 mb-0.5">大货日期</label>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={orderInfo.productionTimeStart}
+                      onChange={(e) => {
+                        const newStart = e.target.value
+                        updateOrderField('productionTimeStart', newStart)
+                        // 联动：大货天数有值时，自动计算结束日期 = 开始日期 + 大货天数
+                        const days = Number(orderInfo.massDays)
+                        if (newStart && days) {
+                          updateOrderField('productionTimeEnd', DateUtils.addDays(newStart, days))
+                        }
+                      }}
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
+                    />
+                    <span className="text-xs text-gray-500 shrink-0">到</span>
+                    <input
+                      type="date"
+                      value={orderInfo.productionTimeEnd}
+                      onChange={(e) => updateOrderField('productionTimeEnd', e.target.value)}
+                      className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors cursor-pointer"
+                    />
+                  </div>
+                </div>
+                <div className="lg:col-span-1">
+                  <label className="block text-xs text-gray-400 mb-0.5">天数</label>
+                  <input type="text" value={orderInfo.massDays} onChange={(e) => {
+                      const newDays = e.target.value
+                      updateOrderField('massDays', newDays)
+                      // 联动：开始日期有值时，自动计算结束日期 = 开始日期 + 大货天数
+                      const days = Number(newDays)
+                      if (orderInfo.productionTimeStart && days) {
+                        updateOrderField('productionTimeEnd', DateUtils.addDays(orderInfo.productionTimeStart, days))
+                      }
+                    }}
+                    placeholder="天数"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
