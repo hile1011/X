@@ -58,7 +58,7 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
     // 预览页面专用样式
     const printStyle = doc.createElement('style')
     printStyle.textContent = `
-      @page { size: A4; margin: 10mm; }
+      @page { size: A4; margin: 0; }
       * { box-sizing: border-box; }
       body { margin: 0; padding: 0; background: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .print-toolbar {
@@ -80,11 +80,12 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
         .print-toolbar { display: none !important; }
         .preview-area { padding: 0; }
         .print-page { box-shadow: none !important; width: auto !important; min-height: auto !important; }
+        .print-content { padding: 10mm 14mm !important; }
       }
     `
     doc.head.appendChild(printStyle)
 
-    doc.title = `打印预览 — ${quote.quote_number}`
+    doc.title = quote.quote_number || '打印'
 
     doc.body.innerHTML = `
       <div class="print-toolbar">
@@ -147,7 +148,7 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
         className="print-page bg-white"
         style={{ width: '794px', minHeight: '1123px' }}
       >
-        <div style={{ padding: '48px 56px' }}>
+        <div className="print-content" style={{ padding: '48px 56px' }}>
           {/* 订单号 + 状态 */}
           <div className="flex justify-between items-center mb-5 pb-3 border-b-2 border-gray-400">
             <div>
@@ -157,10 +158,12 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
               </span>
             </div>
             <span
-              className="px-3 py-0.5 text-xs font-semibold rounded text-white"
+              className="px-3 py-3.5 text-xs font-semibold rounded text-white"
               style={{ backgroundColor: statusColor }}
             >
-              {statusLabel}
+              <span style={{ fontSize: '24px', fontWeight: 600 }} >
+                 {statusLabel}
+              </span>
             </span>
           </div>
 
