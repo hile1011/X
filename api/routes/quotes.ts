@@ -37,6 +37,16 @@ quotesRouter.put('/:id', asyncHandler(async (req, res) => {
 
 quotesRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('quote', db.quotes.delete)))
 
+// 复制订单接口（在服务器端直接复制，避免传输大字段）
+quotesRouter.post('/:id/copy', asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const data = await db.quotes.copy(id)
+  if (!data) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  res.json(data)
+}))
+
 // 状态流转接口：进入下一节点
 quotesRouter.post('/:id/next-status', asyncHandler(async (req, res) => {
   const { id } = req.params

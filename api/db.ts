@@ -444,6 +444,73 @@ export const dbApi = {
       const info = await dbConn.prepare('DELETE FROM quotes WHERE id = ?').run(id)
       return info.changes > 0
     },
+    copy: async (id: string) => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
+      if (!existing) return null
+
+      const now = new Date()
+      const today = now.toISOString().split('T')[0]
+      const timestamp = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
+      const customerName = existing.customerName || ''
+      const productStyle = existing.productStyle || '1'
+      const styleLabel = await getStyleLabel(productStyle)
+      const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
+      const newId = `quote-${Date.now()}`
+
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
+        productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
+        sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
+        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        newId, existing.user_id || '', existing.customer_id || '', quoteNumber, customerName,
+        existing.shippingAddress || '', productStyle, existing.productSpec || '',
+        existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
+        existing.handleMaterial || '帆布手提', existing.handleSpec || '',
+        existing.quantity || '', existing.boxSpec || '', existing.remark || '',
+        existing.sampleFee || '', existing.sampleDays || '', existing.massDays || '',
+        existing.unitPrice || '', today, '',
+        existing.costPrice || 0, existing.priceWithTax || 0, existing.sellPriceNoTax || 0, existing.sellPriceWithTax || 0,
+        1, today, '', '', '', '', '',
+        existing.images || '[]',
+        existing.tableData || '[]',
+        existing.removedFormulaAddresses || '[]',
+        existing.modifiedFormulas || '{}',
+        existing.allFormulas || '{}',
+        existing.productionStepStatus || '{}'
+      )
+
+      return {
+        id: newId, quote_number: quoteNumber, customerName,
+        customer_id: existing.customer_id || '', user_id: existing.user_id || '',
+        shippingAddress: existing.shippingAddress || '', productStyle,
+        productSpec: existing.productSpec || '',
+        fabricMaterial: existing.fabricMaterial || '10安涤棉新本色',
+        process: existing.process || '单面数码uv印刷+口头2.5cm',
+        handleMaterial: existing.handleMaterial || '帆布手提',
+        handleSpec: existing.handleSpec || '',
+        quantity: existing.quantity || '', boxSpec: existing.boxSpec || '',
+        remark: existing.remark || '', sampleFee: existing.sampleFee || '',
+        sampleDays: existing.sampleDays || '', massDays: existing.massDays || '',
+        unitPrice: existing.unitPrice || '',
+        productionTimeStart: today,
+        productionTimeEnd: existing.productionTimeEnd || '',
+        costPrice: existing.costPrice || 0,
+        priceWithTax: existing.priceWithTax || 0,
+        sellPriceNoTax: existing.sellPriceNoTax || 0,
+        sellPriceWithTax: existing.sellPriceWithTax || 0,
+        status: 1, quoteTime: today,
+        sampleTime: '', productionStartTime: '',
+        shippingTime: '', paymentTime: '', endTime: '',
+        images: typeof existing.images === 'string' ? JSON.parse(existing.images || '[]') : (existing.images || []),
+        tableData: typeof existing.tableData === 'string' ? JSON.parse(existing.tableData || '[]') : (existing.tableData || []),
+        removedFormulaAddresses: typeof existing.removedFormulaAddresses === 'string' ? JSON.parse(existing.removedFormulaAddresses || '[]') : (existing.removedFormulaAddresses || []),
+        modifiedFormulas: typeof existing.modifiedFormulas === 'string' ? JSON.parse(existing.modifiedFormulas || '{}') : (existing.modifiedFormulas || {}),
+        allFormulas: typeof existing.allFormulas === 'string' ? JSON.parse(existing.allFormulas || '{}') : (existing.allFormulas || {}),
+        productionStepStatus: typeof existing.productionStepStatus === 'string' ? JSON.parse(existing.productionStepStatus || '{}') : (existing.productionStepStatus || {}),
+        created_at: timeNow(), updated_at: timeNow(),
+      }
+    },
   },
 
   processCosts: {

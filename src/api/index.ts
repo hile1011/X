@@ -149,6 +149,10 @@ export const api = {
       method: 'POST',
       headers: jsonHeaders,
     }).then(handleResponse),
+    copy: (id: string) => authFetch(`${API_BASE}/quotes/${id}/copy`, {
+      method: 'POST',
+      headers: jsonHeaders,
+    }).then(handleResponse),
   },
   processCosts: {
     getAll: () => authFetch(`${API_BASE}/process-costs`).then(handleResponse),

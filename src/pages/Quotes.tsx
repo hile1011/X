@@ -209,20 +209,7 @@ export default function Quotes() {
 
   const handleCopy = async (id: string) => {
     try {
-      const source = await api.quotes.getById(id)
-      if (!source) return
-      const { id: _, quote_number: __, status: ___, created_at: ____, updated_at: _____, ...rest } = source
-      const copyData = {
-        ...rest,
-        status: 1 as const,
-        quoteTime: new Date().toISOString().split('T')[0],
-        sampleTime: '',
-        productionStartTime: '',
-        shippingTime: '',
-        paymentTime: '',
-        endTime: '',
-      }
-      await api.quotes.create(copyData)
+      await api.quotes.copy(id)
       fetchQuotes()
     } catch (error) {
       console.error('复制订单失败:', error)

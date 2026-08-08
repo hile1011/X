@@ -161,7 +161,7 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
               className="px-3 py-3.5 text-xs font-semibold rounded text-white"
               style={{ backgroundColor: statusColor }}
             >
-              <span style={{ fontSize: '24px', fontWeight: 600 }} >
+              <span style={{ fontSize: '12px', fontWeight: 600 }} >
                  {statusLabel}
               </span>
             </span>
