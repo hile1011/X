@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # ============================================================================
 # 报价跟单系统 - 远程部署自动化脚本
-# 版本: 1.0.0
+# 版本: 2.0.0（本地构建模式）
 # 用法: bash scripts/deploy-remote.sh [选项]
 #
 # 功能:
-#   1. 本机构建前端+后端
-#   2. 打包并上传代码到远程服务器
-#   3. 远程安装依赖、重启服务
-#   4. 健康检查与验证
-#   5. 失败时自动回滚
+#   1. 本地构建前端（Vite）+ 后端（TypeScript）
+#   2. 打包源码和构建产物并上传到远程服务器
+#   3. 远程安装生产依赖、重启 PM2 服务
+#   4. 完整健康检查与 API 性能验证
+#   5. 失败时自动回滚到上一版本
 #
 # 选项:
-#   --skip-build      跳过本机构建（使用已有 dist/）
+#   --skip-build      跳过本地构建（使用已有 dist/ 和 api/dist/）
 #   --skip-push       跳过 git commit & push
 #   --rollback        回滚到上一版本
 #   --version <ver>   指定版本号（如 v1.1.2）
 #   --dry-run         仅打印命令，不实际执行
 #   --help            显示帮助
+#
+# 说明:
+#   - 本地构建模式：在本地 macOS 构建前后端产物，直接上传到服务器
+#   - 好处：避免远程服务器 GLIBC 版本不兼容问题
+#   - 构建产物：dist/（前端）+ api/dist/（后端）
 # ============================================================================
 
 set -euo pipefail
@@ -36,7 +41,7 @@ LOCAL_DIR="/Users/hile/Documents/work/projects/X"
 
 # 服务配置
 APP_NAME="X-api"
-APP_PORT="3002"
+APP_PORT="3003"
 HEALTH_ENDPOINT="/api/health"
 
 # 颜色定义
@@ -191,7 +196,7 @@ step_version_tag() {
 }
 
 step_local_build() {
-    log_step "步骤 3/7: 本机构建"
+    log_step "步骤 3/7: 本地构建（前端+后端）"
 
     if [[ "${SKIP_BUILD:-false}" == "true" ]]; then
         log WARN "跳过构建（--skip-build）"
@@ -200,26 +205,44 @@ step_local_build() {
 
     cd "$LOCAL_DIR"
 
+    # 清理旧的构建产物
+    log INFO "清理旧的构建产物..."
+    rm -rf dist/ api/dist/ 2>/dev/null || true
+
+    # 安装依赖（确保依赖完整）
+    if [[ ! -d "node_modules" ]]; then
+        log INFO "安装项目依赖..."
+        local_exec "npm install" "安装依赖"
+        check_error $? "依赖安装失败" "false"
+    fi
+
     # 构建前端
-    local_exec "npx vite build" "构建前端 (Vite)"
+    log INFO "构建前端..."
+    local_exec "npm run build:frontend" "构建前端 (Vite)"
     check_error $? "前端构建失败" "false"
 
-    # 验证构建产物
+    # 验证前端构建产物
     if [[ ! -f "dist/index.html" ]]; then
         log ERROR "前端构建产物缺失: dist/index.html"
         exit 1
     fi
-    log INFO "前端构建产物验证通过"
+    local FE_SIZE=$(du -sh dist/ 2>/dev/null | cut -f1)
+    log INFO "前端构建产物验证通过 ($FE_SIZE)"
 
     # 构建后端
-    local_exec "npx tsc -p api/tsconfig.json" "构建后端 (TypeScript)"
+    log INFO "构建后端..."
+    local_exec "npm run build:backend" "构建后端 (TypeScript)"
     check_error $? "后端构建失败" "false"
 
+    # 验证后端构建产物
     if [[ ! -f "api/dist/index.js" ]]; then
         log ERROR "后端构建产物缺失: api/dist/index.js"
         exit 1
     fi
-    log INFO "后端构建产物验证通过"
+    local BE_SIZE=$(du -sh api/dist/ 2>/dev/null | cut -f1)
+    log INFO "后端构建产物验证通过 ($BE_SIZE)"
+
+    log INFO "本地构建完成 ✅"
 }
 
 step_package_upload() {
@@ -227,11 +250,16 @@ step_package_upload() {
 
     cd "$LOCAL_DIR"
 
-    local tarball="/tmp/X-deploy-$(date +%Y%m%d_%H%M%S).tar.gz"
+    # 检查构建产物是否存在
+    if [[ ! -d "dist" || ! -d "api/dist" ]]; then
+        log ERROR "构建产物不存在，请先执行构建步骤"
+        exit 1
+    fi
 
-    # 打包（排除不需要的文件）
-    log INFO "打包项目文件..."
-    tar czf "$tarball" \
+    # 打包项目源码（排除构建产物和不需要的文件）
+    log INFO "打包项目源码..."
+    local src_tarball="/tmp/X-src-$(date +%Y%m%d_%H%M%S).tar.gz"
+    tar czf "$src_tarball" \
         --exclude='node_modules' \
         --exclude='.env' \
         --exclude='.env.local' \
@@ -245,54 +273,56 @@ step_package_upload() {
         --exclude='coverage' \
         --exclude='tests' \
         --exclude='docs' \
+        --exclude='dist' \
+        --exclude='api/dist' \
         . 2>/dev/null
 
-    local tarball_size
-    tarball_size=$(du -h "$tarball" | cut -f1)
-    log INFO "打包完成: $tarball ($tarball_size)"
+    local src_size=$(du -h "$src_tarball" | cut -f1)
+    log INFO "源码打包完成: $src_tarball ($src_size)"
+
+    # 打包构建产物（前端 dist + 后端 api/dist）
+    log INFO "打包构建产物..."
+    local dist_tarball="/tmp/X-dist-$(date +%Y%m%d_%H%M%S).tar.gz"
+    tar czf "$dist_tarball" dist/ api/dist/
+    local dist_size=$(du -h "$dist_tarball" | cut -f1)
+    log INFO "构建产物打包完成: $dist_tarball ($dist_size)"
 
     # 备份远程当前版本
     log INFO "备份远程当前版本..."
-    remote_exec "cd ${REMOTE_DIR} && tar czf /tmp/X-backup-\$(date +%Y%m%d_%H%M%S).tar.gz --exclude=node_modules --exclude=.env . 2>/dev/null || true" "备份远程代码"
-    remote_exec "ls -lt /tmp/X-backup-*.tar.gz 2>/dev/null | head -1" "确认备份"
+    remote_exec "cd ${REMOTE_DIR} && tar czf /tmp/X-backup-\$(date +%Y%m%d_%H%M%S).tar.gz --exclude=node_modules --exclude=.env --exclude=dist_backup_* . 2>/dev/null || true" "备份远程代码"
 
-    # 上传
-    log INFO "上传代码包到服务器..."
+    # 上传源码
+    log INFO "上传源码到服务器..."
     if [[ "${DRY_RUN:-false}" != "true" ]]; then
         sshpass -p "$REMOTE_PASS" scp -F /dev/null \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            "$tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
-        check_error $? "上传失败" "false"
+            "$src_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
+        check_error $? "上传源码失败" "false"
     fi
-
-    # 解压
-    remote_exec "cd ${REMOTE_DIR} && tar xzf $(basename $tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压代码"
+    remote_exec "cd ${REMOTE_DIR} && tar xzf $(basename $src_tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压源码"
 
     # 上传构建产物
-    local dist_tarball="/tmp/X-dist-$(date +%Y%m%d_%H%M%S).tar.gz"
-    if [[ -d "dist" && -d "api/dist" ]]; then
-        log INFO "打包并上传构建产物..."
-        tar czf "$dist_tarball" dist/ api/dist/
-        if [[ "${DRY_RUN:-false}" != "true" ]]; then
-            sshpass -p "$REMOTE_PASS" scp -F /dev/null \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                "$dist_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
-            remote_exec "cd ${REMOTE_DIR} && tar xzf $(basename $dist_tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压构建产物"
-        fi
+    log INFO "上传构建产物到服务器..."
+    if [[ "${DRY_RUN:-false}" != "true" ]]; then
+        sshpass -p "$REMOTE_PASS" scp -F /dev/null \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "$dist_tarball" "${REMOTE_USER}@${REMOTE_HOST}:/tmp/" 2>&1 | tee -a "$LOG_FILE"
+        check_error $? "上传构建产物失败" "false"
     fi
+    remote_exec "cd ${REMOTE_DIR} && rm -rf dist dist_backup_* api/dist 2>/dev/null; tar xzf $(basename $dist_tarball) 2>&1 | grep -v 'LIBARCHIVE' || true" "解压构建产物"
 
-    log INFO "打包与上传完成"
+    log INFO "打包与上传完成 ✅"
 }
 
 step_install_deps() {
-    log_step "步骤 5/7: 安装依赖"
+    log_step "步骤 5/7: 安装依赖（仅生产环境）"
 
-    remote_exec "cd ${REMOTE_DIR} && npm config set registry https://registry.npmmirror.com && npm install --production 2>&1 | tail -5" "安装生产依赖"
+    remote_exec "cd ${REMOTE_DIR} && npm config set registry https://registry.npmmirror.com && npm install --omit=dev 2>&1 | tail -5" "安装生产依赖"
     check_error $? "依赖安装失败" "false"
 
-    log INFO "依赖安装完成"
+    log INFO "依赖安装完成 ✅"
 }
 
 step_restart_service() {
@@ -341,13 +371,31 @@ step_health_check() {
         exit 1
     fi
 
-    # 额外验证
+    # 验证前端页面
     log INFO "验证前端页面..."
-    remote_exec "curl -s http://localhost:${APP_PORT}/ | head -3" "前端页面检查"
+    remote_exec "curl -s http://localhost:${APP_PORT}/ | grep -o '<title>[^<]*</title>' | head -1" "前端标题检查"
 
-    log INFO "验证 API 接口..."
-    remote_exec "curl -s http://localhost:${APP_PORT}/api/quotes | head -100" "API 接口检查"
+    # 验证 API 列表查询性能
+    log INFO "验证 API 列表查询..."
+    local quotes_perf
+    quotes_perf=$(remote_exec "curl -s -H 'Accept-Encoding: gzip' http://localhost:${APP_PORT}/api/quotes -o /dev/null -w 'HTTP %{http_code} 大小: %{size_download} bytes 耗时: %{time_total}s'" "列表查询性能")
+    log INFO "列表查询: $quotes_perf"
 
+    # 验证图片标识 API
+    log INFO "验证图片标识 API..."
+    remote_exec "curl -s http://localhost:${APP_PORT}/api/quotes/image-flags | python3 -c 'import json,sys; d=json.load(sys.stdin); print(f\"订单数: {len(d)}, 有图片: {sum(1 for v in d.values() if v)}\")'" "图片标识检查"
+
+    # 验证缩略图 API
+    log INFO "验证缩略图 API..."
+    local first_id
+    first_id=$(remote_exec "curl -s http://localhost:${APP_PORT}/api/quotes | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0][\"id\"])' 2>/dev/null" "获取订单ID" | tail -1)
+    if [[ -n "$first_id" ]]; then
+        local thumb_perf
+        thumb_perf=$(remote_exec "curl -s http://localhost:${APP_PORT}/api/quotes/${first_id}/thumbnail -o /dev/null -w 'HTTP %{http_code} 大小: %{size_download} bytes 耗时: %{time_total}s'" "缩略图检查")
+        log INFO "缩略图 ($first_id): $thumb_perf"
+    fi
+
+    # 检查 PM2 状态
     log INFO "检查 PM2 状态..."
     remote_exec "pm2 list" "PM2 进程状态"
 
@@ -398,30 +446,39 @@ do_rollback() {
 
 show_help() {
     cat << 'HELP'
-报价跟单系统 - 远程部署自动化脚本
+报价跟单系统 - 远程部署自动化脚本 v2.0（本地构建模式）
 
 用法:
   bash scripts/deploy-remote.sh [选项]
 
 选项:
-  --skip-build       跳过本机构建（使用已有 dist/）
+  --skip-build       跳过本地构建（使用已有 dist/ 和 api/dist/）
   --skip-push        跳过 git commit & push
   --version <ver>    指定版本号（如 1.1.2）
   --rollback         回滚到上一版本
   --dry-run          仅打印命令，不实际执行
   --help             显示此帮助信息
 
+部署流程:
+  1. Git 提交与推送（--skip-push 跳过）
+  2. 版本标签管理（自动递增版本号）
+  3. 本地构建（前端 Vite + 后端 TypeScript）
+  4. 打包与上传（源码 + 构建产物分开打包）
+  5. 安装依赖（仅生产环境）
+  6. 重启 PM2 服务
+  7. 健康检查与 API 验证
+
 示例:
-  # 完整部署（构建+提交+推送+部署）
+  # 完整部署（推荐）
   bash scripts/deploy-remote.sh
 
-  # 跳过构建，仅部署
+  # 仅部署（不重新构建）
   bash scripts/deploy-remote.sh --skip-build
 
   # 指定版本号
   bash scripts/deploy-remote.sh --version 1.2.0
 
-  # 回滚
+  # 回滚到上一版本
   bash scripts/deploy-remote.sh --rollback
 
   # 预演（不实际执行）
@@ -486,8 +543,8 @@ main() {
     echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║              ✅ 部署成功！                            ║${NC}"
     echo -e "${GREEN}╠══════════════════════════════════════════════════════╣${NC}"
-    echo -e "${GREEN}║  访问地址: http://${REMOTE_HOST}                    ${NC}"
-    echo -e "${GREEN}║  健康检查: http://${REMOTE_HOST}/api/health          ${NC}"
+    echo -e "${GREEN}║  访问地址: http://${REMOTE_HOST}:${APP_PORT}         ${NC}"
+    echo -e "${GREEN}║  健康检查: http://${REMOTE_HOST}:${APP_PORT}${HEALTH_ENDPOINT}  ${NC}"
     echo -e "${GREEN}║  日志文件: ${LOG_FILE}        ${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
     echo ""
