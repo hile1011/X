@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
+import compression from 'compression'
 import dotenv from 'dotenv'
 import path from 'path'
 import fs from 'fs'
@@ -33,6 +34,11 @@ app.use(helmet({
   contentSecurityPolicy: false,
   // 禁用 HSTS：避免浏览器强制升级到 HTTPS
   hsts: false,
+}))
+app.use(compression({
+  // 压缩响应体，减少网络传输量
+  level: 6,
+  threshold: 1024, // 超过 1KB 才压缩
 }))
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))

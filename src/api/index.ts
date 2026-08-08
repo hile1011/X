@@ -124,6 +124,8 @@ export const api = {
   },
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
+    getImageFlags: () => authFetch(`${API_BASE}/quotes/image-flags`).then(handleResponse),
+    getThumbnailUrl: (id: string) => `${API_BASE}/quotes/${id}/thumbnail`,
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
     create: (data: unknown) => authFetch(`${API_BASE}/quotes`, {
       method: 'POST',

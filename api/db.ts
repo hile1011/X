@@ -259,19 +259,15 @@ export const dbApi = {
   },
 
   quotes: {
-    /** 列表查询：只查基本字段 + images（列表需要显示缩略图），不加载其他 longtext 大字段 */
+    /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取） */
     getAll: async () => {
       const rows = await dbConn.prepare(`SELECT id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
-        productionStartTime, shippingTime, paymentTime, endTime, images, created_at, updated_at
+        productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
         FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC`).all()
-      return rows.map((r) => {
-        const c = toCamelRow(r)
-        ;(c as any).images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
-        return c
-      }) as Quote[]
+      return rows.map((r) => toCamelRow(r)) as Quote[]
     },
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
@@ -447,6 +443,26 @@ export const dbApi = {
     delete: async (id: string) => {
       const info = await dbConn.prepare('DELETE FROM quotes WHERE id = ?').run(id)
       return info.changes > 0
+    },
+    /** 获取所有订单的图片数量（用于列表显示图片图标，不加载大字段） */
+    getAllImageFlags: async () => {
+      const rows = await dbConn.prepare(`SELECT id, CASE WHEN images IS NOT NULL AND images != '[]' AND images != '' THEN 1 ELSE 0 END as has_images FROM quotes`).all()
+      const map: Record<string, boolean> = {}
+      for (const r of rows) {
+        map[r.id] = !!r.has_images
+      }
+      return map
+    },
+    /** 获取单个订单的第一张图片（base64），用于生成缩略图 */
+    getFirstImage: async (id: string) => {
+      const row = await dbConn.prepare('SELECT images FROM quotes WHERE id = ?').get(id)
+      if (!row) return null
+      try {
+        const images = typeof row.images === 'string' ? JSON.parse(row.images || '[]') : (row.images || [])
+        return (images as string[])[0] || null
+      } catch {
+        return null
+      }
     },
     copy: async (id: string) => {
       const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)

@@ -98,6 +98,8 @@ export default function Quotes() {
   const [filteredCount, setFilteredCount] = useState(0)
   // 筛选后的客户总数（以客户名称维度统计，一个客户下多条订单只算一个）
   const [filteredCustomerCount, setFilteredCustomerCount] = useState(0)
+  // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
+  const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -118,8 +120,12 @@ export default function Quotes() {
   const fetchQuotes = async () => {
     setLoading(true)
     try {
-      const data = await api.quotes.getAll()
+      const [data, flags] = await Promise.all([
+        api.quotes.getAll(),
+        api.quotes.getImageFlags(),
+      ])
       setQuotes(data)
+      setImageFlags(flags || {})
     } catch (error) {
       console.error('获取订单列表失败:', error)
       setQuotes([])
@@ -423,17 +429,29 @@ export default function Quotes() {
                           >
                             {/* 产品图 */}
                             <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">
-                              {quote.images && quote.images.length > 0 ? (
+                              {imageFlags[quote.id] ? (
                                 <img
-                                  src={quote.images[0]}
+                                  src={api.quotes.getThumbnailUrl(quote.id)}
                                   alt="产品图"
+                                  loading="lazy"
                                   className="w-10 h-10 rounded-lg object-cover border border-gray-200"
+                                  onError={(e) => {
+                                    const target = e.currentTarget
+                                    target.style.display = 'none'
+                                    const placeholder = target.nextElementSibling as HTMLElement
+                                    if (placeholder) placeholder.style.display = 'flex'
+                                  }}
                                 />
-                              ) : (
+                              ) : null}
+                              {(!imageFlags[quote.id]) && (
                                 <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
                                   <Image className="text-gray-400" size={18} />
                                 </div>
                               )}
+                              {/* onError 时的占位符（默认隐藏） */}
+                              <div className="w-10 h-10 rounded-lg bg-gray-100 items-center justify-center" style={{ display: 'none' }}>
+                                <Image className="text-gray-400" size={18} />
+                              </div>
                             </div>
 
                             {/* 款式 */}
