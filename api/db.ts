@@ -275,7 +275,7 @@ export const dbApi = {
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
       if (!row) return null
-      return this._parseLargeFields(row) as Quote
+      return (this as any)._parseLargeFields(row) as Quote
     },
     create: async (data: Partial<Quote>) => {
       const now = new Date()
