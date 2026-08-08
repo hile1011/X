@@ -246,30 +246,36 @@ export const dbApi = {
   },
 
   quotes: {
+    /** 大字段列表（存储大量 JSON，列表查询不加载） */
+    _LARGE_FIELDS: ['images', 'tableData', 'removedFormulaAddresses', 'modifiedFormulas', 'allFormulas', 'productionStepStatus'] as const,
+    
+    /** 解析大字段的 JSON */
+    _parseLargeFields(row: any) {
+      const c = toCamelRow(row)
+      const parse = (val: string, defaultVal: any) => typeof val === 'string' ? JSON.parse(val || (defaultVal === '[]' ? '[]' : '{}')) : (val || defaultVal === '[]' ? [] : {})
+      ;(c as any).images = parse(c.images, '[]')
+      ;(c as any).tableData = parse(c.tableData, '[]')
+      ;(c as any).removedFormulaAddresses = parse((c as any).removedFormulaAddresses, '[]')
+      ;(c as any).modifiedFormulas = parse((c as any).modifiedFormulas, '{}')
+      ;(c as any).allFormulas = parse((c as any).allFormulas, '{}')
+      ;(c as any).productionStepStatus = parse((c as any).productionStepStatus, '{}')
+      return c
+    },
+
+    /** 列表查询：只查基本字段，不加载 longtext 大字段 */
     getAll: async () => {
-      const rows = await dbConn.prepare('SELECT * FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC').all()
-      return rows.map((r) => {
-        const c = toCamelRow(r)
-        c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
-        c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
-        c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
-        c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
-        c.allFormulas = typeof (c as any).allFormulas === 'string' ? JSON.parse((c as any).allFormulas || '{}') : ((c as any).allFormulas || {})
-        c.productionStepStatus = typeof (c as any).productionStepStatus === 'string' ? JSON.parse((c as any).productionStepStatus || '{}') : ((c as any).productionStepStatus || {})
-        return c as Quote
-      }) as Quote[]
+      const rows = await dbConn.prepare(`SELECT id, user_id, customer_id, quote_number, customerName, shippingAddress,
+        productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
+        sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
+        productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
+        FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC`).all()
+      return rows.map((r) => toCamelRow(r)) as Quote[]
     },
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
       if (!row) return null
-      const c = toCamelRow(row)
-      c.images = typeof c.images === 'string' ? JSON.parse(c.images || '[]') : (c.images || [])
-      c.tableData = typeof c.tableData === 'string' ? JSON.parse(c.tableData || '[]') : (c.tableData || [])
-      c.removedFormulaAddresses = typeof (c as any).removedFormulaAddresses === 'string' ? JSON.parse((c as any).removedFormulaAddresses || '[]') : ((c as any).removedFormulaAddresses || [])
-      c.modifiedFormulas = typeof (c as any).modifiedFormulas === 'string' ? JSON.parse((c as any).modifiedFormulas || '{}') : ((c as any).modifiedFormulas || {})
-      c.allFormulas = typeof (c as any).allFormulas === 'string' ? JSON.parse((c as any).allFormulas || '{}') : ((c as any).allFormulas || {})
-      c.productionStepStatus = typeof (c as any).productionStepStatus === 'string' ? JSON.parse((c as any).productionStepStatus || '{}') : ((c as any).productionStepStatus || {})
-      return c as Quote
+      return this._parseLargeFields(row) as Quote
     },
     create: async (data: Partial<Quote>) => {
       const now = new Date()
