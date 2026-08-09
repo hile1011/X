@@ -1,6 +1,6 @@
 {
   "name": "quote-order-system",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "报价跟单系统",
   "type": "module",
   "scripts": {
