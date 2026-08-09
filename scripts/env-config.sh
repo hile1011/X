@@ -93,7 +93,7 @@ _config_prod() {
   MYSQL_HOST="127.0.0.1"
   MYSQL_PORT="3306"
   MYSQL_USER="root"
-  MYSQL_PASSWORD=""
+  MYSQL_PASSWORD="MyNewPass123!"
   MYSQL_DATABASE="quote_system_prod"
   DATA_DIR="$_PROJECT_ROOT/data"
   LOG_DIR="$_PROJECT_ROOT/data/logs"
