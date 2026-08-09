@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
-import { Mail, Lock, LogIn, AlertCircle } from 'lucide-react'
+import { User, Lock, LogIn, AlertCircle } from 'lucide-react'
 
 export default function Login() {
-  const [email, setEmail] = useState('517290808@qq.com')
+  const [email, setEmail] = useState('15958134590')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -46,15 +46,15 @@ export default function Login() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">邮箱</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">账号</label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
               <input
-                type="email"
+                type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
-                placeholder="请输入邮箱"
+                placeholder="请输入邮箱/手机号"
                 required
               />
             </div>

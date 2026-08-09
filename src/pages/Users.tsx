@@ -118,8 +118,8 @@ export default function Users() {
       setError('请输入姓名')
       return
     }
-    if (!formEmail.trim()) {
-      setError('请输入邮箱')
+    if (!formPhone.trim()) {
+      setError('请输入手机号')
       return
     }
     if (!editingUser && !formPassword) {
@@ -136,6 +136,7 @@ export default function Users() {
       if (editingUser) {
         await api.users.update(editingUser.id, {
           name: formName,
+          email: formEmail,
           phone: formPhone,
           status: formStatus,
           roleIds: formRoleIds,
@@ -200,7 +201,8 @@ export default function Users() {
   const filteredUsers = users.filter(
     (u) =>
       u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchTerm.toLowerCase())
+      u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (u.phone || '').toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   if (loading) {
@@ -243,7 +245,7 @@ export default function Users() {
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="搜索姓名或邮箱..."
+              placeholder="搜索姓名/邮箱/手机号..."
               className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
             />
           </div>
@@ -396,22 +398,22 @@ export default function Users() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">邮箱 <span className="text-red-500">*</span></label>
-                <input
-                  type="email"
-                  value={formEmail}
-                  onChange={(e) => setFormEmail(e.target.value)}
-                  disabled={!!editingUser}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none disabled:bg-gray-50 disabled:text-gray-400"
-                />
-                {editingUser && <p className="text-xs text-gray-400 mt-1">邮箱创建后不可修改</p>}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">手机</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">手机 <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={formPhone}
                   onChange={(e) => setFormPhone(e.target.value)}
+                  placeholder="请输入手机号"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">邮箱</label>
+                <input
+                  type="text"
+                  value={formEmail}
+                  onChange={(e) => setFormEmail(e.target.value)}
+                  placeholder="选填"
                   className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
                 />
               </div>

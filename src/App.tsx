@@ -75,13 +75,13 @@ function App() {
               <Route path="/quotes/new" element={
                 <ProtectedRoute permission="quotes:create"><BagQuote /></ProtectedRoute>
               } />
-              {/* 查看详情：只读模式 */}
+              {/* 查看详情：只读模式（key 确保从查看切换到编辑时组件重新挂载，VTable 重新初始化） */}
               <Route path="/quotes/:id" element={
-                <ProtectedRoute permission="quotes:view"><BagQuote readOnly /></ProtectedRoute>
+                <ProtectedRoute permission="quotes:view"><BagQuote readOnly key="view" /></ProtectedRoute>
               } />
               {/* 编辑：需要编辑权限 */}
               <Route path="/quotes/:id/edit" element={
-                <ProtectedRoute permission="quotes:edit"><BagQuote /></ProtectedRoute>
+                <ProtectedRoute permission="quotes:edit"><BagQuote key="edit" /></ProtectedRoute>
               } />
               <Route path="/quotes-table/new" element={
                 <ProtectedRoute permission="quotes-table:view"><BagQuoteTable /></ProtectedRoute>

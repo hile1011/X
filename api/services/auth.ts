@@ -102,7 +102,7 @@ export async function findUserById(userId: string): Promise<{
 }
 
 /**
- * 根据邮箱查询用户记录
+ * 根据邮箱或手机号查询用户记录（登录用）
  */
 export async function findUserByEmail(email: string): Promise<{
   id: string
@@ -115,9 +115,10 @@ export async function findUserByEmail(email: string): Promise<{
   created_at: string
   updated_at: string
 } | null> {
+  // 支持邮箱或手机号登录
   const [rows] = await pool.execute(
-    'SELECT id, email, password_hash, name, phone, status, last_login_at, created_at, updated_at FROM users WHERE email = ?',
-    [email]
+    'SELECT id, email, password_hash, name, phone, status, last_login_at, created_at, updated_at FROM users WHERE email = ? OR phone = ? LIMIT 1',
+    [email, email]
   )
   const list = rows as any[]
   return list[0] || null

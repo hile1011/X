@@ -88,17 +88,25 @@ usersRouter.post(
   asyncHandler(async (req, res) => {
     const { email, name, phone, password, roleIds } = req.body || {}
 
-    if (!email || !password) {
-      return res.status(400).json({ error: '邮箱和密码为必填项' })
+    if (!phone || !password) {
+      return res.status(400).json({ error: '手机号和密码为必填项' })
     }
     if (password.length < 6) {
       return res.status(400).json({ error: '密码长度不能少于6位' })
     }
 
-    // 检查邮箱唯一性
-    const [existing] = await pool.execute('SELECT id FROM users WHERE email = ?', [email])
-    if ((existing as any[]).length > 0) {
-      return res.status(409).json({ error: '该邮箱已被注册' })
+    // 检查手机号唯一性
+    const [existingPhone] = await pool.execute('SELECT id FROM users WHERE phone = ?', [phone])
+    if ((existingPhone as any[]).length > 0) {
+      return res.status(409).json({ error: '该手机号已被注册' })
+    }
+
+    // 邮箱非必填，但若填写则检查唯一性
+    if (email) {
+      const [existingEmail] = await pool.execute('SELECT id FROM users WHERE email = ?', [email])
+      if ((existingEmail as any[]).length > 0) {
+        return res.status(409).json({ error: '该邮箱已被注册' })
+      }
     }
 
     const userId = randomUUID()
@@ -106,7 +114,7 @@ usersRouter.post(
 
     await pool.execute(
       'INSERT INTO users (id, email, password_hash, name, phone, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, email, passwordHash, name || '', phone || '', 1]
+      [userId, email || '', passwordHash, name || '', phone, 1]
     )
 
     // 分配角色
@@ -130,16 +138,38 @@ usersRouter.put(
   requirePermission('users:edit'),
   asyncHandler(async (req, res) => {
     const { id } = req.params
-    const { name, phone, status, roleIds } = req.body || {}
+    const { email, name, phone, status, roleIds } = req.body || {}
 
     const [rows] = await pool.execute('SELECT id FROM users WHERE id = ?', [id])
     if ((rows as any[]).length === 0) {
       return res.status(404).json({ error: '用户不存在' })
     }
 
+    // 若修改了手机号，检查唯一性（排除当前用户）
+    if (phone) {
+      const [existingPhone] = await pool.execute(
+        'SELECT id FROM users WHERE phone = ? AND id != ?',
+        [phone, id]
+      )
+      if ((existingPhone as any[]).length > 0) {
+        return res.status(409).json({ error: '该手机号已被注册' })
+      }
+    }
+
+    // 若修改了邮箱（非空），检查唯一性（排除当前用户）
+    if (email) {
+      const [existingEmail] = await pool.execute(
+        'SELECT id FROM users WHERE email = ? AND id != ?',
+        [email, id]
+      )
+      if ((existingEmail as any[]).length > 0) {
+        return res.status(409).json({ error: '该邮箱已被注册' })
+      }
+    }
+
     await pool.execute(
-      'UPDATE users SET name = ?, phone = ?, status = ?, updated_at = NOW() WHERE id = ?',
-      [name ?? '', phone ?? '', status ?? 1, id]
+      'UPDATE users SET email = ?, name = ?, phone = ?, status = ?, updated_at = NOW() WHERE id = ?',
+      [email ?? '', name ?? '', phone ?? '', status ?? 1, id]
     )
 
     // 更新角色关联（先删后插）
