@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 11
+export const CURRENT_SCHEMA_VERSION = 13
 
 export interface Migration {
   version: number
@@ -488,6 +488,233 @@ const migrations: Migration[] = [
     },
     down: async (db: any) => {
       await db.exec(`DROP TABLE IF EXISTS operation_logs`)
+    },
+  },
+  {
+    version: 12,
+    name: 'add-auth-rbac',
+    description: 'V0.6：新增 RBAC 用户认证与权限管理系统（users/roles/permissions/role_permissions/user_roles 表），预置权限目录、admin 角色、默认管理员账号',
+    up: async (db: any) => {
+      // 1. 创建 5 张表
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(64) PRIMARY KEY,
+          email VARCHAR(255) NOT NULL,
+          password_hash VARCHAR(255) NOT NULL,
+          name VARCHAR(255) NOT NULL DEFAULT '',
+          phone VARCHAR(64) DEFAULT '',
+          status TINYINT NOT NULL DEFAULT 1,
+          last_login_at DATETIME DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE INDEX idx_users_email (email)
+        );
+
+        CREATE TABLE IF NOT EXISTS roles (
+          id VARCHAR(64) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          code VARCHAR(64) NOT NULL,
+          description VARCHAR(500) DEFAULT '',
+          is_system TINYINT NOT NULL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE INDEX idx_roles_code (code)
+        );
+
+        CREATE TABLE IF NOT EXISTS permissions (
+          id VARCHAR(64) PRIMARY KEY,
+          code VARCHAR(128) NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          module VARCHAR(64) NOT NULL,
+          action VARCHAR(64) NOT NULL,
+          type VARCHAR(20) NOT NULL DEFAULT 'button',
+          description VARCHAR(500) DEFAULT '',
+          sort_order INT NOT NULL DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE INDEX idx_permissions_code (code),
+          INDEX idx_permissions_module (module)
+        );
+
+        CREATE TABLE IF NOT EXISTS role_permissions (
+          role_id VARCHAR(64) NOT NULL,
+          permission_id VARCHAR(64) NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (role_id, permission_id),
+          INDEX idx_role_permissions_perm (permission_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_roles (
+          user_id VARCHAR(64) NOT NULL,
+          role_id VARCHAR(64) NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (user_id, role_id),
+          INDEX idx_user_roles_role (role_id)
+        );
+      `)
+
+      // 2. 预置权限目录
+      const permissions = [
+        { id: 'perm-dashboard-view', code: 'dashboard:view', name: '仪表盘', module: 'dashboard', action: 'view', type: 'menu', sort: 1 },
+        { id: 'perm-quotes-view', code: 'quotes:view', name: '订单-查看菜单', module: 'quotes', action: 'view', type: 'menu', sort: 10 },
+        { id: 'perm-quotes-create', code: 'quotes:create', name: '订单-新增', module: 'quotes', action: 'create', type: 'button', sort: 11 },
+        { id: 'perm-quotes-edit', code: 'quotes:edit', name: '订单-编辑', module: 'quotes', action: 'edit', type: 'button', sort: 12 },
+        { id: 'perm-quotes-delete', code: 'quotes:delete', name: '订单-删除', module: 'quotes', action: 'delete', type: 'button', sort: 13 },
+        { id: 'perm-quotes-copy', code: 'quotes:copy', name: '订单-复制', module: 'quotes', action: 'copy', type: 'button', sort: 14 },
+        { id: 'perm-quotes-export', code: 'quotes:export', name: '订单-导出', module: 'quotes', action: 'export', type: 'button', sort: 15 },
+        { id: 'perm-quotes-print', code: 'quotes:print', name: '订单-打印', module: 'quotes', action: 'print', type: 'button', sort: 16 },
+        { id: 'perm-quotes-status', code: 'quotes:status-transition', name: '订单-状态流转', module: 'quotes', action: 'status-transition', type: 'button', sort: 17 },
+        { id: 'perm-quotes-table-view', code: 'quotes-table:view', name: '订单表格版-查看', module: 'quotes-table', action: 'view', type: 'menu', sort: 20 },
+        { id: 'perm-quotes-wps-view', code: 'quotes-wps:view', name: '订单WPS版-查看', module: 'quotes-wps', action: 'view', type: 'menu', sort: 30 },
+        { id: 'perm-process-costs-view', code: 'process-costs:view', name: '工艺成本-查看', module: 'process-costs', action: 'view', type: 'menu', sort: 40 },
+        { id: 'perm-process-costs-create', code: 'process-costs:create', name: '工艺成本-新增', module: 'process-costs', action: 'create', type: 'button', sort: 41 },
+        { id: 'perm-process-costs-edit', code: 'process-costs:edit', name: '工艺成本-编辑', module: 'process-costs', action: 'edit', type: 'button', sort: 42 },
+        { id: 'perm-process-costs-delete', code: 'process-costs:delete', name: '工艺成本-删除', module: 'process-costs', action: 'delete', type: 'button', sort: 43 },
+        { id: 'perm-customers-view', code: 'customers:view', name: '客户管理-查看', module: 'customers', action: 'view', type: 'menu', sort: 50 },
+        { id: 'perm-customers-create', code: 'customers:create', name: '客户-新增', module: 'customers', action: 'create', type: 'button', sort: 51 },
+        { id: 'perm-customers-edit', code: 'customers:edit', name: '客户-编辑', module: 'customers', action: 'edit', type: 'button', sort: 52 },
+        { id: 'perm-customers-delete', code: 'customers:delete', name: '客户-删除', module: 'customers', action: 'delete', type: 'button', sort: 53 },
+        { id: 'perm-products-view', code: 'products:view', name: '产品管理-查看', module: 'products', action: 'view', type: 'menu', sort: 60 },
+        { id: 'perm-products-create', code: 'products:create', name: '产品-新增', module: 'products', action: 'create', type: 'button', sort: 61 },
+        { id: 'perm-products-edit', code: 'products:edit', name: '产品-编辑', module: 'products', action: 'edit', type: 'button', sort: 62 },
+        { id: 'perm-products-delete', code: 'products:delete', name: '产品-删除', module: 'products', action: 'delete', type: 'button', sort: 63 },
+        { id: 'perm-tasks-view', code: 'tasks:view', name: '跟单任务-查看', module: 'tasks', action: 'view', type: 'menu', sort: 70 },
+        { id: 'perm-tasks-create', code: 'tasks:create', name: '任务-新增', module: 'tasks', action: 'create', type: 'button', sort: 71 },
+        { id: 'perm-tasks-edit', code: 'tasks:edit', name: '任务-编辑', module: 'tasks', action: 'edit', type: 'button', sort: 72 },
+        { id: 'perm-tasks-delete', code: 'tasks:delete', name: '任务-删除', module: 'tasks', action: 'delete', type: 'button', sort: 73 },
+        { id: 'perm-reports-view', code: 'reports:view', name: '报表统计-查看', module: 'reports', action: 'view', type: 'menu', sort: 80 },
+        { id: 'perm-operation-logs-view', code: 'operation-logs:view', name: '操作日志-查看', module: 'operation-logs', action: 'view', type: 'menu', sort: 90 },
+        { id: 'perm-users-view', code: 'users:view', name: '用户管理-查看', module: 'users', action: 'view', type: 'menu', sort: 100 },
+        { id: 'perm-users-create', code: 'users:create', name: '用户-新增', module: 'users', action: 'create', type: 'button', sort: 101 },
+        { id: 'perm-users-edit', code: 'users:edit', name: '用户-编辑', module: 'users', action: 'edit', type: 'button', sort: 102 },
+        { id: 'perm-users-delete', code: 'users:delete', name: '用户-删除', module: 'users', action: 'delete', type: 'button', sort: 103 },
+        { id: 'perm-roles-view', code: 'roles:view', name: '角色管理-查看', module: 'roles', action: 'view', type: 'menu', sort: 110 },
+        { id: 'perm-roles-create', code: 'roles:create', name: '角色-新增', module: 'roles', action: 'create', type: 'button', sort: 111 },
+        { id: 'perm-roles-edit', code: 'roles:edit', name: '角色-编辑', module: 'roles', action: 'edit', type: 'button', sort: 112 },
+        { id: 'perm-roles-delete', code: 'roles:delete', name: '角色-删除', module: 'roles', action: 'delete', type: 'button', sort: 113 },
+        { id: 'perm-system-admin', code: 'system:admin', name: '系统管理员特权', module: 'system', action: 'admin', type: 'button', sort: 200 },
+      ]
+      const permStmt = db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const p of permissions) {
+        await permStmt.run(p.id, p.code, p.name, p.module, p.action, p.type, '', p.sort)
+      }
+
+      // 3. 预置 admin 角色
+      await db.prepare(
+        'INSERT IGNORE INTO roles (id, name, code, description, is_system) VALUES (?, ?, ?, ?, ?)'
+      ).run('role-admin', '系统管理员', 'admin', '拥有系统全部权限的内置管理员角色', 1)
+
+      // 4. 给 admin 角色分配全部权限
+      const allPerms = await db.prepare('SELECT id FROM permissions').all() as { id: string }[]
+      const rpStmt = db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      )
+      for (const p of allPerms) {
+        await rpStmt.run('role-admin', p.id)
+      }
+
+      // 5. 预置默认管理员账号
+      const bcrypt = await import('bcryptjs')
+      const defaultPassword = process.env.ADMIN_DEFAULT_PASSWORD || '123456'
+      const passwordHash = bcrypt.hashSync(defaultPassword, 10)
+      await db.prepare(
+        'INSERT IGNORE INTO users (id, email, password_hash, name, status) VALUES (?, ?, ?, ?, ?)'
+      ).run('user-admin-default', '517290808@qq.com', passwordHash, '管理员', 1)
+
+      // 6. 给默认管理员账号分配 admin 角色
+      await db.prepare(
+        'INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)'
+      ).run('user-admin-default', 'role-admin')
+    },
+    down: async (db: any) => {
+      await db.exec(`
+        DROP TABLE IF EXISTS user_roles;
+        DROP TABLE IF EXISTS role_permissions;
+        DROP TABLE IF EXISTS permissions;
+        DROP TABLE IF EXISTS roles;
+        DROP TABLE IF EXISTS users;
+      `)
+    },
+  },
+  {
+    version: 13,
+    name: 'add-quote-history-triggers',
+    description: 'V0.7：新增订单数据修改历史记录表（quote_history）及 INSERT/UPDATE/DELETE 触发器，自动捕获订单业务字段变更（旧值/新值/变更字段列表），操作人优先取 @app_operator 会话变量，回退到数据库用户',
+    up: async (db: any) => {
+      // 1. 创建历史记录表
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS quote_history (
+          id BIGINT NOT NULL AUTO_INCREMENT,
+          quote_id VARCHAR(64) NOT NULL,
+          action VARCHAR(20) NOT NULL,
+          old_values LONGTEXT,
+          new_values LONGTEXT,
+          changed_fields VARCHAR(2000),
+          operator VARCHAR(255) NOT NULL DEFAULT '',
+          created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_quote_history_quote_id (quote_id),
+          KEY idx_quote_history_created_at (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `)
+
+      // 2. 审计追踪的业务字段
+      //    排除：id（主键）、created_at/updated_at（元数据，每次写入都变）
+      //    排除：6 个 LONGTEXT 大字段（images/tableData/removedFormulaAddresses/modifiedFormulas/allFormulas/productionStepStatus），
+      //          避免历史表膨胀；这些字段的变更不进入 old_values/new_values 快照
+      const TRACKED_FIELDS = [
+        'user_id', 'customer_id', 'quote_number', 'customerName', 'shippingAddress',
+        'productStyle', 'productSpec', 'fabricMaterial', 'process', 'handleMaterial',
+        'handleSpec', 'quantity', 'boxSpec', 'remark', 'sampleFee', 'sampleDays',
+        'massDays', 'unitPrice', 'productionTimeStart', 'productionTimeEnd',
+        'sellPriceNoTax', 'sellPriceWithTax', 'status', 'quoteTime', 'sampleTime',
+        'productionStartTime', 'shippingTime', 'paymentTime', 'endTime',
+        'costPrice', 'priceWithTax',
+      ]
+      const oldJson = TRACKED_FIELDS.map((f) => `'${f}', OLD.\`${f}\``).join(', ')
+      const newJson = TRACKED_FIELDS.map((f) => `'${f}', NEW.\`${f}\``).join(', ')
+      // CONCAT_WS 自动跳过 NULL 参数；所有追踪字段均未变时返回空串
+      const changedExpr = TRACKED_FIELDS
+        .map((f) => `IF(NOT(OLD.\`${f}\` <=> NEW.\`${f}\`), '${f}', NULL)`)
+        .join(', ')
+
+      // 3. 创建触发器：单语句触发体（无内部分号），兼容 execMultiStatement 按分号拆分
+      //    operator 优先读取应用层 @app_operator 会话变量，回退到 CURRENT_USER()
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_insert`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'insert', NULL, JSON_OBJECT(${newJson}), NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_update`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'update', JSON_OBJECT(${oldJson}), JSON_OBJECT(${newJson}), CONCAT_WS(',', ${changedExpr}), COALESCE(@app_operator, CURRENT_USER()))
+      `)
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_delete`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (OLD.id, 'delete', JSON_OBJECT(${oldJson}), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+    },
+    down: async (db: any) => {
+      await db.exec(`
+        DROP TRIGGER IF EXISTS quotes_audit_insert
+      `)
+      await db.exec(`
+        DROP TRIGGER IF EXISTS quotes_audit_update
+      `)
+      await db.exec(`
+        DROP TRIGGER IF EXISTS quotes_audit_delete
+      `)
+      await db.exec(`
+        DROP TABLE IF EXISTS quote_history
+      `)
     },
   },
 ]

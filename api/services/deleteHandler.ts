@@ -12,9 +12,15 @@ import { logOperation } from './auditLog.js'
 
 /**
  * 从请求中提取操作人信息
+ * 优先从 JWT 认证后的 req.user 读取，回退到 X-Operator 请求头（URL 解码）
  */
 function getOperator(req: Request): string {
-  return (req.headers['x-operator'] as string) || 'unknown'
+  if (req.user?.name) return req.user.name
+  const raw = req.headers['x-operator'] as string
+  if (raw) {
+    try { return decodeURIComponent(raw) } catch { return raw }
+  }
+  return 'unknown'
 }
 
 /**

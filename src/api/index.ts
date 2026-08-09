@@ -7,7 +7,7 @@ const API_BASE = '/api'
  * 用于在 API 请求中附加 Authorization 头
  */
 function getAuthToken(): string | null {
-  return useAuthStore.getState().token
+  return useAuthStore.getState().accessToken
 }
 
 /**
@@ -20,8 +20,9 @@ function getOperator(): string {
 /**
  * 构建带认证头的 fetch 选项
  * 自动附加 Authorization: Bearer <token> 头和 X-Operator 头（审计用）
+ * 遇到 401 时自动尝试刷新 token 并重试一次
  */
-function authFetch(url: string, options?: RequestInit): Promise<Response> {
+async function authFetch(url: string, options?: RequestInit): Promise<Response> {
   const token = getAuthToken()
   const operator = getOperator()
   const headers: Record<string, string> = {
@@ -31,9 +32,25 @@ function authFetch(url: string, options?: RequestInit): Promise<Response> {
     headers['Authorization'] = `Bearer ${token}`
   }
   if (operator) {
-    headers['X-Operator'] = operator
+    // HTTP 头只允许 ISO-8859-1 字符，中文操作人名称需 URL 编码
+    headers['X-Operator'] = encodeURIComponent(operator)
   }
-  return fetch(url, { ...options, headers })
+
+  let res = await fetch(url, { ...options, headers })
+
+  // 401 → 尝试刷新 token 后重试一次
+  if (res.status === 401) {
+    const refreshed = await useAuthStore.getState().refreshToken()
+    if (refreshed) {
+      const newToken = getAuthToken()
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`
+      }
+      res = await fetch(url, { ...options, headers })
+    }
+  }
+
+  return res
 }
 
 // 统一响应处理：检查 HTTP 状态码，解析 JSON，空响应返回 null，错误时抛出带状态码的异常
@@ -62,6 +79,65 @@ async function handleResponse(res: Response): Promise<any> {
 const jsonHeaders = { 'Content-Type': 'application/json' }
 
 export const api = {
+  auth: {
+    login: (email: string, password: string) =>
+      fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ email, password }),
+      }).then(handleResponse),
+    me: () => authFetch(`${API_BASE}/auth/me`).then(handleResponse),
+    refresh: (refreshToken: string) =>
+      fetch(`${API_BASE}/auth/refresh`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ refreshToken }),
+      }).then(handleResponse),
+    changePassword: (oldPassword: string, newPassword: string) =>
+      authFetch(`${API_BASE}/auth/password`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify({ oldPassword, newPassword }),
+      }).then(handleResponse),
+  },
+  permissions: {
+    getAll: () => authFetch(`${API_BASE}/permissions`).then(handleResponse),
+  },
+  users: {
+    getAll: () => authFetch(`${API_BASE}/users`).then(handleResponse),
+    getById: (id: string) => authFetch(`${API_BASE}/users/${id}`).then(handleResponse),
+    create: (data: unknown) => authFetch(`${API_BASE}/users`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    update: (id: string, data: unknown) => authFetch(`${API_BASE}/users/${id}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    resetPassword: (id: string, newPassword: string) => authFetch(`${API_BASE}/users/${id}/password`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ newPassword }),
+    }).then(handleResponse),
+    delete: (id: string) => authFetch(`${API_BASE}/users/${id}`, { method: 'DELETE' }).then(handleResponse),
+  },
+  roles: {
+    getAll: () => authFetch(`${API_BASE}/roles`).then(handleResponse),
+    getById: (id: string) => authFetch(`${API_BASE}/roles/${id}`).then(handleResponse),
+    create: (data: unknown) => authFetch(`${API_BASE}/roles`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    update: (id: string, data: unknown) => authFetch(`${API_BASE}/roles/${id}`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    delete: (id: string) => authFetch(`${API_BASE}/roles/${id}`, { method: 'DELETE' }).then(handleResponse),
+  },
   orders: {
     getAll: () => authFetch(`${API_BASE}/orders`).then(handleResponse),
     getById: (id: string) => authFetch(`${API_BASE}/orders/${id}`).then(handleResponse),
@@ -106,26 +182,15 @@ export const api = {
     delete: (id: string) => authFetch(`${API_BASE}/products/${id}`, { method: 'DELETE' }).then(handleResponse),
     deleteCheck: (id: string) => authFetch(`${API_BASE}/products/${id}/delete-check`).then(handleResponse),
   },
-  tasks: {
-    getAll: () => authFetch(`${API_BASE}/tasks`).then(handleResponse),
-    getById: (id: string) => authFetch(`${API_BASE}/tasks/${id}`).then(handleResponse),
-    create: (data: unknown) => authFetch(`${API_BASE}/tasks`, {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify(data),
-    }).then(handleResponse),
-    update: (id: string, data: unknown) => authFetch(`${API_BASE}/tasks/${id}`, {
-      method: 'PUT',
-      headers: jsonHeaders,
-      body: JSON.stringify(data),
-    }).then(handleResponse),
-    delete: (id: string) => authFetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' }).then(handleResponse),
-    deleteCheck: (id: string) => authFetch(`${API_BASE}/tasks/${id}/delete-check`).then(handleResponse),
-  },
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
     getImageFlags: () => authFetch(`${API_BASE}/quotes/image-flags`).then(handleResponse),
-    getThumbnailUrl: (id: string) => `${API_BASE}/quotes/${id}/thumbnail`,
+    getThumbnailUrl: (id: string) => {
+      const token = getAuthToken()
+      const url = `${API_BASE}/quotes/${id}/thumbnail`
+      // <img> 标签无法设置 Authorization 头，通过 query 参数传递 token
+      return token ? `${url}?token=${encodeURIComponent(token)}` : url
+    },
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
     create: (data: unknown) => authFetch(`${API_BASE}/quotes`, {
       method: 'POST',

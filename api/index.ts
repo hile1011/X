@@ -8,13 +8,17 @@ import fs from 'fs'
 import { ordersRouter } from './routes/orders.js'
 import { customersRouter } from './routes/customers.js'
 import { productsRouter } from './routes/products.js'
-import { tasksRouter } from './routes/tasks.js'
 import { uploadRouter } from './routes/upload.js'
 import { bagQuoteRouter } from './routes/bagQuote.js'
 import { quotesRouter } from './routes/quotes.js'
 import { processCostsRouter } from './routes/processCosts.js'
 import { exportRouter } from './routes/export.js'
 import { operationLogsRouter } from './routes/operationLogs.js'
+import { authRouter } from './routes/auth.js'
+import { permissionsRouter } from './routes/permissions.js'
+import { usersRouter } from './routes/users.js'
+import { rolesRouter } from './routes/roles.js'
+import { authenticate } from './middleware/auth.js'
 
 const envPath = fs.existsSync(path.resolve(process.cwd(), '.env'))
   ? path.resolve(process.cwd(), '.env')
@@ -51,16 +55,19 @@ if (isProd) {
   }
 }
 
-app.use('/api/orders', ordersRouter)
-app.use('/api/customers', customersRouter)
-app.use('/api/products', productsRouter)
-app.use('/api/tasks', tasksRouter)
-app.use('/api/upload', uploadRouter)
-app.use('/api/bag-quote', bagQuoteRouter)
-app.use('/api/quotes', quotesRouter)
-app.use('/api/process-costs', processCostsRouter)
-app.use('/api/export', exportRouter)
-app.use('/api/operation-logs', operationLogsRouter)
+app.use('/api/auth', authRouter)                       // 认证路由（公开：login/refresh，其余需 authenticate）
+app.use('/api/permissions', authenticate, permissionsRouter) // 权限目录查询（需认证）
+app.use('/api/users', authenticate, usersRouter)              // 用户管理（需认证 + 权限校验）
+app.use('/api/roles', authenticate, rolesRouter)              // 角色管理（需认证 + 权限校验）
+app.use('/api/orders', authenticate, ordersRouter)
+app.use('/api/customers', authenticate, customersRouter)
+app.use('/api/products', authenticate, productsRouter)
+app.use('/api/upload', authenticate, uploadRouter)
+app.use('/api/bag-quote', authenticate, bagQuoteRouter)
+app.use('/api/quotes', authenticate, quotesRouter)
+app.use('/api/process-costs', authenticate, processCostsRouter)
+app.use('/api/export', authenticate, exportRouter)
+app.use('/api/operation-logs', authenticate, operationLogsRouter)
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })

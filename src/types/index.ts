@@ -54,18 +54,6 @@ export interface Order {
   updated_at: string
 }
 
-export interface Task {
-  id: string
-  user_id: string
-  order_id: string
-  title: string
-  description: string
-  status: 'pending' | 'in_progress' | 'completed'
-  due_date: string
-  created_at: string
-  updated_at: string
-}
-
 export interface OrderWithDetails extends Order {
   customer?: Customer
   items?: OrderItem[]

@@ -13,3 +13,6 @@ coverage/
 *.xlsx
 data/
 *.db
+
+# 数据库基准快照（含生产环境真实数据，禁止提交）
+db/baselines/*.sql

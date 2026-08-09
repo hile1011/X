@@ -9,7 +9,7 @@
  *   - quote_number 格式：客户名称-款式标签-时间戳（时间戳在末尾）
  *   - 迁移 v9 (add-all-formulas)：从老数据计算 allFormulas 的初始化逻辑
  *
- * 使用 MySQL 测试数据库（quote_system_test），已迁移至 v10。
+ * 使用 MySQL 测试数据库（quote_system_test），已迁移至 v13。
  * 回滚/重新迁移测试放在文件末尾，afterAll 中恢复 schema 到最新版本。
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
@@ -35,18 +35,18 @@ async function execSql(sql: string): Promise<void> {
 }
 
 /**
- * 确保 schema 恢复到最新版本：如果版本低于 10，直接 migrate 补齐缺失的迁移。
+ * 确保 schema 恢复到最新版本：如果版本低于 13，直接 migrate 补齐缺失的迁移。
  * 不使用 reset（会 drop 所有表），避免 v1 down 迁移删除 schema_migrations 表后
  * rollback 代码无法 DELETE 记录的问题。
  */
 async function ensureLatestSchema(): Promise<void> {
   const version = await db.getSchemaVersion()
-  if (version < 10) {
+  if (version < 13) {
     await db.runner.migrate()
   }
 }
 
-// 文件级 afterAll：确保所有测试结束后 schema 恢复到 v10，不影响后续测试文件
+// 文件级 afterAll：确保所有测试结束后 schema 恢复到 v13，不影响后续测试文件
 afterAll(async () => {
   await ensureLatestSchema()
 })
@@ -111,9 +111,9 @@ describe('迁移 v7 - add-product-code-and-default-styles', () => {
     expect(styles).toHaveLength(6)
   })
 
-  it('Schema 版本为 11', async () => {
+  it('Schema 版本为 13', async () => {
     const version = await db.getSchemaVersion()
-    expect(version).toBe(11)
+    expect(version).toBe(13)
   })
 })
 
@@ -315,7 +315,7 @@ describe('迁移 v9 - add-all-formulas 老数据初始化', () => {
 
     // 3. 重新执行迁移到最新版本（v9 会添加 allFormulas 列并初始化数据）
     await db.runner.migrate()
-    expect(await db.getSchemaVersion()).toBe(11)
+    expect(await db.getSchemaVersion()).toBe(13)
 
     // 4. 验证 allFormulas 已被计算并写入
     const row = await db.db.prepare('SELECT allFormulas FROM quotes WHERE id = ?').get('quote-v9-test-1') as { allFormulas: string }

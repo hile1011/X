@@ -1,9 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
+import { useHasPermission } from '../hooks/usePermission'
 import CustomerSelect from '../components/CustomerSelect'
 import SelectionSummaryBar from '../components/SelectionSummaryBar'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
@@ -133,11 +134,18 @@ const SHEET_COLUMNS = TableConstants.COL_WIDTHS.map((width, field) => ({
   },
 }))
 
-export default function BagQuote() {
+interface BagQuoteProps {
+  /** 只读模式：查看订单详情时禁用所有编辑控件 */
+  readOnly?: boolean
+}
+
+export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const isEditMode = !!id
+  const isEditMode = !!id && !readOnly   // readOnly 时强制非编辑模式
+  const hasQuoteId = !!id                 // 有 ID 时需加载数据（无论是否只读）
+  const canEdit = useHasPermission('quotes:edit')
   const customerId = searchParams.get('customerId')
   const [orderInfo, setOrderInfo] = useState<OrderInfo>(DEFAULT_ORDER_INFO)
   const [productImages, setProductImages] = useState<string[]>([])
@@ -209,7 +217,7 @@ export default function BagQuote() {
   }, [])
 
   useEffect(() => {
-    if (isEditMode) {
+    if (hasQuoteId) {
       // 新增保存后切换到编辑模式时跳过重新加载（数据刚保存，无需再次请求）
       if (skipNextLoadRef.current) {
         skipNextLoadRef.current = false
@@ -220,7 +228,7 @@ export default function BagQuote() {
       // 从客户详情跳转过来，预填充客户信息
       loadCustomerInfo()
     }
-  }, [isEditMode, customerId])
+  }, [hasQuoteId, customerId])
 
   const loadCustomerInfo = async () => {
     try {
@@ -491,7 +499,7 @@ export default function BagQuote() {
 
     // 编辑已有订单时：必须等数据库 tableData 加载完成后再创建表格，避免首次用模板初始化后
     // 被 recalculateFormulas 用公式结果覆盖用户编辑值（tableDataVersion=0 表示尚未加载）
-    if (isEditMode && tableDataVersion === 0) return
+    if (hasQuoteId && tableDataVersion === 0) return
 
     const template = SheetTemplateManager.getTemplate(orderInfo.productStyle)
     // 编辑已有订单时优先使用数据库保存的表格数据；新增订单时用模板数据
@@ -521,8 +529,8 @@ export default function BagQuote() {
     const sivTimer = setTimeout(restoreSIV, 1000)
 
     const sheet = new VTableSheet(sheetContainerRef.current, {
-      undoRedo: { show: true },
-      VTablePluginModules: [
+      undoRedo: { show: !readOnly },
+      VTablePluginModules: readOnly ? [] : [
         { module: TableExportPlugin },
         { module: ExcelImportPlugin },
       ],
@@ -540,6 +548,15 @@ export default function BagQuote() {
     sheetInstanceRef.current = sheet
     // 将公式引擎引用赋值给模块级变量，供 getCellStyle 实时检测公式单元格
     activeFormulaManager = (sheet as any).formulaManager
+
+    // 只读模式：禁用表格编辑（覆盖 getEditor 使所有单元格不可编辑）
+    if (readOnly) {
+      const roWs = sheet.getActiveSheet()
+      const roTable = roWs?.tableInstance as any
+      if (roTable) {
+        roTable.getEditor = () => undefined
+      }
+    }
 
     // 表格对订单信息的联动（动态定位行和列）：
     // 成本价       = 汇总行 × 参考卖价列（以"汇总"文字定位行，以"参考卖价"列标题定位列）
@@ -1036,25 +1053,37 @@ export default function BagQuote() {
                 <ArrowLeft size={16} />
                 返回列表
               </button>
+              {/* readOnly 模式：显示编辑按钮（仅有编辑权限时） */}
+              {readOnly && canEdit && (
+                <button onClick={() => navigate(`/quotes/${id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors min-h-[40px] sm:min-h-0">
+                  <Edit size={16} />
+                  编辑
+                </button>
+              )}
               <button onClick={handleCopyQuote} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0" title="复制订单信息为文本格式，方便报价">
                 <ClipboardList size={16} />
                 {showCopySuccess ? '已复制' : '复制报价'}
               </button>
-              <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
-                <Save size={16} />
-                {showSaveSuccess ? '保存成功' : '保存'}
-              </button>
-              <button onClick={handleExportWithTable} disabled={exporting || !isEditMode} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[40px] sm:min-h-0" title={!isEditMode ? '请先保存订单' : '导出订单及在线表格到 Excel（保留公式）'}>
+              {/* readOnly 模式：隐藏保存和重置按钮 */}
+              {!readOnly && (
+                <>
+                  <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
+                    <Save size={16} />
+                    {showSaveSuccess ? '保存成功' : '保存'}
+                  </button>
+                  <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
+                    <RotateCcw size={16} />
+                    重置
+                  </button>
+                </>
+              )}
+              <button onClick={handleExportWithTable} disabled={exporting || !hasQuoteId} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[40px] sm:min-h-0" title={!hasQuoteId ? '请先保存订单' : '导出订单及在线表格到 Excel（保留公式）'}>
                 {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 {exporting ? '导出中...' : '导出 Excel'}
               </button>
               <button onClick={handleOpenPrint} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-primary-700 border border-primary-200 bg-white rounded-lg hover:bg-primary-50 transition-colors min-h-[40px] sm:min-h-0" title="打印订单">
                 <Printer size={16} />
                 打印
-              </button>
-              <button onClick={handleReset} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
-                <RotateCcw size={16} />
-                重置
               </button>
             </div>
           </div>
@@ -1153,7 +1182,7 @@ export default function BagQuote() {
 
         {/* 做货流程（状态为做货中时显示） */}
         {status === 3 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
+          <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2 ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
             <div className="flex items-center gap-1.5 mb-2">
               <Play className="text-gray-400" size={15} />
               <h3 className="text-xs font-semibold text-gray-700">订单做货流程</h3>
@@ -1227,7 +1256,7 @@ export default function BagQuote() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100">
             <div className="p-3 pb-1 space-y-2">
               {/* 成本价行：成本价(不含税) + 含税价 + 单个利润(不含税/含税) + 利润总额(不含税/含税) */}
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-gray-50 to-transparent rounded-lg flex-wrap">
+              <div className={`flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-gray-50 to-transparent rounded-lg flex-wrap ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
                 {/* 成本价输入组 */}
                 <div className="flex items-center gap-1.5">
                   <DollarSign className="text-gray-400" size={15} />
@@ -1349,7 +1378,7 @@ export default function BagQuote() {
 
               {/* 表单字段 - 密集网格。LG:6列 MD:4列 SM:2列
               同行规则：客户+打样费+箱规 / 大货日期+天数 / 面料+工艺+手提 / 收货地址+备注 */}
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5">
+              <div className={`grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5 ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
                 {/* 行1：客户名称 + 订单状态(只读) + 打样费/天 + 箱规 */}
                 <div className="col-span-2 md:col-span-2 lg:col-span-2">
                   <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
@@ -1533,13 +1562,24 @@ export default function BagQuote() {
                     <ImageIcon size={14} className="text-gray-400" />
                     <span className="text-xs font-medium text-gray-700">产品图片</span>
                   </div>
-                  <label className="cursor-pointer flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 transition-colors">
-                    <Upload size={12} />
-                    上传图片
-                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                  </label>
+                  {/* readOnly 模式下隐藏上传按钮 */}
+                  {!readOnly && (
+                    <label className="cursor-pointer flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-blue-600 bg-blue-50 rounded hover:bg-blue-100 transition-colors">
+                      <Upload size={12} />
+                      上传图片
+                      <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                    </label>
+                  )}
                 </div>
                 {productImages.length === 0 ? (
+                  readOnly ? (
+                    <div className="flex flex-col items-center justify-center border-2 border-dashed border-gray-200 rounded-lg py-3">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center mb-1 bg-gray-100">
+                        <ImageIcon size={15} className="text-gray-400" />
+                      </div>
+                      <p className="text-[11px] text-gray-400">暂无图片</p>
+                    </div>
+                  ) : (
                   <label
                     className={`flex flex-col items-center justify-center border-2 border-dashed rounded-lg py-3 transition-colors cursor-pointer ${
                       isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
@@ -1557,12 +1597,13 @@ export default function BagQuote() {
                     <p className="text-[11px] text-gray-400">支持多选 · JPG / PNG / GIF / WebP</p>
                     <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
                   </label>
+                  )
                 ) : (
-                  <div 
+                  <div
                     className="w-full px-2"
-                    onDragOver={handleDragOver}
-                    onDragLeave={handleDragLeave}
-                    onDrop={handleDrop}
+                    onDragOver={readOnly ? undefined : handleDragOver}
+                    onDragLeave={readOnly ? undefined : handleDragLeave}
+                    onDrop={readOnly ? undefined : handleDrop}
                   >
                     <div className={`grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 rounded-lg transition-colors ${
                       isDragging ? 'bg-blue-100/30 p-1' : ''
@@ -1570,18 +1611,18 @@ export default function BagQuote() {
                       {productImages.map((img, index) => (
                         <div
                           key={index}
-                          className={`relative aspect-square cursor-grab ${
+                          className={`relative aspect-square ${readOnly ? 'cursor-zoom-in' : 'cursor-grab'} ${
                             draggedIndex === index ? 'opacity-40 ring-2 ring-primary-400 ring-dashed' : ''
                           } ${
                             dragOverIndex === index && draggedIndex !== null && draggedIndex !== index
                               ? 'ring-2 ring-primary-500 ring-offset-1'
                               : ''
                           }`}
-                          draggable
-                          onDragStart={() => handleImageDragStart(index)}
-                          onDragOver={(e) => handleImageDragOver(e, index)}
-                          onDragEnd={handleImageDragEnd}
-                          onDrop={(e) => handleImageDrop(e, index)}
+                          draggable={!readOnly}
+                          onDragStart={readOnly ? undefined : () => handleImageDragStart(index)}
+                          onDragOver={readOnly ? undefined : (e) => handleImageDragOver(e, index)}
+                          onDragEnd={readOnly ? undefined : handleImageDragEnd}
+                          onDrop={readOnly ? undefined : (e) => handleImageDrop(e, index)}
                         >
                           <div
                             className="w-full h-full cursor-zoom-in"
@@ -1593,24 +1634,28 @@ export default function BagQuote() {
                               className="w-full h-full object-cover rounded-lg border border-gray-200"
                             />
                           </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleImageRemove(index); }}
-                            className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm z-10"
-                          >
-                            <X size={12} />
-                          </button>
+                          {!readOnly && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleImageRemove(index); }}
+                              className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm z-10"
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
                           <span className="absolute bottom-1 left-1 text-xs text-white bg-black/50 px-1 py-0.5 rounded">
                             {index + 1}
                           </span>
                         </div>
                       ))}
-                      <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
-                        isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
-                      }`}>
-                        <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
-                        <span className={`text-xs ${isDragging ? 'text-blue-600' : 'text-gray-500'}`}>添加</span>
-                        <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
-                      </label>
+                      {!readOnly && (
+                        <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+                          isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
+                        }`}>
+                          <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
+                          <span className={`text-xs ${isDragging ? 'text-blue-600' : 'text-gray-500'}`}>添加</span>
+                          <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                        </label>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1621,7 +1666,7 @@ export default function BagQuote() {
         {/* 在线表格 — 全宽，填满 Layout main 容器 */}
       </div>
       <div className="flex-1 min-h-0 px-4 sm:px-6 pt-1 pb-4 w-full flex flex-col min-w-0">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0 flex flex-col">
+        <div className={`bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0 flex flex-col ${readOnly ? 'opacity-70' : ''}`}>
           <div ref={sheetContainerRef} className="flex-1 min-h-0 w-full" style={{ minHeight: 400 }} />
           <SelectionSummaryBar summary={selectionSummary} />
         </div>

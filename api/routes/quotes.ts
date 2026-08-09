@@ -3,19 +3,21 @@ import sharp from 'sharp'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
+import { requirePermission } from '../middleware/auth.js'
 
 export const quotesRouter = express.Router()
 
 // 缩略图内存缓存（id -> base64 缩略图），避免重复生成
 const thumbnailCache = new Map<string, string>()
 
-quotesRouter.get('/', asyncHandler(async (_req, res) => {
+// 查看类接口：需要 quotes:view 权限（thumbnail 仅需认证即可，供前端 img 标签加载）
+quotesRouter.get('/', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
   const data = await db.quotes.getAll()
   res.json(data)
 }))
 
 // 获取所有订单的图片标识（哪些订单有图片），轻量级查询
-quotesRouter.get('/image-flags', asyncHandler(async (_req, res) => {
+quotesRouter.get('/image-flags', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
   const flags = await db.quotes.getAllImageFlags()
   res.json(flags)
 }))
@@ -66,9 +68,9 @@ quotesRouter.get('/:id/thumbnail', asyncHandler(async (req, res) => {
   }
 }))
 
-quotesRouter.get('/:id/delete-check', asyncHandler(createDeleteCheckHandler('quote')))
+quotesRouter.get('/:id/delete-check', requirePermission('quotes:delete'), asyncHandler(createDeleteCheckHandler('quote')))
 
-quotesRouter.get('/:id', asyncHandler(async (req, res) => {
+quotesRouter.get('/:id', requirePermission('quotes:view'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.getById(id)
   if (!data) {
@@ -77,12 +79,14 @@ quotesRouter.get('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-quotesRouter.post('/', asyncHandler(async (req, res) => {
+// 新增订单：需要 quotes:create 权限
+quotesRouter.post('/', requirePermission('quotes:create'), asyncHandler(async (req, res) => {
   const data = await db.quotes.create(req.body)
   res.json(data)
 }))
 
-quotesRouter.put('/:id', asyncHandler(async (req, res) => {
+// 编辑订单：需要 quotes:edit 权限
+quotesRouter.put('/:id', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.update(id, req.body)
   if (!data) {
@@ -91,10 +95,11 @@ quotesRouter.put('/:id', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-quotesRouter.delete('/:id', asyncHandler(createProtectedDeleteHandler('quote', db.quotes.delete)))
+// 删除订单：需要 quotes:delete 权限
+quotesRouter.delete('/:id', requirePermission('quotes:delete'), asyncHandler(createProtectedDeleteHandler('quote', db.quotes.delete)))
 
-// 复制订单接口（在服务器端直接复制，避免传输大字段）
-quotesRouter.post('/:id/copy', asyncHandler(async (req, res) => {
+// 复制订单：需要 quotes:copy 权限
+quotesRouter.post('/:id/copy', requirePermission('quotes:copy'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.copy(id)
   if (!data) {
@@ -103,8 +108,8 @@ quotesRouter.post('/:id/copy', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-// 状态流转接口：进入下一节点
-quotesRouter.post('/:id/next-status', asyncHandler(async (req, res) => {
+// 状态流转接口：需要 quotes:status-transition 权限
+quotesRouter.post('/:id/next-status', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.nextStatus(id)
   if (!data) {
@@ -113,8 +118,7 @@ quotesRouter.post('/:id/next-status', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-// 状态流转接口：退回上一节点
-quotesRouter.post('/:id/prev-status', asyncHandler(async (req, res) => {
+quotesRouter.post('/:id/prev-status', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.prevStatus(id)
   if (!data) {
@@ -123,8 +127,7 @@ quotesRouter.post('/:id/prev-status', asyncHandler(async (req, res) => {
   res.json(data)
 }))
 
-// 状态流转接口：直接结束（报价中和打样中可用）
-quotesRouter.post('/:id/end', asyncHandler(async (req, res) => {
+quotesRouter.post('/:id/end', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.quotes.endQuote(id)
   if (!data) {

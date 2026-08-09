@@ -20,6 +20,8 @@
     "db:seed": "tsx api/seed.ts",
     "db:migrate": "tsx api/migrate.ts",
     "db:reset": "tsx api/reset.ts",
+    "db:cleanup-history": "tsx scripts/cleanup-quote-history.ts",
+    "db:cleanup-history:dry": "tsx scripts/cleanup-quote-history.ts --dry-run",
     "env:build": "bash scripts/build.sh",
     "env:start": "bash scripts/start.sh",
     "env:stop": "bash scripts/stop.sh",

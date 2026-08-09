@@ -394,12 +394,11 @@ describe('Quote modifiedFormulas 公式修改持久化', () => {
     expect(found!.tableData).toEqual([[null, '数量'], [100, null]])
   })
 
-  it('getAll 返回的 modifiedFormulas 已正确解析为对象', async () => {
+  it('getById 返回的 modifiedFormulas 已正确解析为对象', async () => {
     const modified = { J8: '=SUM(J6:J7)*1.1', K9: '=J9*1.1' }
-    await db.quotes.create({ customerName: 'getAll测试', productStyle: '1', modifiedFormulas: modified })
-    const all = await db.quotes.getAll()
-    const found = all.find((q: { customerName: string }) => q.customerName === 'getAll测试')
-    expect(found).toBeDefined()
+    const created = await db.quotes.create({ customerName: 'getAll测试', productStyle: '1', modifiedFormulas: modified })
+    const found = await db.quotes.getById(created.id)
+    expect(found).not.toBeNull()
     expect(found!.modifiedFormulas).toEqual(modified)
     expect(typeof found!.modifiedFormulas).toBe('object')
     expect(Array.isArray(found!.modifiedFormulas)).toBe(false)
@@ -460,12 +459,11 @@ describe('Quote allFormulas 完整公式持久化', () => {
     expect(updated!.quantity).toBe('9999')
   })
 
-  it('getAll 返回的 allFormulas 已正确解析为对象', async () => {
+  it('getById 返回的 allFormulas 已正确解析为对象', async () => {
     const all = { J8: '=SUM(J6:J7)', K9: '=J9*1.1' }
-    await db.quotes.create({ customerName: 'getAll全公式', productStyle: '1', allFormulas: all })
-    const list = await db.quotes.getAll()
-    const found = list.find((q: { customerName: string }) => q.customerName === 'getAll全公式')
-    expect(found).toBeDefined()
+    const created = await db.quotes.create({ customerName: 'getAll全公式', productStyle: '1', allFormulas: all })
+    const found = await db.quotes.getById(created.id)
+    expect(found).not.toBeNull()
     expect(found!.allFormulas).toEqual(all)
     expect(typeof found!.allFormulas).toBe('object')
     expect(Array.isArray(found!.allFormulas)).toBe(false)

@@ -1,30 +1,29 @@
 import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/auth'
-import { Mail, Lock, LogIn } from 'lucide-react'
+import { Mail, Lock, LogIn, AlertCircle } from 'lucide-react'
 
 export default function Login() {
   const [email, setEmail] = useState('517290808@qq.com')
-  const [password, setPassword] = useState('123456')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
   const { login } = useAuthStore()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    login({
-      id: '1',
-      name: email.split('@')[0],
-      email,
-      role: 'admin',
-    })
-    
-    navigate('/')
-    setLoading(false)
+    setError('')
+
+    try {
+      await login(email, password)
+      navigate('/')
+    } catch (err: any) {
+      setError(err.message || '登录失败')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -37,6 +36,13 @@ export default function Login() {
           <h1 className="text-xl sm:text-2xl font-bold text-gray-800">报价跟单系统</h1>
           <p className="text-gray-500 mt-2">登录您的账户</p>
         </div>
+
+        {error && (
+          <div className="mb-4 flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            <AlertCircle size={18} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
@@ -78,12 +84,8 @@ export default function Login() {
           </button>
         </form>
 
-        <p className="text-center mt-6 text-gray-500">
-          还没有账户？ <Link to="/register" className="text-primary-600 hover:text-primary-700 font-medium">注册</Link>
-        </p>
-
-        <p className="text-center mt-3 text-xs text-gray-400">
-          登录后 10 分钟无操作将自动登出
+        <p className="text-center mt-6 text-xs text-gray-400">
+          如需账号请联系系统管理员
         </p>
       </div>
     </div>

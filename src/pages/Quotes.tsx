@@ -7,6 +7,7 @@ import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
+import { usePermission } from '../hooks/usePermission'
 import type { Product } from '../types'
 
 export interface Quote {
@@ -101,6 +102,7 @@ export default function Quotes() {
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
+  const { hasPermission } = usePermission()
 
   useEffect(() => {
     fetchQuotes()
@@ -285,21 +287,25 @@ export default function Quotes() {
           <p className="text-gray-500 mt-1">管理所有订单</p>
         </div>
         <div className="flex flex-wrap gap-2 sm:gap-3">
-          <button
-            onClick={() => { setExportError(''); setShowExportDialog(true) }}
-            disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 border border-primary-200 text-primary-700 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-            导出 Excel
-          </button>
-          <button
-            onClick={() => navigate('/quotes/new')}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            <Plus size={20} />
-            新增订单
-          </button>
+          {hasPermission('quotes:export') && (
+            <button
+              onClick={() => { setExportError(''); setShowExportDialog(true) }}
+              disabled={exporting}
+              className="flex items-center gap-2 px-4 py-2 border border-primary-200 text-primary-700 bg-white rounded-lg hover:bg-primary-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+              导出 Excel
+            </button>
+          )}
+          {hasPermission('quotes:create') && (
+            <button
+              onClick={() => navigate('/quotes/new')}
+              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+            >
+              <Plus size={20} />
+              新增订单
+            </button>
+          )}
         </div>
       </div>
 
@@ -565,58 +571,68 @@ export default function Quotes() {
                             {/* 操作 - 固定列 */}
                             <div className="w-56 px-4 py-4 flex-shrink-0 sticky right-0 bg-white z-20 hover:bg-gray-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">
                               <div className="flex items-center gap-2">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    navigate(`/quotes/${quote.id}`)
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                                  title="查看详情"
-                                >
-                                  <Eye size={16} />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    navigate(`/quotes/${quote.id}/edit`)
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                                  title="编辑"
-                                >
-                                  <Edit size={16} />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleCopy(quote.id)
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                                  title="复制订单"
-                                >
-                                  <Copy size={16} />
-                                </button>
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation()
-                                    // 打印需要完整数据（含 images），通过 getById 获取
-                                    const fullQuote = await api.quotes.getById(quote.id)
-                                    setPrintTarget(fullQuote || quote)
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                                  title="打印订单"
-                                >
-                                  <Printer size={16} />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setDeleteTarget(quote.id)
-                                  }}
-                                  className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                  title="删除"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
+                                {hasPermission('quotes:view') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      navigate(`/quotes/${quote.id}`)
+                                    }}
+                                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                    title="查看详情"
+                                  >
+                                    <Eye size={16} />
+                                  </button>
+                                )}
+                                {hasPermission('quotes:edit') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      navigate(`/quotes/${quote.id}/edit`)
+                                    }}
+                                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                    title="编辑"
+                                  >
+                                    <Edit size={16} />
+                                  </button>
+                                )}
+                                {hasPermission('quotes:copy') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleCopy(quote.id)
+                                    }}
+                                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                    title="复制订单"
+                                  >
+                                    <Copy size={16} />
+                                  </button>
+                                )}
+                                {hasPermission('quotes:print') && (
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      // 打印需要完整数据（含 images），通过 getById 获取
+                                      const fullQuote = await api.quotes.getById(quote.id)
+                                      setPrintTarget(fullQuote || quote)
+                                    }}
+                                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                    title="打印订单"
+                                  >
+                                    <Printer size={16} />
+                                  </button>
+                                )}
+                                {hasPermission('quotes:delete') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setDeleteTarget(quote.id)
+                                    }}
+                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="删除"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
