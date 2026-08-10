@@ -1,20 +1,25 @@
 /**
  * VTable-Sheet 复制功能增强
  *
- * 解决两个生产环境实际反馈的问题：
- *   1. 「单单元格无法成功复制」—— 在 HTTP（非安全上下文）下 navigator.clipboard 不可用，
- *      VTable 内部 fallback 到 document.execCommand('copy') + 隐藏 textarea 的路径，
- *      在 canvas 焦点情况下常失败，导致剪贴板根本没写入内容。
- *   2. 「整行复制后粘贴内容不含公式」—— VTable-Sheet 默认只配置了
+ * 解决三个生产环境实际反馈的问题：
+ *   1. 「单单元格无法成功复制」—— VTable-Sheet 默认 editCellTrigger 包含 "keydown"，
+ *      且 keydown 监听器中单单元格选中 + 字符键（含 'c'）会触发 startEditCell 进入编辑模式，
+ *      该逻辑不检查 ctrlKey/metaKey，导致 Ctrl+C 被当作编辑输入而非复制。
+ *      整行选中时 start.col !== end.col 不满足条件，故整行复制不受影响。
+ *   2. 「HTTP 环境下剪贴板写入失败」—— 在 HTTP（非安全上下文）下 navigator.clipboard 不可用，
+ *      VTable 的 handleCopy 是 async 函数（含 yield setTimeout），失去用户手势上下文后
+ *      fallback 的 textarea + execCommand('copy') 常失败。
+ *   3. 「整行复制后粘贴内容不含公式」—— VTable-Sheet 默认只配置了
  *      keyboardOptions.getCopyCellValue.html（HTML 模式带公式），未配置 .value，
  *      导致纯文本模式（text/plain）复制的是公式计算后的值（如 "0.00"），不是公式字符串（如 "=B6*F6"）。
- *      而 fallback 路径只写 text/plain，HTML 模式的公式根本没用上。
  *
  * 修复策略：
  *   A. 覆盖 keyboardOptions.getCopyCellValue.value，让纯文本模式也返回公式字符串。
- *   B. 在 navigator.clipboard 不可用（HTTP 非安全上下文）时，主动拦截 keydown Ctrl+C
- *      并通过 copy 事件直接写入 e.clipboardData，同时写 text/plain 和 text/html，
- *      确保公式无论粘贴到表格内、Excel 还是纯文本编辑器都能正确呈现。
+ *   B. keydown capture 阶段拦截 Ctrl+C，用 stopImmediatePropagation 阻止 VTable 的 keydown
+ *      监听器执行（防止单单元格进入编辑模式），但不 preventDefault，让浏览器原生 copy 事件触发。
+ *   C. copy 事件 capture 阶段同步写入 e.clipboardData（原生事件的 clipboardData 可用），
+ *      用 stopImmediatePropagation 阻止 VTable 的 async handleCopy（避免 fallback 失败）。
+ *      支持单单元格：当 ranges 为空但 cellPos 有效时，临时注入单单元格 range 供 getCopyValue 使用。
  *
  * 使用：
  *   const cleanup = setupCopyFormulaEnhancement(sheet, activeTable, sheetKey)
@@ -99,39 +104,33 @@ export function setupCopyFormulaEnhancement(
     html: originalHtml || formulaAwareValue,
   }
 
-  // ─── 修复 B：HTTP 环境下接管 copy 事件，绕过 navigator.clipboard 限制 ───
+  // ─── 修复 B+C：keydown 拦截 + copy 事件同步写入 ───
   const element = activeTable.getElement?.() as HTMLElement | undefined
   if (!element) return () => {}
 
-  // 判断是否需要介入：仅在 navigator.clipboard 不可用时（非安全上下文）才启用
+  // 判断是否需要介入 copy 事件：仅在 navigator.clipboard 不可用时（非安全上下文）才启用
   const needsClipboardOverride = (): boolean =>
     !navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === 'undefined'
 
-  // copy 事件处理：直接用 e.clipboardData 写入 text/plain + text/html
-  const onCopy = (e: ClipboardEvent) => {
-    if (!needsClipboardOverride()) return // 安全上下文让 VTable 自己处理
-    if (!e.clipboardData) return // 没剪贴板对象，让 VTable 走它的 fallback
-    const ranges = activeTable.stateManager?.select?.ranges
-    if (!ranges || ranges.length === 0) return
-
-    const plainData = activeTable.getCopyValue(formulaAwareValue)
-    if (!plainData) return
-
-    e.preventDefault()
-    e.clipboardData.setData('text/plain', plainData)
-    // 同时写 text/html，让 Excel 等支持 HTML 的目标也能正确粘贴公式
-    const htmlData = activeTable.getCopyValue(originalHtml || formulaAwareValue)
-    if (htmlData) {
-      e.clipboardData.setData('text/html', dataToHTML(htmlData))
-    }
+  // 判断当前是否有有效选区（ranges 或 cellPos）
+  const hasSelection = (): boolean => {
+    const select = activeTable.stateManager?.select
+    if (!select) return false
+    const ranges = select.ranges
+    if (ranges && ranges.length > 0) return true
+    // 单单元格选中时 ranges 可能为空，但 cellPos 有效
+    const cellPos = select.cellPos
+    if (cellPos && cellPos.col >= 0 && cellPos.row >= 0) return true
+    return false
   }
 
-  // keydown 拦截：在 navigator.clipboard 不可用时，阻止 VTable 的默认 handleCopy 流程，
-  // 改为主动触发 copy 事件（由 onCopy 处理写入），避免 VTable fallback 走 textarea + execCommand 失败
+  // keydown 拦截：Ctrl+C 时阻止 VTable 的 keydown 监听器执行
+  // 目的：防止 VTable 在单单元格选中时把 'c' 当作编辑输入（startEditCell），不检查 ctrlKey 的 bug
+  // 不 preventDefault，让浏览器原生 copy 事件触发（原生事件的 clipboardData 可用）
   const onKeyDown = (e: KeyboardEvent) => {
-    if (!needsClipboardOverride()) return
-    if (!(e.ctrlKey || e.metaKey) || e.key !== 'c' && e.key !== 'C') return
-    // 在编辑器内时不拦截，让浏览器默认处理（用户可能想复制编辑器内选中的文本）
+    // 仅处理 Ctrl+C / Cmd+C
+    if (!(e.ctrlKey || e.metaKey) || (e.key !== 'c' && e.key !== 'C')) return
+    // 在编辑器内时不拦截，让浏览器默认处理（用户想复制编辑器内选中的文本）
     const target = e.target as HTMLElement | null
     if (
       target &&
@@ -141,33 +140,69 @@ export function setupCopyFormulaEnhancement(
     ) {
       return
     }
-    const ranges = activeTable.stateManager?.select?.ranges
-    if (!ranges || ranges.length === 0) return
+    // 无选区时不拦截（让浏览器默认处理）
+    if (!hasSelection()) return
 
-    // 阻止 VTable 的 keydown 处理（防止它走 fallback textarea 路径导致复制失败）
+    // stopImmediatePropagation 阻止同一 element 上 VTable 的 keydown 监听器执行
+    // （capture 阶段先于 target/bubble 阶段，stopImmediatePropagation 可阻止后续监听器）
+    // 不 preventDefault：让浏览器原生 copy 事件触发，其 clipboardData 可用于 setData
+    e.stopImmediatePropagation()
+  }
+
+  // copy 事件处理：同步写入 e.clipboardData（原生 copy 事件的 clipboardData 可用）
+  const onCopy = (e: ClipboardEvent) => {
+    if (!needsClipboardOverride()) return // HTTPS 环境让 VTable 自己处理
+    if (!e.clipboardData) return // 无剪贴板对象，让 VTable 走它的 fallback
+
+    const select = activeTable.stateManager?.select
+    if (!select) return
+
+    const ranges = select.ranges
+    const cellPos = select.cellPos
+
+    // 修复 C：单单元格选中时 ranges 可能为空（只有 cellPos），临时注入单单元格 range
+    // getCopyValue 依赖 ranges 遍历，没有 ranges 会返回空字符串
+    let injectedRange = false
+    if ((!ranges || ranges.length === 0) && cellPos && cellPos.col >= 0 && cellPos.row >= 0) {
+      select.ranges = [{
+        start: { col: cellPos.col, row: cellPos.row },
+        end: { col: cellPos.col, row: cellPos.row },
+      }]
+      injectedRange = true
+    }
+
+    if (!select.ranges || select.ranges.length === 0) {
+      return
+    }
+
+    const plainData = activeTable.getCopyValue(formulaAwareValue)
+
+    // 恢复 ranges（避免影响 VTable 内部状态）
+    if (injectedRange) {
+      select.ranges = ranges || []
+    }
+
+    if (!plainData) return
+
+    // 同步写入剪贴板（原生 copy 事件的 clipboardData 可写）
     e.preventDefault()
-    e.stopPropagation()
-    // 主动派发 copy 事件，由 onCopy 写入剪贴板
-    // 注意：ClipboardEvent 构造函数在所有现代浏览器中都支持
-    try {
-      const copyEvent = new ClipboardEvent('copy', { bubbles: true, cancelable: true })
-      element.dispatchEvent(copyEvent)
-    } catch {
-      // 极少数旧浏览器不支持 ClipboardEvent 构造，回退到 execCommand
-      try {
-        document.execCommand('copy')
-      } catch {
-        /* 忽略 */
-      }
+    // stopImmediatePropagation 阻止 VTable 的 async handleCopy 执行
+    // （VTable handleCopy 含 yield setTimeout，失去用户手势后 fallback execCommand 失败）
+    e.stopImmediatePropagation()
+    e.clipboardData.setData('text/plain', plainData)
+    // 同时写 text/html，让 Excel 等支持 HTML 的目标也能正确粘贴公式
+    const htmlData = activeTable.getCopyValue(originalHtml || formulaAwareValue)
+    if (htmlData) {
+      e.clipboardData.setData('text/html', dataToHTML(htmlData))
     }
   }
 
   // 用 capture 阶段监听，先于 VTable 内部处理
-  element.addEventListener('copy', onCopy, true)
   element.addEventListener('keydown', onKeyDown, true)
+  element.addEventListener('copy', onCopy, true)
 
   return () => {
-    element.removeEventListener('copy', onCopy, true)
     element.removeEventListener('keydown', onKeyDown, true)
+    element.removeEventListener('copy', onCopy, true)
   }
 }

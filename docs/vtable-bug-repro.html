@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VTable HTTP 复制 Bug 复现</title>
+  <!-- 从 CDN 加载 VTable（jsdelivr）-->
+  <script src="https://cdn.jsdelivr.net/npm/@visactor/vtable@1.26.6/dist/vtable.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      max-width: 1000px;
+      margin: 20px auto;
+      padding: 0 20px;
+      color: #333;
+    }
+    .info {
+      background: #fff3cd;
+      border: 1px solid #ffeaa7;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin: 16px 0;
+    }
+    .info code {
+      background: #00000010;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 13px;
+    }
+    .secure-yes { color: #28a745; font-weight: bold; }
+    .secure-no  { color: #dc3545; font-weight: bold; }
+    #tableContainer {
+      margin: 20px 0;
+      border: 1px solid #ddd;
+      height: 320px;
+    }
+    .steps {
+      background: #e7f5ff;
+      border: 1px solid #b3d7ff;
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin: 16px 0;
+    }
+    .steps ol { margin: 8px 0; padding-left: 20px; }
+    .steps li { margin: 4px 0; }
+    .paste-area {
+      width: 100%;
+      height: 100px;
+      margin: 10px 0;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    .status {
+      padding: 8px 12px;
+      border-radius: 4px;
+      margin: 8px 0;
+      font-size: 14px;
+    }
+    .status-ok  { background: #d4edda; color: #155724; }
+    .status-err { background: #f8d7da; color: #721c24; }
+    table.debug {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 13px;
+    }
+    table.debug td, table.debug th {
+      border: 1px solid #ddd;
+      padding: 6px 10px;
+    }
+    table.debug th { background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <h1>VTable HTTP 复制 Bug 复现</h1>
+
+  <div class="info">
+    <strong>当前环境检测：</strong><br />
+    <table class="debug">
+      <tr><th>检测项</th><th>值</th></tr>
+      <tr><td>window.isSecureContext</td><td id="dbg-secure"></td></tr>
+      <tr><td>navigator.clipboard</td><td id="dbg-clipboard"></td></tr>
+      <tr><td>ClipboardItem</td><td id="dbg-item"></td></tr>
+      <tr><td>protocol</td><td id="dbg-proto"></td></tr>
+      <tr><td>hostname</td><td id="dbg-host"></td></tr>
+    </table>
+    <p style="margin:8px 0 0;color:#666;font-size:13px;">
+      要复现 Bug，<code>isSecureContext</code> 必须为 <span class="secure-no">false</span>（即通过 HTTP + 非 localhost 访问）。<br />
+      如果显示 <span class="secure-yes">true</span>，请改用 <code>http://&lt;本机IP&gt;:端口/vtable-bug-repro.html</code> 访问。
+    </p>
+  </div>
+
+  <div class="steps">
+    <strong>复现步骤：</strong>
+    <ol>
+      <li>在下方表格中点击任意一个单元格（单单元格选中）</li>
+      <li>按 <code>Ctrl+C</code>（或 Cmd+C）复制</li>
+      <li>点击下方文本框，按 <code>Ctrl+V</code> 粘贴</li>
+      <li>观察粘贴结果 —— 如果文本框为空，说明复制失败（Bug 已复现）</li>
+    </ol>
+  </div>
+
+  <div id="tableContainer"></div>
+
+  <h3>粘贴测试区</h3>
+  <textarea class="paste-area" id="pasteArea" placeholder="在这里粘贴（Ctrl+V），如果为空说明复制失败"></textarea>
+  <div id="status"></div>
+
+  <div class="info" style="margin-top:30px;">
+    <strong>说明：</strong><br />
+    此 Bug 的根因是 VTable 的 <code>handleCopy</code> 是 async 函数，内部有
+    <code>yield setTimeout(10)</code> 异步等待。在 HTTP（非安全上下文）下
+    <code>navigator.clipboard</code> 不可用，fallback 路径中的
+    <code>e.clipboardData.setData()</code> 在 async 之后已失效（浏览器只在同步事件分发期间允许写入），
+    <code>document.execCommand('copy')</code> 也因失去用户手势上下文而失败。
+  </div>
+
+  <script>
+    // ─── 环境检测 ───
+    document.getElementById('dbg-secure').innerHTML =
+      window.isSecureContext
+        ? '<span class="secure-yes">true</span>（安全上下文，无法复现 Bug）'
+        : '<span class="secure-no">false</span>（非安全上下文，可复现 Bug）';
+    document.getElementById('dbg-clipboard').innerHTML =
+      navigator.clipboard ? '✅ 可用' : '<span class="secure-no">❌ 不可用</span>';
+    document.getElementById('dbg-item').innerHTML =
+      typeof ClipboardItem !== 'undefined' ? '✅ 可用' : '<span class="secure-no">❌ 不可用</span>';
+    document.getElementById('dbg-proto').textContent = location.protocol;
+    document.getElementById('dbg-host').textContent = location.hostname;
+
+    // ─── 创建 VTable 实例 ───
+    const records = [
+      { name: '商品A', price: 10, qty: 5 },
+      { name: '商品B', price: 20, qty: 3 },
+      { name: '商品C', price: 15, qty: 8 },
+      { name: '商品D', price: 8,  qty: 12 },
+    ];
+
+    const option = {
+      records,
+      columns: [
+        { field: 'name',  title: '名称',  width: 120 },
+        { field: 'price', title: '单价',  width: 100 },
+        { field: 'qty',   title: '数量',  width: 100 },
+        { field: 'total', title: '总价',  width: 120,
+          fieldKey: 'total',
+          fieldFormat: (record) => record.price * record.qty,
+        },
+      ],
+      autoWrapText: true,
+      keyboardOptions: {
+        copySelected: true,
+      },
+      editCellTrigger: ['keydown', 'dblclick'],
+    };
+
+    const table = new VTable.ListTable(document.getElementById('tableContainer'), option);
+
+    // ─── 粘贴测试区：监听 paste 事件展示结果 ───
+    const pasteArea = document.getElementById('pasteArea');
+    const statusDiv = document.getElementById('status');
+
+    pasteArea.addEventListener('paste', (e) => {
+      const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+      if (text && text.length > 0) {
+        statusDiv.innerHTML =
+          `<div class="status status-ok">✅ 粘贴成功，内容长度 ${text.length}，内容：${text.replace(/</g, '&lt;')}</div>`;
+      } else {
+        statusDiv.innerHTML =
+          '<div class="status status-err">❌ 粘贴内容为空，复制失败（Bug 已复现）</div>';
+      }
+    });
+  </script>
+</body>
+</html>
