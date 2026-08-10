@@ -52,10 +52,16 @@ function createMockTable(options: {
   // 模拟 select.ranges
   let ranges: any[] = []
 
+  // 模拟 eventManager（含 copySourceRange，用于公式引用迁移）
+  const eventManager: any = {
+    copySourceRange: null as any,
+  }
+
   // 模拟 ListTable
   const table: any = {
     options: { keyboardOptions },
     getElement: () => element,
+    eventManager,
     stateManager: {
       select: {
         get ranges() {
@@ -145,6 +151,41 @@ describe('setupCopyFormulaEnhancement', () => {
     }
   }
 
+  // 辅助：创建带 mock clipboardData 的 ClipboardEvent
+  // jsdom 的 ClipboardEvent.clipboardData 为 null，需要手动注入
+  function createCopyEvent(): { event: ClipboardEvent; clipboardData: any } {
+    const clipboardData = {
+      _data: {} as Record<string, string>,
+      setData(type: string, data: string) { this._data[type] = data },
+      getData(type: string) { return this._data[type] ?? '' },
+    }
+    const event = new ClipboardEvent('copy', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: clipboardData, configurable: true })
+    return { event, clipboardData }
+  }
+
+  // 辅助：检测 keydown 是否被 stopImmediatePropagation 拦截
+  // 原理：在 enhancer 的 capture 监听器之后注册第二个监听器，
+  // 如果 stopImmediatePropagation 被调用，第二个监听器不会执行
+  function dispatchCtrlC(element: HTMLElement, key: string = 'c', meta: boolean = false): {
+    ke: KeyboardEvent
+    intercepted: boolean
+  } {
+    let intercepted = false
+    // 在 enhancer 之后注册的监听器（同元素、target 阶段）
+    // stopImmediatePropagation 会阻止同元素上后续注册的监听器执行
+    element.addEventListener('keydown', () => { intercepted = true }, false)
+    const ke = new KeyboardEvent('keydown', {
+      key,
+      ctrlKey: !meta,
+      metaKey: meta,
+      bubbles: true,
+      cancelable: true,
+    })
+    element.dispatchEvent(ke)
+    return { ke, intercepted }
+  }
+
   it('修复 A：覆盖 getCopyCellValue.value，使纯文本模式也返回公式字符串', () => {
     const { sheet, table, setRanges } = createMockTable({
       formulas: { J6: '=B6*F6' },
@@ -202,7 +243,7 @@ describe('setupCopyFormulaEnhancement', () => {
     expect(data).not.toMatch(/加工费\t\t\t\t\t\t\t\t\t0(\t|$)/)
   })
 
-  it('修复 B：navigator.clipboard 不可用时，Ctrl+C 触发 copy 事件并写入剪贴板', () => {
+  it('修复 B：navigator.clipboard 不可用时，Ctrl+C 拦截 keydown 并在 copy 事件中写入剪贴板', () => {
     disableClipboard()
     const { sheet, table, element, setRanges } = createMockTable({
       formulas: { J6: '=B6*F6' },
@@ -214,35 +255,19 @@ describe('setupCopyFormulaEnhancement', () => {
     // 选中 J6
     setRanges([{ start: { col: 9, row: 5 }, end: { col: 9, row: 5 } }])
 
-    // 捕获 enhancer 派发的 copy 事件，读取 onCopy 写入的 clipboardData
-    let caughtEvent: ClipboardEvent | null = null
-    const captureCopy = (e: Event) => {
-      caughtEvent = e as ClipboardEvent
-    }
-    element.addEventListener('copy', captureCopy, true)
+    // 1. keydown 应被 stopImmediatePropagation 拦截（不 preventDefault，让原生 copy 事件触发）
+    const { intercepted } = dispatchCtrlC(element)
+    expect(intercepted).toBe(false) // 第二个监听器不应执行（stopImmediatePropagation）
 
-    // 派发 Ctrl+C keydown
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c',
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    element.dispatchEvent(ke)
+    // 2. 模拟浏览器原生 copy 事件（jsdom 不自动触发，需手动派发）
+    const { event: copyEvent, clipboardData } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
 
-    // keydown 应被 preventDefault
-    expect(ke.defaultPrevented).toBe(true)
-
-    // copy 事件应被触发
-    expect(caughtEvent).not.toBeNull()
-    // 剪贴板应写入公式字符串（text/plain 含公式，不再是计算值 0）
-    const plainData = caughtEvent!.clipboardData?.getData('text/plain') ?? ''
-    expect(plainData).toBe('=B6*F6')
+    // 3. 剪贴板应写入公式字符串（text/plain 含公式，不再是计算值 0）
+    expect(clipboardData.getData('text/plain')).toBe('=B6*F6')
     // text/html 也应写入（Excel 粘贴用）
-    const htmlData = caughtEvent!.clipboardData?.getData('text/html') ?? ''
-    expect(htmlData).toContain('=B6*F6')
+    expect(clipboardData.getData('text/html')).toContain('=B6*F6')
 
-    element.removeEventListener('copy', captureCopy, true)
     cleanup()
   })
 
@@ -431,7 +456,7 @@ describe('setupCopyFormulaEnhancement', () => {
     expect(defaultPrevented).toBe(false)
   })
 
-  it('修复 B：onKeyDown 中 ClipboardEvent 抛错时回退到 execCommand', () => {
+  it('修复 B：onKeyDown 不 preventDefault，让浏览器原生 copy 事件触发', () => {
     disableClipboard()
     const { sheet, table, element, setRanges } = createMockTable({
       values: { A1: 'test' },
@@ -439,68 +464,11 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    // 确保 document.execCommand 存在
-    if (!document.execCommand) {
-      (document as any).execCommand = () => true
-    }
-    // Mock document.execCommand 以验证 fallback 被调用
-    const execCommandSpy = vi.spyOn(document, 'execCommand').mockImplementation(() => true)
-
-    // Mock ClipboardEvent 构造函数抛出错误
-    const originalClipboardEvent = (window as any).ClipboardEvent
-    ;(window as any).ClipboardEvent = class { constructor() { throw new Error('Cannot construct') } }
-
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c',
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    element.dispatchEvent(ke)
-
-    // 应该调用了 preventDefault 和 execCommand
-    expect(ke.defaultPrevented).toBe(true)
-    expect(execCommandSpy).toHaveBeenCalledWith('copy')
-
-    // 恢复 ClipboardEvent
-    ;(window as any).ClipboardEvent = originalClipboardEvent
-    execCommandSpy.mockRestore()
-  })
-
-  it('修复 B：onKeyDown 中 ClipboardEvent 和 execCommand 都抛错时不抛出', () => {
-    disableClipboard()
-    const { sheet, table, element, setRanges } = createMockTable({
-      values: { A1: 'test' },
-    })
-    setupCopyFormulaEnhancement(sheet, table, 'sheet1')
-    setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
-
-    // 确保 document.execCommand 存在
-    if (!document.execCommand) {
-      (document as any).execCommand = () => true
-    }
-
-    // Mock ClipboardEvent 构造函数抛出错误
-    const originalClipboardEvent = (window as any).ClipboardEvent
-    ;(window as any).ClipboardEvent = class { constructor() { throw new Error('Cannot construct') } }
-
-    // Mock execCommand 也抛出错误
-    const execCommandSpy = vi.spyOn(document, 'execCommand').mockImplementation(() => { throw new Error('exec failed') })
-
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c',
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    
-    // 整个派发过程不应抛出
-    expect(() => element.dispatchEvent(ke)).not.toThrow()
-    expect(ke.defaultPrevented).toBe(true) // 仍然调用了 preventDefault
-
-    // 恢复
-    ;(window as any).ClipboardEvent = originalClipboardEvent
-    execCommandSpy.mockRestore()
+    // keydown 不应 preventDefault（让浏览器原生 copy 事件触发）
+    const { ke, intercepted } = dispatchCtrlC(element)
+    expect(ke.defaultPrevented).toBe(false)
+    // 但应 stopImmediatePropagation（阻止 VTable keydown 监听器执行）
+    expect(intercepted).toBe(false)
   })
 
   it('dataToHTML：处理连续空格（2个以上）为 mso-spacerun span', () => {
@@ -511,19 +479,11 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    let caughtEvent: ClipboardEvent | null = null
-    const captureCopy = (e: Event) => {
-      caughtEvent = e as ClipboardEvent
-    }
-    element.addEventListener('copy', captureCopy, true)
+    // 直接派发 copy 事件（jsdom 不自动从 keydown 触发 copy）
+    const { event: copyEvent, clipboardData } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
 
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c', ctrlKey: true, bubbles: true, cancelable: true,
-    })
-    element.dispatchEvent(ke)
-
-    expect(caughtEvent).not.toBeNull()
-    const htmlData = caughtEvent!.clipboardData?.getData('text/html') ?? ''
+    const htmlData = clipboardData.getData('text/html')
     // 验证包含空格替换的 HTML 结构
     expect(htmlData).toContain('<span style="mso-spacerun: yes">&nbsp; </span>')
   })
@@ -536,19 +496,10 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    let caughtEvent: ClipboardEvent | null = null
-    const captureCopy = (e: Event) => {
-      caughtEvent = e as ClipboardEvent
-    }
-    element.addEventListener('copy', captureCopy, true)
+    const { event: copyEvent, clipboardData } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
 
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c', ctrlKey: true, bubbles: true, cancelable: true,
-    })
-    element.dispatchEvent(ke)
-
-    expect(caughtEvent).not.toBeNull()
-    const htmlData = caughtEvent!.clipboardData?.getData('text/html') ?? ''
+    const htmlData = clipboardData.getData('text/html')
     // 验证换行符被替换为 <br>（后面可能跟随 \r\n 由第二个正则处理）
     expect(htmlData).toContain('line1<br>')
     expect(htmlData).toContain('line2')
@@ -562,19 +513,10 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    let caughtEvent: ClipboardEvent | null = null
-    const captureCopy = (e: Event) => {
-      caughtEvent = e as ClipboardEvent
-    }
-    element.addEventListener('copy', captureCopy, true)
+    const { event: copyEvent, clipboardData } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
 
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c', ctrlKey: true, bubbles: true, cancelable: true,
-    })
-    element.dispatchEvent(ke)
-
-    expect(caughtEvent).not.toBeNull()
-    const htmlData = caughtEvent!.clipboardData?.getData('text/html') ?? ''
+    const htmlData = clipboardData.getData('text/html')
     // 验证特殊字符被正确转义
     expect(htmlData).toContain('&amp;') // & 被转义
     expect(htmlData).toContain('&lt;') // < 被转义
@@ -590,14 +532,14 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    // 直接派发一个 copy 事件
-    const copyEvent = new ClipboardEvent('copy', { bubbles: true, cancelable: true })
-    let defaultPrevented = false
-    copyEvent.preventDefault = () => { defaultPrevented = true }
+    // 直接派发 copy 事件（带 mock clipboardData）
+    const { event: copyEvent, clipboardData } = createCopyEvent()
     element.dispatchEvent(copyEvent)
 
     // 因为 needsClipboardOverride 为 false，onCopy 应该直接返回，不会调用 preventDefault
-    expect(defaultPrevented).toBe(false)
+    expect(copyEvent.defaultPrevented).toBe(false)
+    // clipboardData 不应被写入
+    expect(clipboardData.getData('text/plain')).toBe('')
   })
 
   it('onCopy 中 ranges 为空时直接返回', () => {
@@ -606,14 +548,15 @@ describe('setupCopyFormulaEnhancement', () => {
       values: { A1: 'test' },
     })
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
-    // 选区为空
-    const copyEvent = new ClipboardEvent('copy', { bubbles: true, cancelable: true })
-    let defaultPrevented = false
-    copyEvent.preventDefault = () => { defaultPrevented = true }
+    // 选区为空，cellPos 也无效（模拟无选区状态）
+    table.stateManager.select.cellPos = { col: -1, row: -1 }
+
+    const { event: copyEvent, clipboardData } = createCopyEvent()
     element.dispatchEvent(copyEvent)
 
     // ranges 为空，onCopy 应该直接返回
-    expect(defaultPrevented).toBe(false)
+    expect(copyEvent.defaultPrevented).toBe(false)
+    expect(clipboardData.getData('text/plain')).toBe('')
   })
 
   it('onCopy 中 plainData 为空时直接返回', () => {
@@ -624,13 +567,12 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    const copyEvent = new ClipboardEvent('copy', { bubbles: true, cancelable: true })
-    let defaultPrevented = false
-    copyEvent.preventDefault = () => { defaultPrevented = true }
+    const { event: copyEvent, clipboardData } = createCopyEvent()
     element.dispatchEvent(copyEvent)
 
     // getCopyValue 返回空字符串，onCopy 应该直接返回
-    expect(defaultPrevented).toBe(false)
+    expect(copyEvent.defaultPrevented).toBe(false)
+    expect(clipboardData.getData('text/plain')).toBe('')
   })
 
   it('onKeyDown 中支持大写 C (Ctrl+C)', () => {
@@ -641,16 +583,9 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    const ke = new KeyboardEvent('keydown', {
-      key: 'C', // 大写 C
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    element.dispatchEvent(ke)
-
-    // 应该被拦截
-    expect(ke.defaultPrevented).toBe(true)
+    // 大写 C 也应被 stopImmediatePropagation 拦截
+    const { intercepted } = dispatchCtrlC(element, 'C')
+    expect(intercepted).toBe(false)
   })
 
   it('onKeyDown 中非复制快捷键不拦截', () => {
@@ -717,16 +652,90 @@ describe('setupCopyFormulaEnhancement', () => {
     setupCopyFormulaEnhancement(sheet, table, 'sheet1')
     setRanges([{ start: { col: 0, row: 0 }, end: { col: 0, row: 0 } }])
 
-    const ke = new KeyboardEvent('keydown', {
-      key: 'c',
-      metaKey: true, // Mac 的 Command 键
-      ctrlKey: false,
-      bubbles: true,
-      cancelable: true,
-    })
-    element.dispatchEvent(ke)
+    // metaKey (Command) + c 也应被 stopImmediatePropagation 拦截
+    const { intercepted } = dispatchCtrlC(element, 'c', true)
+    expect(intercepted).toBe(false)
+  })
 
-    // 应该被拦截
-    expect(ke.defaultPrevented).toBe(true)
+  // ─── 修复 D：copySourceRange 设置（公式引用自动迁移） ──────────────
+
+  it('修复 D：单单元格复制时设置 copySourceRange 为单元格位置', () => {
+    disableClipboard()
+    const { sheet, table, element, setRanges } = createMockTable({
+      formulas: { J6: '=B6*F6' },
+      values: { J6: 0 },
+    })
+    setupCopyFormulaEnhancement(sheet, table, 'sheet1')
+    // 选中 J6（col=9, row=5）
+    setRanges([{ start: { col: 9, row: 5 }, end: { col: 9, row: 5 } }])
+
+    const { event: copyEvent } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
+
+    // copySourceRange 应设为 J6 的位置（col=9, row=5）
+    expect(table.eventManager.copySourceRange).toEqual({
+      startCol: 9,
+      startRow: 5,
+    })
+  })
+
+  it('修复 D：整行复制时设置 copySourceRange 为行起点（min col/row）', () => {
+    disableClipboard()
+    const { sheet, table, element, setRanges } = createMockTable({
+      formulas: { J6: '=B6*F6' },
+      values: { A6: '加工费', J6: 0 },
+    })
+    setupCopyFormulaEnhancement(sheet, table, 'sheet1')
+    // 选中整行 row=5，col 3-15（start/end 顺序可能反转）
+    setRanges([{ start: { col: 15, row: 5 }, end: { col: 3, row: 5 } }])
+
+    const { event: copyEvent } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
+
+    // copySourceRange 应取 min col/row（col=3, row=5）
+    expect(table.eventManager.copySourceRange).toEqual({
+      startCol: 3,
+      startRow: 5,
+    })
+  })
+
+  it('修复 D：单单元格 ranges 为空但 cellPos 有效时，注入 range 并设置 copySourceRange', () => {
+    disableClipboard()
+    const { sheet, table, element, setRanges } = createMockTable({
+      values: { A1: 'test' },
+    })
+    setupCopyFormulaEnhancement(sheet, table, 'sheet1')
+    // 模拟单单元格选中：ranges 为空，但 cellPos 有效
+    setRanges([])
+    table.stateManager.select.cellPos = { col: 5, row: 3 }
+
+    const { event: copyEvent } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
+
+    // copySourceRange 应设为 cellPos 位置
+    expect(table.eventManager.copySourceRange).toEqual({
+      startCol: 5,
+      startRow: 3,
+    })
+    // ranges 应被恢复为空（不影响 VTable 内部状态）
+    expect(table.stateManager.select.ranges).toEqual([])
+  })
+
+  it('修复 D：无选区（ranges 空 + cellPos 无效）时 copySourceRange 不被设置', () => {
+    disableClipboard()
+    const { sheet, table, element, setRanges } = createMockTable({
+      values: { A1: 'test' },
+    })
+    setupCopyFormulaEnhancement(sheet, table, 'sheet1')
+    setRanges([])
+    table.stateManager.select.cellPos = { col: -1, row: -1 }
+    // 先设一个非 null 值，验证无选区时不会被错误设置
+    table.eventManager.copySourceRange = { startCol: 99, startRow: 99 }
+
+    const { event: copyEvent } = createCopyEvent()
+    element.dispatchEvent(copyEvent)
+
+    // 无选区时 onCopy 直接返回，copySourceRange 保持原值
+    expect(table.eventManager.copySourceRange).toEqual({ startCol: 99, startRow: 99 })
   })
 })

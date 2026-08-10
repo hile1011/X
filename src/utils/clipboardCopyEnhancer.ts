@@ -175,6 +175,26 @@ export function setupCopyFormulaEnhancement(
       return
     }
 
+    // 修复 D：设置 copySourceRange，让粘贴时公式引用能自动迁移（auto-migration）
+    // VTable 的公式引用调整在粘贴阶段完成（processFormulaBeforePaste），
+    // 依赖 eventManager.copySourceRange 记录的源区域起点来计算偏移量。
+    // 我们 stopImmediatePropagation 阻止了 VTable 的 handleCopy，导致 copySourceRange 未被设置，
+    // 粘贴时 processPastedText 检查 copySourceRange 为 null → 跳过公式调整 → =B6*F6 原样粘贴不迁移。
+    // 这里补设 copySourceRange，与 VTable handleCopy（event.js:298-306）逻辑完全一致。
+    const eventManager = activeTable.eventManager
+    if (eventManager) {
+      const currentRanges = select.ranges
+      if (currentRanges.length === 1) {
+        eventManager.copySourceRange = {
+          startCol: Math.min(currentRanges[0].start.col, currentRanges[0].end.col),
+          startRow: Math.min(currentRanges[0].start.row, currentRanges[0].end.row),
+        }
+      } else {
+        // 多选区时 VTable 也不设 copySourceRange（handleCopy 中多选区会 return）
+        eventManager.copySourceRange = null
+      }
+    }
+
     const plainData = activeTable.getCopyValue(formulaAwareValue)
 
     // 恢复 ranges（避免影响 VTable 内部状态）
