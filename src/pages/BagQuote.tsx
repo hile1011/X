@@ -19,6 +19,7 @@ import { ExcelUtils } from '../utils/ExcelUtils'
 import { DateUtils } from '../utils/DateUtils'
 import { SheetTemplateManager } from '../templates/SheetTemplateManager'
 import { computeSelectionSummary, type SelectionSummary, type CellRangeLike } from '../utils/SelectionSummary'
+import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
 
 interface OrderInfo {
   unitPrice: string
@@ -567,6 +568,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     // 直接通过 formulaManager 读取公式计算结果（构造时已载入引擎，编辑后由 WorkSheet 级联重算）
     const activeWs = sheet.getActiveSheet()
     const activeTable = activeWs?.tableInstance as any
+    // 复制功能增强：让纯文本模式也带公式 + HTTP 环境下接管剪贴板写入
+    const cleanupCopyEnhancer = setupCopyFormulaEnhancement(sheet, activeTable, TableConstants.SHEET_KEY)
     const syncFromTable = () => {
       const fm = (sheet as any).formulaManager
       if (!fm) return
@@ -786,6 +789,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         activeTable.off('drag_select_end', onSelectionChanged)
         activeTable.off('add_column', onAddColumn)
       }
+      cleanupCopyEnhancer()
       clearTimeout(initTimer1)
       clearTimeout(initTimer2)
       clearTimeout(sivTimer)

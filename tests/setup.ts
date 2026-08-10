@@ -102,3 +102,30 @@ if (!(globalThis as any).OffscreenCanvas) {
     getContext() { return createCtxMock() }
   }
 }
+
+// Polyfill ClipboardEvent — jsdom 不提供此构造函数，但 VTable 复制增强器
+// （src/utils/clipboardCopyEnhancer.ts）在 HTTP 环境下会 new ClipboardEvent('copy')
+// 主动派发 copy 事件。测试需要此构造函数才能验证该路径。
+// 真实浏览器（含 HTTP 环境）均内置 ClipboardEvent，生产代码无需 polyfill。
+if (typeof (globalThis as any).ClipboardEvent === 'undefined') {
+  // 简易 DataTransfer mock：收集 setData 写入的数据，供 getData 读取
+  const createDataTransfer = () => {
+    const store = new Map<string, string>()
+    return {
+      setData: (mime: string, data: string) => { store.set(mime, String(data)) },
+      getData: (mime: string) => store.get(mime) ?? '',
+      clearData: (mime?: string) => { if (mime) store.delete(mime); else store.clear() },
+      types: () => Array.from(store.keys()),
+    }
+  }
+  class ClipboardEventPolyfill extends Event {
+    clipboardData: any
+    constructor(type: string, eventInitDict?: EventInit & { clipboardData?: any }) {
+      super(type, eventInitDict)
+      // 程序化创建的 ClipboardEvent 在真实浏览器中 clipboardData 为 null，
+      // 但测试需要 onCopy 能写入数据，所以提供默认 DataTransfer mock。
+      this.clipboardData = eventInitDict?.clipboardData ?? createDataTransfer()
+    }
+  }
+  ;(globalThis as any).ClipboardEvent = ClipboardEventPolyfill
+}

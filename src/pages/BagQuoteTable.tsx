@@ -6,6 +6,7 @@ import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
+import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
 
 interface OrderInfo {
   unitPrice: string
@@ -764,6 +765,8 @@ export default function BagQuoteTable() {
     // 会同步完成依赖公式的级联重算，因此此处可直接读取最新结果
     const activeWs = sheet.getActiveSheet()
     const activeTable = activeWs?.tableInstance as any
+    // 复制功能增强：让纯文本模式也带公式 + HTTP 环境下接管剪贴板写入
+    const cleanupCopyEnhancer = setupCopyFormulaEnhancement(sheet, activeTable, SHEET_KEY)
     const onCellChange = () => syncFromTable()
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
@@ -824,6 +827,7 @@ export default function BagQuoteTable() {
         activeTable.off('change_cell_value', onCellChange)
         activeTable.off('add_column', onAddColumn)
       }
+      cleanupCopyEnhancer()
       resizeObserver.disconnect()
       menuObserver.disconnect()
       sheet.release()

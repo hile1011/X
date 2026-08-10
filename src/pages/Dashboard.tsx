@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag } from 'lucide-react'
+import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, DollarSign } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
@@ -130,6 +130,7 @@ interface Quote {
 export default function Dashboard() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [alertQuotes, setAlertQuotes] = useState<Quote[]>([])
+  const [unpaidQuotes, setUnpaidQuotes] = useState<Quote[]>([])
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const [selectedStatuses, setSelectedStatuses] = useState<number[]>(getInitialStatuses)
@@ -217,22 +218,28 @@ export default function Dashboard() {
     setQuotes(quotesData)
     setImageFlags(flags || {})
 
-    // 交期预警（3天内）
+    // 交期预警（3天内 或 已逾期）
+    // 做货中(3)/打样中(2)的订单：交期在3天内或已逾期 → 一直预警直到状态变为已发货未收款(4)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     const alertDate = new Date(today)
     alertDate.setDate(today.getDate() + 3)
 
     const alerts = quotesData.filter((quote) => {
-      // 排除报价中(1)、已发货已收款(5)、结束(6)的订单
-      if (quote.status === 1 || quote.status === 5 || quote.status === 6) return false
+      // 排除报价中(1)、已发货未收款(4)、已发货已收款(5)、结束(6)
+      if ([1, 4, 5, 6].includes(quote.status)) return false
       if (!quote.productionTimeEnd) return false
       const endDate = new Date(quote.productionTimeEnd)
       endDate.setHours(0, 0, 0, 0)
-      return endDate <= alertDate && endDate >= today
+      // 3天内到期 或 已逾期（endDate <= alertDate 包含过去日期）
+      return endDate <= alertDate
     })
 
     setAlertQuotes(alerts)
+
+    // 收款提醒：已发货未收款(4)的订单
+    const unpaid = quotesData.filter((quote) => quote.status === 4)
+    setUnpaidQuotes(unpaid)
   }
 
   // 可选月份列表：从订单的做货开始时间中提取所有月份，按降序排列，确保当前月份始终可选
@@ -579,27 +586,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* 交期预警 */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-500 flex items-center">
-                  交期预警
-                  <StatTooltip>
-                    <p>• 统计范围：未完成订单（状态为报价中/打样中/做货中/已发货未收款）</p>
-                    <p>• 时间范围：交货日期在今天起3天内（含今日）</p>
-                    <p>• 仅统计已设置交货日期的订单</p>
-                  </StatTooltip>
-                </p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">{alertQuotes.length}</p>
-                <p className="text-xs text-gray-400 mt-1">3天内到期</p>
-              </div>
-              <div className="w-12 h-12 bg-red-50 rounded-lg flex items-center justify-center">
-                <AlertTriangle className="text-red-600" size={24} />
-              </div>
-            </div>
-          </div>
-
           {/* 全年总销售额 */}
           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
@@ -909,7 +895,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="text-red-500" size={20} />
-                <h2 className="text-lg font-semibold text-gray-800">交期预警（3天内）</h2>
+                <h2 className="text-lg font-semibold text-gray-800">交期预警</h2>
               </div>
               <button
                 onClick={() => navigate('/quotes')}
@@ -928,10 +914,12 @@ export default function Dashboard() {
               <div className="space-y-3">
                 {alertQuotes.map((quote) => {
                   const daysLeft = getDaysUntilDue(quote.productionTimeEnd)
+                  const isOverdue = daysLeft < 0
                   return (
                     <div
                       key={quote.id}
                       className={`p-3 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
+                        isOverdue ? 'bg-red-50 border-red-600' :
                         daysLeft === 0 ? 'bg-red-50 border-red-500' :
                         daysLeft <= 1 ? 'bg-orange-50 border-orange-500' :
                         'bg-yellow-50 border-yellow-500'
@@ -954,11 +942,80 @@ export default function Dashboard() {
                           <span>{formatDate(quote.productionTimeEnd)}</span>
                         </div>
                         <div className={`text-sm font-semibold ${
+                          isOverdue ? 'text-red-600' :
                           daysLeft === 0 ? 'text-red-600' :
                           daysLeft <= 1 ? 'text-orange-600' :
                           'text-yellow-600'
                         }`}>
-                          {daysLeft === 0 ? '今日到期' : `剩${daysLeft}天`}
+                          {isOverdue ? `逾期${Math.abs(daysLeft)}天` : daysLeft === 0 ? '今日到期' : `剩${daysLeft}天`}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 收款提醒 */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <DollarSign className="text-amber-500" size={20} />
+                <h2 className="text-lg font-semibold text-gray-800">收款提醒</h2>
+              </div>
+              <button
+                onClick={() => navigate('/quotes')}
+                className="text-sm text-primary-600 hover:text-primary-700 font-medium py-1.5 sm:py-0 min-h-[40px] sm:min-h-0"
+              >
+                查看全部 <ArrowRight size={16} className="inline" />
+              </button>
+            </div>
+
+            {unpaidQuotes.length === 0 ? (
+              <div className="text-center py-8">
+                <AlertCircle className="w-12 h-12 text-green-400 mx-auto mb-2" />
+                <p className="text-gray-500">暂无待收款订单</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {unpaidQuotes.map((quote) => {
+                  const daysSinceShipped = quote.shippingTime
+                    ? getDaysUntilDue(quote.shippingTime) * -1
+                    : null
+                  return (
+                    <div
+                      key={quote.id}
+                      className={`p-3 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
+                        daysSinceShipped !== null && daysSinceShipped > 30 ? 'bg-red-50 border-red-500' :
+                        daysSinceShipped !== null && daysSinceShipped > 15 ? 'bg-orange-50 border-orange-500' :
+                        'bg-amber-50 border-amber-500'
+                      }`}
+                      onClick={() => navigate(`/quotes/${quote.id}`)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-gray-700 font-medium">
+                            {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个-{quote.productSpec}CM
+                          </span>
+                        </div>
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${getStatusColor(quote.status)}`}>
+                          {getStatusLabel(quote.status)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 mt-2">
+                        {quote.shippingTime && (
+                          <div className="flex items-center gap-1 text-sm text-gray-500">
+                            <Calendar size={14} />
+                            <span>发货：{formatDate(quote.shippingTime)}</span>
+                          </div>
+                        )}
+                        <div className={`text-sm font-semibold ${
+                          daysSinceShipped !== null && daysSinceShipped > 30 ? 'text-red-600' :
+                          daysSinceShipped !== null && daysSinceShipped > 15 ? 'text-orange-600' :
+                          'text-amber-600'
+                        }`}>
+                          {daysSinceShipped !== null ? `已发货${daysSinceShipped}天` : '待收款'}
                         </div>
                       </div>
                     </div>
