@@ -85,9 +85,10 @@ export interface Quote {
   priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
-  status: 1 | 2 | 3 | 4 | 5 | 6
+  status: 1 | 2 | 3 | 4 | 5 | 6 | 7
   quoteTime: string
   sampleTime: string
+  sampleCompletedTime: string
   productionStartTime: string
   shippingTime: string
   paymentTime: string

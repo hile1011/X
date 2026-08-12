@@ -19,6 +19,7 @@ import { db } from '../api/db'
 import { resetTestDatabase } from './helpers/db-reset'
 import { pool } from '../api/dbClient.js'
 import { getHistoryByQuoteId, cleanupOldHistory } from '../api/services/quoteHistory.js'
+import { CURRENT_SCHEMA_VERSION } from '../api/migrations/index.js'
 
 /**
  * 查询 MySQL 表的列名列表
@@ -69,16 +70,16 @@ async function updateWithOperator(quoteId: string, operator: string): Promise<vo
 }
 
 /**
- * 确保 schema 恢复到最新版本：如果版本低于 13，直接 migrate 补齐缺失的迁移。
+ * 确保 schema 恢复到最新版本：如果版本低于 CURRENT_SCHEMA_VERSION，直接 migrate 补齐缺失的迁移。
  */
 async function ensureLatestSchema(): Promise<void> {
   const version = await db.getSchemaVersion()
-  if (version < 13) {
+  if (version < CURRENT_SCHEMA_VERSION) {
     await db.runner.migrate()
   }
 }
 
-// 文件级 afterAll：确保所有测试结束后 schema 恢复到 v13，不影响后续测试文件
+// 文件级 afterAll：确保所有测试结束后 schema 恢复到最新版本，不影响后续测试文件
 afterAll(async () => {
   await ensureLatestSchema()
 })
@@ -109,8 +110,8 @@ describe('迁移 v13 - quote_history 表结构', () => {
     expect(await triggerExists('quotes_audit_delete')).toBe(true)
   })
 
-  it('Schema 版本为 13', async () => {
-    expect(await db.getSchemaVersion()).toBe(13)
+  it('Schema 版本为最新版本', async () => {
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
   })
 })
 
@@ -357,7 +358,7 @@ describe('迁移 v13 幂等性 & 回滚', () => {
     expect(await triggerExists('quotes_audit_update')).toBe(true)
     expect(await triggerExists('quotes_audit_delete')).toBe(true)
     expect(await tableExists('quote_history')).toBe(true)
-    expect(await db.getSchemaVersion()).toBe(13)
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
   })
 
   it('回滚到 v12 后 quote_history 表和触发器被删除', async () => {
@@ -369,9 +370,9 @@ describe('迁移 v13 幂等性 & 回滚', () => {
     expect(await triggerExists('quotes_audit_delete')).toBe(false)
     expect(await db.getSchemaVersion()).toBe(12)
 
-    // 重新迁移到 v13 恢复
+    // 重新迁移到最新版本恢复
     await db.runner.migrate()
-    expect(await db.getSchemaVersion()).toBe(13)
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     expect(await tableExists('quote_history')).toBe(true)
     expect(await triggerExists('quotes_audit_insert')).toBe(true)
   })

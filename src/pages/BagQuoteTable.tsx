@@ -595,6 +595,7 @@ export default function BagQuoteTable() {
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
     sampleTime: string
+    sampleCompletedTime: string
     productionStartTime: string
     shippingTime: string
     paymentTime: string
@@ -602,6 +603,7 @@ export default function BagQuoteTable() {
   }>({
     quoteTime: '',
     sampleTime: '',
+    sampleCompletedTime: '',
     productionStartTime: '',
     shippingTime: '',
     paymentTime: '',
@@ -657,6 +659,7 @@ export default function BagQuoteTable() {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -705,6 +708,7 @@ export default function BagQuoteTable() {
     const template = getTemplateByStyle(orderInfo.productStyle)
     
     const sheet = new VTableSheet(sheetContainerRef.current, {
+      showFormulaBar: true,
       undoRedo: { show: true },
       VTablePluginModules: [
         { module: TableExportPlugin },
@@ -892,6 +896,7 @@ export default function BagQuoteTable() {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -916,6 +921,7 @@ export default function BagQuoteTable() {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -931,7 +937,7 @@ export default function BagQuoteTable() {
   }
 
   const handleEndQuote = async () => {
-    if (!isEditMode || (status !== 1 && status !== 2)) return
+    if (!isEditMode || !OrderStatus.canEnterFinished(status)) return
     setLoading(true)
     try {
       const data = await api.quotes.endQuote(id!)
@@ -940,6 +946,7 @@ export default function BagQuoteTable() {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -954,9 +961,9 @@ export default function BagQuoteTable() {
     setLoading(false)
   }
 
-  const canGoNext = status >= 1 && status <= 5
-  const canGoPrev = status >= 2 && status <= 6
-  const canEnd = status >= 1 && status <= 5
+  const canGoNext = OrderStatus.getNext(status) !== null
+  const canGoPrev = OrderStatus.getPrev(status) !== null
+  const canEnd = OrderStatus.canEnterFinished(status)
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
@@ -1018,9 +1025,10 @@ export default function BagQuoteTable() {
                 status === 5 ? 'bg-green-100 text-green-700' :
                 status === 4 ? 'bg-yellow-100 text-yellow-700' :
                 status === 3 ? 'bg-orange-100 text-orange-700' :
+                status === 7 ? 'bg-cyan-100 text-cyan-700' :
                 status === 2 ? 'bg-purple-100 text-purple-700' :
                 'bg-blue-100 text-blue-700'
-              }`} title={`报价: ${statusTimeNodes.quoteTime || '-'} | 打样: ${statusTimeNodes.sampleTime || '-'} | 做货: ${statusTimeNodes.productionStartTime || '-'} | 发货: ${statusTimeNodes.shippingTime || '-'} | 收款: ${statusTimeNodes.paymentTime || '-'} | 结束: ${statusTimeNodes.endTime || '-'}`}>
+              }`} title={`报价: ${statusTimeNodes.quoteTime || '-'} | 打样: ${statusTimeNodes.sampleTime || '-'} | 打样完成: ${statusTimeNodes.sampleCompletedTime || '-'} | 做货: ${statusTimeNodes.productionStartTime || '-'} | 发货: ${statusTimeNodes.shippingTime || '-'} | 收款: ${statusTimeNodes.paymentTime || '-'} | 结束: ${statusTimeNodes.endTime || '-'}`}>
                 {STATUS_OPTIONS.find(s => s.value === status)?.label || '未知'}
               </span>
               {canGoPrev && (

@@ -32,6 +32,8 @@ interface AuthStore {
   showExpiryWarning: boolean
   /** 距离过期剩余秒数（用于倒计时显示） */
   secondsUntilExpiry: number
+  /** 是否正在刷新 token（防止并发刷新） */
+  isRefreshing: boolean
   /** 登录：调用后端 API，存储 JWT */
   login: (email: string, password: string) => Promise<void>
   /** 登出：清除所有认证信息 */
@@ -40,7 +42,7 @@ interface AuthStore {
   initAuth: () => Promise<void>
   /** 用 refresh token 获取新的 access token */
   refreshToken: () => Promise<boolean>
-  /** 记录用户活动（关闭过期警告） */
+  /** 记录用户活动：关闭过期警告 + token 剩余时间低于阈值时自动刷新续期 */
   recordActivity: () => void
   /** 检查 token 状态：过期则登出，临近过期则显示警告 */
   checkTokenStatus: () => void
@@ -81,6 +83,9 @@ function decrypt(ciphertext: string, key: string): string {
 
 const STORAGE_KEY = config.auth.storageKey
 const ENCRYPTION_KEY = config.auth.encryptionKey
+
+/** 进行中的刷新 token promise（单例，防止并发刷新） */
+let refreshPromise: Promise<boolean> | null = null
 
 /** 将 refresh token 加密后存入 localStorage */
 function saveRefreshToken(refreshToken: string): void {
@@ -151,6 +156,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   token: null, // 兼容旧代码：token === accessToken
   showExpiryWarning: false,
   secondsUntilExpiry: 0,
+  isRefreshing: false,
 
   login: async (email: string, password: string) => {
     const res = await fetch('/api/auth/login', {
@@ -247,37 +253,60 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
 
   refreshToken: async () => {
+    // 单例 promise：并发调用复用同一个刷新请求（避免 401 重试和 recordActivity 同时触发两次刷新）
+    if (refreshPromise) return refreshPromise
     const refreshTokenStr = loadRefreshToken()
     if (!refreshTokenStr) return false
 
-    try {
-      const res = await fetch('/api/auth/refresh', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: refreshTokenStr }),
-      })
-      if (!res.ok) {
-        clearRefreshToken()
-        set({ isAuthenticated: false, user: null, accessToken: null, token: null, permissions: [] })
+    set({ isRefreshing: true })
+    refreshPromise = (async () => {
+      try {
+        const res = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken: refreshTokenStr }),
+        })
+        if (!res.ok) {
+          clearRefreshToken()
+          set({ isAuthenticated: false, user: null, accessToken: null, token: null, permissions: [] })
+          return false
+        }
+        const data = await res.json()
+        set({
+          accessToken: data.accessToken,
+          token: data.accessToken,
+          showExpiryWarning: false,
+          secondsUntilExpiry: data.expiresIn || 900,
+        })
+        return true
+      } catch {
         return false
+      } finally {
+        refreshPromise = null
+        set({ isRefreshing: false })
       }
-      const data = await res.json()
-      set({
-        accessToken: data.accessToken,
-        token: data.accessToken,
-        showExpiryWarning: false,
-        secondsUntilExpiry: data.expiresIn || 900,
-      })
-      return true
-    } catch {
-      return false
-    }
+    })()
+    return refreshPromise
   },
 
   recordActivity: () => {
+    const state = get()
+
     // 用户有活动时关闭过期警告
-    if (get().showExpiryWarning) {
+    if (state.showExpiryWarning) {
       set({ showExpiryWarning: false })
+    }
+
+    // 用户活动时，如果 token 剩余时间低于阈值，自动刷新续期
+    // 这样活跃用户不会看到"即将登出"弹窗，只有真正闲置的用户才会触发警告
+    if (state.accessToken && !state.isRefreshing) {
+      const expiry = getAccessTokenExpiry(state.accessToken)
+      if (expiry) {
+        const remaining = expiry - Date.now()
+        if (remaining > 0 && remaining <= config.auth.autoRefreshThresholdMs) {
+          get().refreshToken()
+        }
+      }
     }
   },
 

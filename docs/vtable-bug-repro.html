@@ -105,6 +105,16 @@
 
   <div id="tableContainer"></div>
 
+  <h3>复制操作</h3>
+  <div style="margin: 10px 0;">
+    <button id="btnCopy" style="padding: 8px 16px; font-size: 14px; background: #4472C4; color: white; border: none; border-radius: 4px; cursor: pointer;">
+      📋 选中单元格后点此按钮复制（模拟 Ctrl+C）
+    </button>
+    <span style="margin-left: 12px; color: #666; font-size: 13px;">
+      此按钮通过 <code>document.execCommand('copy')</code> 在用户手势上下文中触发真实 copy 事件
+    </span>
+  </div>
+
   <h3>粘贴测试区</h3>
   <textarea class="paste-area" id="pasteArea" placeholder="在这里粘贴（Ctrl+V），如果为空说明复制失败"></textarea>
   <div id="status"></div>
@@ -158,6 +168,26 @@
     };
 
     const table = new VTable.ListTable(document.getElementById('tableContainer'), option);
+    // 暴露到 window 方便调试
+    window.table = table;
+
+    // ─── 调试：记录 copy 事件的触发情况 ───
+    window.__copyDebug = {
+      copyEventCount: 0,
+      lastClipboardDataPresent: null,
+      lastSetValue: null,
+      lastEventTarget: null,
+    };
+    document.addEventListener('copy', (e) => {
+      window.__copyDebug.copyEventCount++;
+      window.__copyDebug.lastEventTarget = e.target ? (e.target.tagName + '#' + (e.target.id || '?')) : 'null';
+      window.__copyDebug.lastClipboardDataPresent = !!(e.clipboardData);
+      try {
+        window.__copyDebug.lastSetValue = e.clipboardData ? e.clipboardData.getData('text/plain') : 'no clipboardData';
+      } catch (err) {
+        window.__copyDebug.lastSetValue = 'getData error: ' + err.message;
+      }
+    }, true);
 
     // ─── 粘贴测试区：监听 paste 事件展示结果 ───
     const pasteArea = document.getElementById('pasteArea');
@@ -172,6 +202,31 @@
         statusDiv.innerHTML =
           '<div class="status status-err">❌ 粘贴内容为空，复制失败（Bug 已复现）</div>';
       }
+    });
+
+    // ─── 按钮复制：通过 execCommand('copy') 在用户手势中触发真实 copy 事件 ───
+    // mousedown 时阻止按钮获得焦点，让焦点保留在表格上
+    document.getElementById('btnCopy').addEventListener('mousedown', (e) => {
+      e.preventDefault();
+    });
+    document.getElementById('btnCopy').addEventListener('click', () => {
+      // 选中单元格
+      table.selectCell(1, 1);
+      // 让 INPUT.table-focus-control 获得焦点并选中文本
+      // 这样 copy 事件 target 是 INPUT（可编辑元素），会冒泡到 DIV.vtable 触发 VTable 的 copy 监听器
+      const input = document.querySelector('#tableContainer input.table-focus-control');
+      if (input) {
+        input.setAttribute('readonly', 'false');
+        input.removeAttribute('readonly');
+        input.value = 'placeholder'; // 放入占位文本（VTable 的 handleCopy 会 preventDefault 阻止复制此文本）
+        input.focus();
+        input.select();
+      }
+      // 通过 execCommand 触发真实 copy 事件 → 冒泡到 DIV.vtable → VTable 调用 handleCopy
+      const ok = document.execCommand('copy');
+      const activeEl = document.activeElement;
+      statusDiv.innerHTML =
+        `<div class="status" style="background:#e7f5ff;color:#004085;">📎 execCommand('copy') 返回：${ok}<br/>copy 事件 target：${activeEl.tagName}.${activeEl.className}<br/>handleCopy 已被调用，等待异步执行结果（10ms setTimeout）...</div>`;
     });
   </script>
 </body>

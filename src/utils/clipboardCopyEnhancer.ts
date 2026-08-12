@@ -1,7 +1,15 @@
 /**
- * VTable-Sheet 复制功能增强
+ * VTable-Sheet 复制/粘贴功能增强
  *
- * 解决三个生产环境实际反馈的问题：
+ * ⚠️ VTABLE WORKAROUND — 本文件全部代码为临时修复，等 VTable 官方修复后整体移除。
+ *    官方 issue: https://github.com/VisActor/VTable/issues （搜索 "HTTP clipboard"）
+ *    本地 bug 报告: docs/vtable-bug-report.md
+ *    本地复现 demo: docs/vtable-bug-repro.html
+ *    移除条件: VTable 修复 handleCopy/fallbackPasteFromClipboard 的 async setTimeout 时序问题，
+ *              且 VTable-Sheet 默认配置 getCopyCellValue.value
+ *    移除步骤: 删除本文件 → 删除 BagQuoteTable.tsx / BagQuote.tsx 中的 import 和调用 → 删除测试文件
+ *
+ * 解决四个生产环境实际反馈的问题：
  *   1. 「单单元格无法成功复制」—— VTable-Sheet 默认 editCellTrigger 包含 "keydown"，
  *      且 keydown 监听器中单单元格选中 + 字符键（含 'c'）会触发 startEditCell 进入编辑模式，
  *      该逻辑不检查 ctrlKey/metaKey，导致 Ctrl+C 被当作编辑输入而非复制。
@@ -12,6 +20,11 @@
  *   3. 「整行复制后粘贴内容不含公式」—— VTable-Sheet 默认只配置了
  *      keyboardOptions.getCopyCellValue.html（HTML 模式带公式），未配置 .value，
  *      导致纯文本模式（text/plain）复制的是公式计算后的值（如 "0.00"），不是公式字符串（如 "=B6*F6"）。
+ *   4. 「HTTP 环境下需按2次 Ctrl+V 才能粘贴成功」—— VTable 的 fallbackPasteFromClipboard
+ *      是 async 函数（含 yield setTimeout(10)），与 handleCopy 同样的时序问题：
+ *      焦点不在表格元素时 element.focus() + yield setTimeout(10) 后 e.clipboardData.getData()
+ *      返回空字符串（事件已结束分发），粘贴静默失败。第二次粘贴时焦点已在表格元素上，
+ *      跳过 focus + setTimeout，getData 正常返回数据。
  *
  * 修复策略：
  *   A. 覆盖 keyboardOptions.getCopyCellValue.value，让纯文本模式也返回公式字符串。
@@ -20,6 +33,9 @@
  *   C. copy 事件 capture 阶段同步写入 e.clipboardData（原生事件的 clipboardData 可用），
  *      用 stopImmediatePropagation 阻止 VTable 的 async handleCopy（避免 fallback 失败）。
  *      支持单单元格：当 ranges 为空但 cellPos 有效时，临时注入单单元格 range 供 getCopyValue 使用。
+ *   D. paste 事件 capture 阶段同步读取 e.clipboardData.getData()，用 stopImmediatePropagation
+ *      阻止 VTable 的 async fallbackPasteFromClipboard（避免 yield setTimeout 后 getData 失效），
+ *      然后调用 VTable 的 processPastedText 处理数据（该方法不依赖 clipboardData，接收纯文本）。
  *
  * 使用：
  *   const cleanup = setupCopyFormulaEnhancement(sheet, activeTable, sheetKey)
@@ -217,12 +233,52 @@ export function setupCopyFormulaEnhancement(
     }
   }
 
+  // ─── 修复 D：paste 事件同步读取剪贴板数据，绕过 VTable 的 async fallbackPasteFromClipboard ───
+  // VTable 的 fallbackPasteFromClipboard（event.js:428）是 async 函数，含 yield setTimeout(10)。
+  // HTTP 环境下 navigator.clipboard.read 不可用 → 走 fallbackPasteFromClipboard →
+  // 焦点不在表格元素时 element.focus() + yield setTimeout(10) → e.clipboardData.getData() 返回空字符串 → 粘贴失败。
+  // 第二次粘贴时焦点已在表格元素上，跳过 focus + setTimeout，getData 正常 → 粘贴成功。
+  // 修复：在 paste 事件 capture 阶段同步读取 e.clipboardData.getData()，然后调用 VTable 的 processPastedText。
+  const onPaste = (e: ClipboardEvent) => {
+    if (!needsClipboardOverride()) return // HTTPS 环境让 VTable 自己处理
+    if (!e.clipboardData) return // 无剪贴板对象，让 VTable 走它的 fallback
+
+    // 编辑器打开时不拦截（用户在编辑器内粘贴文本）
+    if (activeTable.editorManager?.editingEditor) return
+
+    // 检查选区
+    const select = activeTable.stateManager?.select
+    if (!select?.ranges || select.ranges.length === 0) return
+
+    // 同步读取剪贴板数据（paste 事件同步分发期间 getData 可用）
+    const pastedData = e.clipboardData.getData('text') || e.clipboardData.getData('Text')
+    if (!pastedData) return
+
+    // 计算目标位置（与 VTable fallbackPasteFromClipboard 逻辑一致）
+    const range = select.ranges[0]
+    const col = Math.min(range.start.col, range.end.col)
+    const row = Math.min(range.start.row, range.end.row)
+
+    // 阻止 VTable 的 async fallbackPasteFromClipboard（避免 yield setTimeout 后 getData 失效）
+    e.preventDefault()
+    e.stopImmediatePropagation()
+
+    // 调用 VTable 的 processPastedText 处理数据
+    // 该方法接收纯文本（不依赖 clipboardData），内部会处理公式迁移（processFormulaBeforePaste）
+    const eventManager = activeTable.eventManager
+    if (eventManager?.processPastedText) {
+      eventManager.processPastedText(pastedData, col, row)
+    }
+  }
+
   // 用 capture 阶段监听，先于 VTable 内部处理
   element.addEventListener('keydown', onKeyDown, true)
   element.addEventListener('copy', onCopy, true)
+  element.addEventListener('paste', onPaste, true)
 
   return () => {
     element.removeEventListener('keydown', onKeyDown, true)
     element.removeEventListener('copy', onCopy, true)
+    element.removeEventListener('paste', onPaste, true)
   }
 }

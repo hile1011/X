@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../api'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, DollarSign } from 'lucide-react'
+import { api, downloadBlob } from '../api'
+import { usePermission } from '../hooks/usePermission'
+import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, DollarSign, ClipboardCheck, Eye, Receipt, Loader2, X, Copy } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
@@ -36,6 +37,7 @@ const STATUS_COLORS: Record<number, { color: string; bgColor: string; bgLightCol
   4: { color: 'bg-orange-100 text-orange-700', bgColor: 'bg-orange-500', bgLightColor: 'bg-orange-200' },
   5: { color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500', bgLightColor: 'bg-green-200' },
   6: { color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500', bgLightColor: 'bg-gray-200' },
+  7: { color: 'bg-cyan-100 text-cyan-700', bgColor: 'bg-cyan-500', bgLightColor: 'bg-cyan-200' },
 }
 
 // 合并 OrderStatus 枚举数据与 UI 颜色样式，消除 value/label 重复定义
@@ -110,6 +112,7 @@ interface Quote {
   id: string
   quote_number: string
   customerName: string
+  customer_id: string
   productStyle: string
   productSpec: string
   quantity: string
@@ -122,15 +125,18 @@ interface Quote {
   sellPriceWithTax: number
   quoteTime: string
   sampleTime: string
+  sampleCompletedTime: string
   productionStartTime: string
   shippingTime: string
   images?: string[]
+  updated_at: string
 }
 
 export default function Dashboard() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [alertQuotes, setAlertQuotes] = useState<Quote[]>([])
   const [unpaidQuotes, setUnpaidQuotes] = useState<Quote[]>([])
+  const [sampleCompletedQuotes, setSampleCompletedQuotes] = useState<Quote[]>([])
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const [selectedStatuses, setSelectedStatuses] = useState<number[]>(getInitialStatuses)
@@ -142,6 +148,13 @@ export default function Dashboard() {
   const [products, setProducts] = useState<Product[]>([])
   const filterRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
+  const { hasPermission } = usePermission()
+  // 收款单导出状态
+  const [exportingPayment, setExportingPayment] = useState(false)
+  const [paymentError, setPaymentError] = useState<{ type: string; message: string; detail?: string } | null>(null)
+  const [paymentToast, setPaymentToast] = useState('')
+  // 仪表盘滚动位置记忆：离开时保存，返回时恢复
+  const scrollRestoreRef = useRef<number | null>(null)
 
   // 获取产品列表（款式标签数据源）
   useEffect(() => {
@@ -207,7 +220,24 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
+    // 从 sessionStorage 读取上次离开仪表盘时的滚动位置
+    try {
+      const saved = sessionStorage.getItem('dashboard_scroll')
+      if (saved) {
+        scrollRestoreRef.current = parseInt(saved, 10)
+        sessionStorage.removeItem('dashboard_scroll')
+      }
+    } catch { /* ignore */ }
     fetchData()
+  }, [])
+
+  // 组件卸载时保存滚动位置（用户导航到其他页面）
+  useEffect(() => {
+    return () => {
+      try {
+        sessionStorage.setItem('dashboard_scroll', String(window.scrollY))
+      } catch { /* ignore */ }
+    }
   }, [])
 
   const fetchData = async () => {
@@ -217,6 +247,17 @@ export default function Dashboard() {
     ])
     setQuotes(quotesData)
     setImageFlags(flags || {})
+
+    // 数据加载完成后恢复滚动位置（等待 DOM 渲染）
+    if (scrollRestoreRef.current !== null) {
+      const targetY = scrollRestoreRef.current
+      scrollRestoreRef.current = null
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.scrollTo(0, targetY)
+        })
+      })
+    }
 
     // 交期预警（3天内 或 已逾期）
     // 做货中(3)/打样中(2)的订单：交期在3天内或已逾期 → 一直预警直到状态变为已发货未收款(4)
@@ -240,6 +281,65 @@ export default function Dashboard() {
     // 收款提醒：已发货未收款(4)的订单
     const unpaid = quotesData.filter((quote) => quote.status === 4)
     setUnpaidQuotes(unpaid)
+
+    // 打样完成提醒：状态为打样完成(7)的订单
+    const sampleCompleted = quotesData.filter((quote) => quote.status === 7)
+    setSampleCompletedQuotes(sampleCompleted)
+  }
+
+  // 确认做货：将打样完成(7)的订单流转到做货中(3)，然后跳转到订单编辑页面
+  const handleConfirmProduction = async (quoteId: string) => {
+    try {
+      await api.quotes.nextStatus(quoteId)
+      // 跳转到订单编辑页面
+      navigate(`/quotes/${quoteId}`)
+    } catch (error) {
+      console.error('确认做货失败:', error)
+    }
+  }
+
+  // 导出收款单：导出收款提醒中"已发货未收款"(status=4)的订单
+  const handleExportPaymentReceipt = async () => {
+    setPaymentError(null)
+    setPaymentToast('')
+    if (unpaidQuotes.length === 0) {
+      setPaymentToast('暂无"已发货未收款"状态的订单数据')
+      setTimeout(() => setPaymentToast(''), 3000)
+      return
+    }
+    if (unpaidQuotes.length > 1000) {
+      setPaymentError({
+        type: 'toomany',
+        message: `符合条件的数据共 ${unpaidQuotes.length} 条，超过单次导出上限 1000 条，请缩小范围或分批导出`,
+      })
+      return
+    }
+    setExportingPayment(true)
+    try {
+      const { blob, filename } = await api.export.paymentReceipts(
+        unpaidQuotes.map((q) => q.id),
+        '',
+      )
+      downloadBlob(blob, filename)
+    } catch (error) {
+      const e = error as Error & { timeout?: boolean; code?: string }
+      if (e.code === 'NO_DATA') {
+        setPaymentToast('暂无"已发货未收款"状态的订单数据')
+        setTimeout(() => setPaymentToast(''), 3000)
+      } else if (e.code === 'TOO_MANY_ROWS') {
+        setPaymentError({ type: 'toomany', message: e.message })
+      } else if (e.timeout) {
+        setPaymentError({ type: 'timeout', message: e.message })
+      } else if (/network|fetch|Failed to fetch|网络|Load failed/i.test(e.message)) {
+        setPaymentError({ type: 'network', message: '网络连接异常，导出失败，请重试' })
+      } else if (/500|服务器|权限不足|token/i.test(e.message)) {
+        setPaymentError({ type: 'server', message: '服务器处理异常，请联系系统管理员', detail: e.message })
+      } else {
+        setPaymentError({ type: 'network', message: e.message || '导出失败，请重试' })
+      }
+    } finally {
+      setExportingPayment(false)
+    }
   }
 
   // 可选月份列表：从订单的做货开始时间中提取所有月份，按降序排列，确保当前月份始终可选
@@ -392,16 +492,18 @@ export default function Dashboard() {
   }
 
   // 根据选中的状态筛选订单并排序（useMemo 优化性能，避免每次渲染都重新筛选+排序）
-  // 主排序：按订单状态 value（升序 1→6 或降序 6→1）
+  // 主排序：按订单状态在流转路径中的位置（升序或降序）
   // 二级排序：同状态内按交货日期升序，使更紧急的订单排在前面（同时保证排序稳定）
   const activeQuotes = useMemo(() => {
     const filtered = quotes.filter((q) => selectedStatuses.includes(q.status))
     const sorted = [...filtered].sort((a, b) => {
-      // 主排序：状态
-      if (a.status !== b.status) {
+      // 主排序：状态（基于 FLOW 指针位置，非数值大小）
+      const aPos = OrderStatus.getFlowPosition(a.status)
+      const bPos = OrderStatus.getFlowPosition(b.status)
+      if (aPos !== bPos) {
         return sortMode === 'statusAsc'
-          ? a.status - b.status
-          : b.status - a.status
+          ? aPos - bPos
+          : bPos - aPos
       }
       // 二级排序：交货日期升序（无交货日期的排后面）
       const aDue = a.productionTimeEnd ? new Date(a.productionTimeEnd).getTime() : Infinity
@@ -522,20 +624,26 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {/* 当月总销售额 */}
+          {/* 当月总销售额（含订单个数明细） */}
           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
-              <div>
+              <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-500 flex items-center">
                   {monthLabel}总销售额
                   <StatTooltip>
                     <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
                     <p>• 时间范围：做货开始时间在所选月份</p>
                     <p>• 计算公式：Σ（含税卖价 × 数量）</p>
+                    <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">下方明细为各状态订单数量</p>
                   </StatTooltip>
                 </p>
                 <p className="text-2xl font-bold text-gray-800 mt-1">¥{monthlyStats.monthlyRevenue.toLocaleString()}</p>
-                <p className="text-xs text-gray-400 mt-1">做货中/已发货订单 · {monthlyStats.orderCount} 笔</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                  <span className="text-xs text-blue-600">做货中 {monthlyStats.statusCounts[3]}</span>
+                  <span className="text-xs text-amber-600">未收款 {monthlyStats.statusCounts[4]}</span>
+                  <span className="text-xs text-green-600">已收款 {monthlyStats.statusCounts[5]}</span>
+                  <span className="text-xs text-yellow-600">打样中 {monthlyStats.sampleCount}</span>
+                </div>
               </div>
               <div className="w-12 h-12 bg-purple-50 rounded-lg flex items-center justify-center">
                 <TrendingUp className="text-purple-600" size={24} />
@@ -646,32 +754,6 @@ export default function Dashboard() {
               </div>
               <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${profitMode === 'noTax' ? 'bg-red-50' : 'bg-green-50'}`}>
                 <Activity className={profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'} size={24} />
-              </div>
-            </div>
-          </div>
-
-          {/* 当月订单总个数（含状态明细） */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-gray-500 flex items-center">
-                  {monthLabel}订单总个数
-                  <StatTooltip>
-                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                    <p>• 时间范围：做货开始时间在所选月份</p>
-                    <p>• 下方明细按状态分组显示</p>
-                  </StatTooltip>
-                </p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">{monthlyStats.orderCount} 笔</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
-                  <span className="text-xs text-blue-600">做货中 {monthlyStats.statusCounts[3]}</span>
-                  <span className="text-xs text-amber-600">已发货未收款 {monthlyStats.statusCounts[4]}</span>
-                  <span className="text-xs text-green-600">已发货已收款 {monthlyStats.statusCounts[5]}</span>
-                  <span className="text-xs text-yellow-600">打样中 {monthlyStats.sampleCount}</span>
-                </div>
-              </div>
-              <div className="w-12 h-12 bg-indigo-50 rounded-lg flex items-center justify-center">
-                <ShoppingBag className="text-indigo-600" size={24} />
               </div>
             </div>
           </div>
@@ -818,16 +900,16 @@ export default function Dashboard() {
                         key={quote.id}
                         onDoubleClick={() => navigate(`/quotes/${quote.id}`)}
                         title="双击查看订单详情"
-                        className="flex items-center gap-4 py-3 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
+                        className="flex items-center gap-4 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
                       >
-                        <div className="w-56 shrink-0 flex items-center gap-2">
+                        <div className="w-48 shrink-0 flex items-center gap-2">
                           {/* 产品首图 */}
                           {imageFlags[quote.id] ? (
                             <img
-                              src={api.quotes.getThumbnailUrl(quote.id)}
+                              src={api.quotes.getThumbnailUrl(quote.id, quote.updated_at)}
                               alt="产品图"
                               loading="lazy"
-                              className="w-10 h-10 rounded-lg object-cover border border-gray-200 flex-shrink-0"
+                              className="w-8 h-8 rounded-lg object-cover border border-gray-200 flex-shrink-0"
                               onError={(e) => {
                                 const target = e.currentTarget
                                 target.style.display = 'none'
@@ -836,31 +918,31 @@ export default function Dashboard() {
                               }}
                             />
                           ) : (
-                            <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                              <span className="text-xs font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
+                            <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                              <span className="text-[10px] font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
                             </div>
                           )}
                           {/* onError 时的占位符（默认隐藏） */}
-                          <div className="w-10 h-10 rounded-lg bg-gray-100 items-center justify-center flex-shrink-0" style={{ display: 'none' }}>
-                            <span className="text-xs font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
+                          <div className="w-8 h-8 rounded-lg bg-gray-100 items-center justify-center flex-shrink-0" style={{ display: 'none' }}>
+                            <span className="text-[10px] font-bold text-gray-400">{quote.customerName.charAt(0)}</span>
                           </div>
-                          {/* 文字信息 */}
+                          {/* 文字信息：状态标签 + 客户名同行，款式+数量副标题 */}
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(quote.status)}`}>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`px-1.5 py-0 text-[10px] font-medium rounded-full ${getStatusColor(quote.status)}`}>
                                 {getStatusLabel(quote.status)}
                               </span>
+                              <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
                             </div>
-                            <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
-                            <p className="text-xs text-gray-500 truncate">{getStyleLabelFromProducts(products, quote.productStyle)} - {quote.quantity}个</p>
+                            <p className="text-xs text-gray-500 truncate">{getStyleLabelFromProducts(products, quote.productStyle)} · {quote.quantity}个</p>
                           </div>
                         </div>
-                        <div className="flex-1 relative h-10">
+                        <div className="flex-1 relative h-8">
                           {/* 背景轨道 */}
-                          <div className="absolute inset-y-3 left-0 right-0 bg-gray-100 rounded-full"></div>
+                          <div className="absolute inset-y-2 left-0 right-0 bg-gray-100 rounded-full"></div>
                           {/* 总时间进度条（浅色） */}
                           <div
-                            className={`absolute inset-y-3 rounded-full transition-all duration-300 ${getStatusBgLightColor(quote.status)}`}
+                            className={`absolute inset-y-2 rounded-full transition-all duration-300 ${getStatusBgLightColor(quote.status)}`}
                             style={{ ...barStyle }}
                           >
                             {/* 当前进度条（深色） */}
@@ -871,14 +953,12 @@ export default function Dashboard() {
                           </div>
                           {/* 当前日期标记 */}
                           <div
-                            className="absolute top-0 bottom-0 w-1 bg-red-500 rounded-full z-10"
+                            className="absolute top-0 bottom-0 w-0.5 bg-red-500 rounded-full z-10"
                             style={{ left: `${((new Date().getTime() - minDate.getTime()) / (maxDate.getTime() - minDate.getTime())) * 100}%` }}
                           ></div>
                         </div>
-                        <div className="w-24 shrink-0 text-right">
-                          <p className="text-xs text-gray-500">{formatDate(quote.productionTimeStart)}</p>
-                          <p className="text-xs text-gray-500">至</p>
-                          <p className="text-xs text-gray-500">{formatDate(quote.productionTimeEnd || new Date().toISOString().split('T')[0])}</p>
+                        <div className="w-28 shrink-0 text-right">
+                          <p className="text-xs text-gray-500">{formatDate(quote.productionTimeStart)} → {formatDate(quote.productionTimeEnd || new Date().toISOString().split('T')[0])}</p>
                         </div>
                       </div>
                     )
@@ -889,8 +969,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {/* 交期预警 */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          {/* 交期预警 — 无数据时隐藏 */}
+          {alertQuotes.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -905,64 +986,124 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {alertQuotes.length === 0 ? (
-              <div className="text-center py-8">
-                <AlertCircle className="w-12 h-12 text-green-400 mx-auto mb-2" />
-                <p className="text-gray-500">暂无即将到期的订单</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {alertQuotes.map((quote) => {
-                  const daysLeft = getDaysUntilDue(quote.productionTimeEnd)
-                  const isOverdue = daysLeft < 0
-                  return (
-                    <div
-                      key={quote.id}
-                      className={`p-3 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
-                        isOverdue ? 'bg-red-50 border-red-600' :
-                        daysLeft === 0 ? 'bg-red-50 border-red-500' :
-                        daysLeft <= 1 ? 'bg-orange-50 border-orange-500' :
-                        'bg-yellow-50 border-yellow-500'
-                      }`}
-                      onClick={() => navigate(`/quotes/${quote.id}`)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-gray-700 font-medium">
-                            {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个-{quote.productSpec}CM
-                          </span>
-                        </div>
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${getStatusColor(quote.status)}`}>
-                          {getStatusLabel(quote.status)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 mt-2">
-                        <div className="flex items-center gap-1 text-sm text-gray-500">
-                          <Calendar size={14} />
-                          <span>{formatDate(quote.productionTimeEnd)}</span>
-                        </div>
-                        <div className={`text-sm font-semibold ${
-                          isOverdue ? 'text-red-600' :
-                          daysLeft === 0 ? 'text-red-600' :
-                          daysLeft <= 1 ? 'text-orange-600' :
-                          'text-yellow-600'
-                        }`}>
-                          {isOverdue ? `逾期${Math.abs(daysLeft)}天` : daysLeft === 0 ? '今日到期' : `剩${daysLeft}天`}
-                        </div>
-                      </div>
+            <div className="space-y-2">
+              {alertQuotes.map((quote) => {
+                const daysLeft = getDaysUntilDue(quote.productionTimeEnd)
+                const isOverdue = daysLeft < 0
+                return (
+                  <div
+                    key={quote.id}
+                    className={`flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
+                      isOverdue ? 'bg-red-50 border-red-600' :
+                      daysLeft === 0 ? 'bg-red-50 border-red-500' :
+                      daysLeft <= 1 ? 'bg-orange-50 border-orange-500' :
+                      'bg-yellow-50 border-yellow-500'
+                    }`}
+                    onClick={() => navigate(`/quotes/${quote.id}`)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
+                        {getStatusLabel(quote.status)}
+                      </span>
+                      <span className="text-sm text-gray-700 truncate">
+                        {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
+                      </span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-xs text-gray-400">{formatDate(quote.productionTimeEnd)}</span>
+                      <span className={`text-xs font-semibold ${
+                        isOverdue ? 'text-red-600' :
+                        daysLeft === 0 ? 'text-red-600' :
+                        daysLeft <= 1 ? 'text-orange-600' :
+                        'text-yellow-600'
+                      }`}>
+                        {isOverdue ? `逾期${Math.abs(daysLeft)}天` : daysLeft === 0 ? '今日到期' : `剩${daysLeft}天`}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
+          )}
 
-          {/* 收款提醒 */}
+          {/* 收款提醒 — 无数据时隐藏 */}
+          {unpaidQuotes.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <DollarSign className="text-amber-500" size={20} />
                 <h2 className="text-lg font-semibold text-gray-800">收款提醒</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                {hasPermission('quotes:export-payment') && (
+                  <button
+                    onClick={handleExportPaymentReceipt}
+                    disabled={exportingPayment}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="导出收款提醒中已发货未收款订单的收款单（Excel/ZIP）"
+                  >
+                    {exportingPayment ? <Loader2 size={16} className="animate-spin" /> : <Receipt size={16} />}
+                    <span className="hidden sm:inline">导出收款单</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => navigate('/quotes')}
+                  className="text-sm text-primary-600 hover:text-primary-700 font-medium py-1.5 sm:py-0 min-h-[40px] sm:min-h-0"
+                >
+                  查看全部 <ArrowRight size={16} className="inline" />
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {unpaidQuotes.map((quote) => {
+                const daysSinceShipped = quote.shippingTime
+                  ? getDaysUntilDue(quote.shippingTime) * -1
+                  : null
+                return (
+                  <div
+                    key={quote.id}
+                    className={`flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
+                      daysSinceShipped !== null && daysSinceShipped > 30 ? 'bg-red-50 border-red-500' :
+                      daysSinceShipped !== null && daysSinceShipped > 15 ? 'bg-orange-50 border-orange-500' :
+                      'bg-amber-50 border-amber-500'
+                    }`}
+                    onClick={() => navigate(`/quotes/${quote.id}`)}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
+                        {getStatusLabel(quote.status)}
+                      </span>
+                      <span className="text-sm text-gray-700 truncate">
+                        {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {quote.shippingTime && <span className="text-xs text-gray-400">发货{formatDate(quote.shippingTime)}</span>}
+                      <span className={`text-xs font-semibold ${
+                        daysSinceShipped !== null && daysSinceShipped > 30 ? 'text-red-600' :
+                        daysSinceShipped !== null && daysSinceShipped > 15 ? 'text-orange-600' :
+                        'text-amber-600'
+                      }`}>
+                        {daysSinceShipped !== null ? `已发货${daysSinceShipped}天` : '待收款'}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+          )}
+
+          {/* 打样完成提醒 — 无数据时隐藏 */}
+          {sampleCompletedQuotes.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <ClipboardCheck className="text-cyan-500" size={20} />
+                <h2 className="text-lg font-semibold text-gray-800">打样完成提醒</h2>
+                <span className="px-1.5 py-0.5 text-xs font-medium rounded-full bg-cyan-100 text-cyan-700">{sampleCompletedQuotes.length} 笔</span>
               </div>
               <button
                 onClick={() => navigate('/quotes')}
@@ -972,58 +1113,55 @@ export default function Dashboard() {
               </button>
             </div>
 
-            {unpaidQuotes.length === 0 ? (
-              <div className="text-center py-8">
-                <AlertCircle className="w-12 h-12 text-green-400 mx-auto mb-2" />
-                <p className="text-gray-500">暂无待收款订单</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {unpaidQuotes.map((quote) => {
-                  const daysSinceShipped = quote.shippingTime
-                    ? getDaysUntilDue(quote.shippingTime) * -1
-                    : null
-                  return (
-                    <div
-                      key={quote.id}
-                      className={`p-3 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
-                        daysSinceShipped !== null && daysSinceShipped > 30 ? 'bg-red-50 border-red-500' :
-                        daysSinceShipped !== null && daysSinceShipped > 15 ? 'bg-orange-50 border-orange-500' :
-                        'bg-amber-50 border-amber-500'
-                      }`}
-                      onClick={() => navigate(`/quotes/${quote.id}`)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-gray-700 font-medium">
-                            {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个-{quote.productSpec}CM
-                          </span>
-                        </div>
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${getStatusColor(quote.status)}`}>
-                          {getStatusLabel(quote.status)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 mt-2">
-                        {quote.shippingTime && (
-                          <div className="flex items-center gap-1 text-sm text-gray-500">
-                            <Calendar size={14} />
-                            <span>发货：{formatDate(quote.shippingTime)}</span>
-                          </div>
-                        )}
-                        <div className={`text-sm font-semibold ${
-                          daysSinceShipped !== null && daysSinceShipped > 30 ? 'text-red-600' :
-                          daysSinceShipped !== null && daysSinceShipped > 15 ? 'text-orange-600' :
-                          'text-amber-600'
-                        }`}>
-                          {daysSinceShipped !== null ? `已发货${daysSinceShipped}天` : '待收款'}
-                        </div>
-                      </div>
+            <div className="space-y-2">
+              {[...sampleCompletedQuotes]
+                .sort((a, b) => {
+                  // 智能排序：1.订单金额降序 2.打样完成时间降序（最新优先）
+                  const aAmount = (parseFloat(a.quantity) || 0) * (a.sellPriceWithTax || 0)
+                  const bAmount = (parseFloat(b.quantity) || 0) * (b.sellPriceWithTax || 0)
+                  if (aAmount !== bAmount) return bAmount - aAmount
+                  const aTime = a.sampleCompletedTime ? new Date(a.sampleCompletedTime).getTime() : 0
+                  const bTime = b.sampleCompletedTime ? new Date(b.sampleCompletedTime).getTime() : 0
+                  return bTime - aTime
+                })
+                .map((quote) => {
+                return (
+                  <div
+                    key={quote.id}
+                    className="flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 bg-cyan-50 border-cyan-500 hover:bg-cyan-100/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-cyan-100 text-cyan-700">
+                        打样完成
+                      </span>
+                      <span className="text-sm text-gray-700 truncate">
+                        {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
+                      </span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {quote.sampleCompletedTime && <span className="text-xs text-gray-400">{formatDate(quote.sampleCompletedTime)}</span>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleConfirmProduction(quote.id) }}
+                        className="flex items-center gap-0.5 px-2 py-1 text-xs font-medium text-white bg-cyan-600 rounded hover:bg-cyan-700 transition-colors"
+                        title="将订单状态从打样完成流转到做货中"
+                      >
+                        <ArrowRight size={12} />
+                        做货
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/quotes/${quote.id}`) }}
+                        className="flex items-center gap-0.5 px-2 py-1 text-xs font-medium text-gray-600 bg-gray-100 rounded hover:bg-gray-200 transition-colors"
+                        title="查看订单详情"
+                      >
+                        <Eye size={12} />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
+          )}
         </div>
 
         <div className="mt-6">
@@ -1052,6 +1190,83 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* 收款单导出：全屏半透明遮罩 + 加载动画 */}
+        {exportingPayment && (
+          <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center">
+            <div className="bg-white rounded-xl px-10 py-8 flex flex-col items-center gap-4 shadow-2xl">
+              <Loader2 size={40} className="animate-spin text-primary-600" />
+              <p className="text-gray-700 font-medium">数据导出中，请稍候...</p>
+            </div>
+          </div>
+        )}
+
+        {/* 收款单导出：错误弹窗 */}
+        {paymentError && (
+          <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+              <div className="flex items-start gap-3 mb-4">
+                <AlertCircle className="text-red-500 flex-shrink-0 mt-0.5" size={20} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-gray-800 font-medium break-words">{paymentError.message}</p>
+                  {paymentError.detail && (
+                    <p className="text-xs text-gray-500 mt-2 break-all">错误详情：{paymentError.detail}</p>
+                  )}
+                </div>
+                <button onClick={() => setPaymentError(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0" title="关闭">
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="flex justify-end gap-2 flex-wrap">
+                {(paymentError.type === 'network' || paymentError.type === 'timeout') && (
+                  <button
+                    onClick={() => { setPaymentError(null); handleExportPaymentReceipt() }}
+                    className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                  >
+                    重试
+                  </button>
+                )}
+                {paymentError.type === 'server' && (
+                  <>
+                    <button
+                      onClick={() => {
+                        const text = paymentError.detail || paymentError.message
+                        try {
+                          navigator.clipboard?.writeText(text)
+                        } catch { /* 忽略剪贴板权限失败 */ }
+                        setPaymentToast('错误信息已复制到剪贴板')
+                        setTimeout(() => setPaymentToast(''), 2000)
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      <Copy size={14} />
+                      复制错误信息
+                    </button>
+                    <a
+                      href="mailto:517290808@qq.com?subject=收款单导出异常反馈"
+                      className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      联系管理员
+                    </a>
+                  </>
+                )}
+                <button
+                  onClick={() => setPaymentError(null)}
+                  className="px-4 py-2 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 收款单导出：轻提示 */}
+        {paymentToast && (
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 text-white px-5 py-2.5 rounded-lg shadow-lg text-sm whitespace-nowrap">
+            {paymentToast}
+          </div>
+        )}
       </div>
   )
 }

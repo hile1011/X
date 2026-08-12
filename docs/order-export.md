@@ -2,10 +2,11 @@
 
 ## 功能概述
 
-订单管理系统提供两种 Excel 导出模式：
+订单管理系统提供三种 Excel 导出模式：
 
 1. **订单列表导出**（订单管理页面）：将当前筛选结果导出为格式化 Excel，包含全部订单字段、状态标签、价格信息和汇总统计。
 2. **单订单 + 在线表格导出**（订单详情页面）：导出单个订单的完整信息 + 在线表格数据（保留 Excel 公式）。
+3. **收款单导出**（订单管理页面）：仅导出"已发货未收款"(status=4)订单的收款单，按客户分组生成 Excel（多客户时打包为 ZIP）。
 
 ## 使用方式
 
@@ -149,11 +150,14 @@
 | 文件 | 说明 |
 |------|------|
 | `api/services/excelExport.ts` | Excel 生成服务（核心逻辑） |
+| `api/services/paymentExport.ts` | 收款单 Excel/ZIP 生成服务 |
+| `api/middleware/rateLimit.ts` | 请求频率限制中间件 |
 | `api/routes/export.ts` | 导出 API 路由 |
 | `src/api/index.ts` | 前端 API 客户端 + `downloadBlob` |
 | `src/pages/Quotes.tsx` | 订单列表页导出 UI |
 | `src/pages/BagQuote.tsx` | 订单详情页导出 UI |
-| `tests/orderExport.test.ts` | 单元测试（92 个用例） |
+| `tests/orderExport.test.ts` | 订单导出单元测试（92 个用例） |
+| `tests/paymentExport.test.ts` | 收款单导出单元测试（99 个用例） |
 
 ### API 端点
 
@@ -187,6 +191,95 @@
 ```
 
 **响应：** Excel 文件流
+
+#### POST /api/export/payment-receipts
+
+导出收款单（仅"已发货未收款"状态订单）。
+
+**权限：** `quotes:export-payment`
+
+**频率限制：** 同一用户 5 分钟内最多 3 次请求
+
+**请求体：**
+```json
+{
+  "orderIds": ["quote-001", "quote-002"],
+  "customerFilter": "客户A"
+}
+```
+- `orderIds`：前端筛选条件下所有符合 status=4 的订单 ID 列表（必填）
+- `customerFilter`：当前客户筛选值（无筛选时为空字符串，用于决定文件名标签）
+
+**响应：**
+- 单客户 → Excel 文件流（`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`）
+- 多客户 → ZIP 文件流（`application/zip`），每个客户一个 Excel 文件
+
+**文件名格式：** `{客户名称}_收款单_YYYYMMDDHHMMSS.xlsx` 或 `{全部客户|多客户}_收款单_YYYYMMDDHHMMSS.zip`
+
+**错误码：**
+
+| HTTP | 错误信息 | 说明 |
+|------|---------|------|
+| 400 | 请先筛选订单后再导出收款单 | orderIds 为空 |
+| 400 | 当前筛选条件下无符合"已发货未收款"状态的订单数据 | 服务端二次过滤后无数据 |
+| 400 | 导出数据量超过上限（N 条），请缩小筛选范围 | 超过 1000 条上限 |
+| 401 | 未登录或登录已过期 | JWT 缺失/失效 |
+| 403 | 无权限 | 缺少 `quotes:export-payment` 权限 |
+| 429 | 请求过于频繁，请 5 分钟后再试 | 限流触发 |
+| 500 | 服务器内部错误 | 异常详情见日志 |
+
+## 收款单导出
+
+### 使用方式
+
+1. 进入「订单管理」页面
+2. 使用搜索、状态、客户、款式筛选器筛选目标订单
+3. 点击右上角「导出收款单」按钮（需 `quotes:export-payment` 权限）
+4. 系统自动提取当前筛选条件中 status=4 的订单，按客户分组导出
+5. 等待全屏加载动画消失，文件自动下载
+
+### 固定列结构
+
+| 序号 | 列名 | 类型 | 说明 |
+|------|------|------|------|
+| 1 | 客户名称 | 文本 | customerName |
+| 2 | 数量 | 数字 | quantity（字符串解析为数字） |
+| 3 | 产品图片 | 图片 | 80×80 JPEG 缩略图，居中显示 |
+| 4 | 大货日期(从-到) | 日期区间 | `YYYY-MM-DD - YYYY-MM-DD`，空值显示 `-` |
+| 5 | 工艺 | 文本 | process |
+| 6 | 单个卖价(不含税) | 货币 | sellPriceNoTax，¥#,##0.00 格式 |
+| 7 | 单个卖价(含税) | 货币 | sellPriceWithTax，¥#,##0.00 格式 |
+| 8 | 销售总额(不含税) | 货币 | = round2(单个卖价不含税 × 数量) |
+| 9 | 销售总额(含税) | 货币 | = round2(单个卖价含税 × 数量) |
+
+### 汇总行
+
+- **位置**：所有数据行下方，顶部粗分隔线（蓝色 medium border）
+- **首列**：显示"合计"
+- **计算规则**：
+  - 销售总额(不含税) = SUM(round2(sellPriceNoTax) × quantity)
+  - 销售总额(含税) = SUM(round2(sellPriceWithTax) × quantity)
+- **样式**：加粗 + #f5f5f5 背景色 + 行高 +10%
+
+### 金额精度
+
+所有金额以 `round2(n)` = `Math.round(n × 100) / 100` 为基础，保留 2 位小数，四舍五入。汇总行数据 = 各数据行之和，前后端共用 `calculatePaymentSummary` 函数确保一致性。
+
+### 多客户处理
+
+- **单客户**：生成单个 Excel 文件（.xlsx）
+- **多客户**：每个客户一个 Excel，打包为 ZIP（.zip），使用 archiver 库 level=6 压缩
+
+### 数据量限制
+
+单次导出上限 1000 条（`PAYMENT_EXPORT_MAX_ROWS`），超过时返回 400 错误提示用户缩小筛选范围。
+
+### 产品图片处理
+
+- 图片以 base64 data URI 存储在数据库 `images` 字段
+- 导出时使用 sharp 生成 80×80 JPEG 缩略图（cover 模式，quality=70）
+- 以 Buffer 形式嵌入 Excel 单元格（不依赖网络链接）
+- 无图或解析失败时显示 `-`
 
 ## 性能指标
 

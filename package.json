@@ -30,10 +30,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "@types/archiver": "^8.0.0",
     "@types/multer": "^2.2.0",
     "@visactor/vtable": "^1.26.6",
     "@visactor/vtable-plugins": "^1.26.6",
     "@visactor/vtable-sheet": "^1.26.6",
+    "archiver": "^8.0.0",
     "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",

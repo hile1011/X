@@ -25,7 +25,7 @@ export default function IdleMonitor() {
   useEffect(() => {
     if (!isAuthenticated) return
 
-    const ACTIVITY_THROTTLE_MS = 5000 // 每 5 秒最多续期一次，避免频繁写入
+    const ACTIVITY_THROTTLE_MS = 5000 // 每 5 秒最多触发一次续期检查，避免频繁 API 调用
 
     const handleActivity = () => {
       const now = Date.now()

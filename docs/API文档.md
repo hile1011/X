@@ -289,6 +289,48 @@
 
 文件名格式：`{quote_number}-报价单.xlsx`
 
+### 11.2 导出收款单
+
+`POST /api/export/payment-receipts`
+
+导出"已发货未收款"(status=4) 订单的收款单。按客户分组生成 Excel，多客户时打包为 ZIP。
+
+**权限**：`quotes:export-payment`
+
+**频率限制**：同一用户 5 分钟内最多 3 次
+
+**请求体**：
+```json
+{
+  "orderIds": ["quote-001", "quote-002"],
+  "customerFilter": "客户A"
+}
+```
+- `orderIds`（必填）：前端筛选条件下所有符合 status=4 的订单 ID 列表
+- `customerFilter`（可选）：当前客户筛选值，空字符串表示无客户筛选
+
+**响应**：
+- 单客户 → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`（Excel）
+- 多客户 → `application/zip`（ZIP，每个客户一个 Excel）
+
+**文件名**：`{客户名称}_收款单_YYYYMMDDHHMMSS.xlsx` 或 `{全部客户|多客户}_收款单_YYYYMMDDHHMMSS.zip`
+
+**固定列**：客户名称、数量、产品图片(80×80)、大货日期(从-到)、工艺、单个卖价(不含税)、单个卖价(含税)、销售总额(不含税)、销售总额(含税)
+
+**汇总行**：首列"合计"，加粗 + #f5f5f5 背景，销售总额 = Σ(round2(单价) × 数量)
+
+**数据量限制**：单次最多 1000 条，超过返回 400
+
+**错误码**：
+
+| HTTP | 说明 |
+|------|------|
+| 400 | orderIds 为空 / 无符合条件数据 / 超过 1000 条上限 |
+| 401 | 未登录或登录已过期 |
+| 403 | 无 `quotes:export-payment` 权限 |
+| 429 | 频率限制触发（5 分钟内超过 3 次） |
+| 500 | 服务器内部错误 |
+
 ---
 
 ## 12. 错误处理

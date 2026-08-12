@@ -92,6 +92,8 @@ quotesRouter.put('/:id', requirePermission('quotes:edit'), asyncHandler(async (r
   if (!data) {
     return res.status(404).json({ error: '报价不存在' })
   }
+  // 清除缩略图缓存，使更新后的图片能反映到列表缩略图
+  thumbnailCache.delete(id)
   res.json(data)
 }))
 

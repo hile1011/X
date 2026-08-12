@@ -38,39 +38,47 @@ describe('Quote 状态流转', () => {
       expect(updated!.productionStartTime).toBe('')
     })
 
-    it('打样中(2) → 做货中(3)，应记录 productionStartTime', async () => {
+    it('打样中(2) → 打样完成(7)，应记录 sampleCompletedTime', async () => {
       await db.quotes.nextStatus(quoteId) // 1→2
-      const updated = await db.quotes.nextStatus(quoteId) // 2→3
+      const updated = await db.quotes.nextStatus(quoteId) // 2→7
+      expect(updated!.status).toBe(7)
+      expect(updated!.sampleCompletedTime).toBeTruthy()
+      expect(updated!.productionStartTime).toBe('')
+    })
+
+    it('打样完成(7) → 做货中(3)，应记录 productionStartTime', async () => {
+      await db.quotes.nextStatus(quoteId) // 1→2
+      await db.quotes.nextStatus(quoteId) // 2→7
+      const updated = await db.quotes.nextStatus(quoteId) // 7→3
       expect(updated!.status).toBe(3)
       expect(updated!.productionStartTime).toBeTruthy()
     })
 
     it('做货中(3) → 已发货未收款(4)，应记录 shippingTime', async () => {
       await db.quotes.nextStatus(quoteId) // 1→2
-      await db.quotes.nextStatus(quoteId) // 2→3
+      await db.quotes.nextStatus(quoteId) // 2→7
+      await db.quotes.nextStatus(quoteId) // 7→3
       const updated = await db.quotes.nextStatus(quoteId) // 3→4
       expect(updated!.status).toBe(4)
       expect(updated!.shippingTime).toBeTruthy()
     })
 
     it('已发货未收款(4) → 已发货已收款(5)，应记录 paymentTime', async () => {
-      await db.quotes.nextStatus(quoteId) // 1→2
-      await db.quotes.nextStatus(quoteId) // 2→3
-      await db.quotes.nextStatus(quoteId) // 3→4
+      for (let i = 0; i < 4; i++) await db.quotes.nextStatus(quoteId) // 1→4（1→2→7→3→4）
       const updated = await db.quotes.nextStatus(quoteId) // 4→5
       expect(updated!.status).toBe(5)
       expect(updated!.paymentTime).toBeTruthy()
     })
 
     it('已发货已收款(5) → 结束(6)，应记录 endTime', async () => {
-      for (let i = 0; i < 4; i++) await db.quotes.nextStatus(quoteId) // 1→5
+      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→5（1→2→7→3→4→5）
       const updated = await db.quotes.nextStatus(quoteId) // 5→6
       expect(updated!.status).toBe(6)
       expect(updated!.endTime).toBeTruthy()
     })
 
     it('结束(6) 不能继续流转，应保持原状态', async () => {
-      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→6
+      for (let i = 0; i < 6; i++) await db.quotes.nextStatus(quoteId) // 1→6（1→2→7→3→4→5→6）
       const updated = await db.quotes.nextStatus(quoteId)
       expect(updated!.status).toBe(6)
     })
@@ -83,27 +91,35 @@ describe('Quote 状态流转', () => {
       expect(updated!.status).toBe(1)
     })
 
-    it('做货中(3) → 打样中(2)', async () => {
+    it('打样完成(7) → 打样中(2)', async () => {
       await db.quotes.nextStatus(quoteId) // 1→2
-      await db.quotes.nextStatus(quoteId) // 2→3
-      const updated = await db.quotes.prevStatus(quoteId) // 3→2
+      await db.quotes.nextStatus(quoteId) // 2→7
+      const updated = await db.quotes.prevStatus(quoteId) // 7→2
       expect(updated!.status).toBe(2)
     })
 
+    it('做货中(3) → 打样完成(7)', async () => {
+      await db.quotes.nextStatus(quoteId) // 1→2
+      await db.quotes.nextStatus(quoteId) // 2→7
+      await db.quotes.nextStatus(quoteId) // 7→3
+      const updated = await db.quotes.prevStatus(quoteId) // 3→7
+      expect(updated!.status).toBe(7)
+    })
+
     it('已发货未收款(4) → 做货中(3)', async () => {
-      for (let i = 0; i < 3; i++) await db.quotes.nextStatus(quoteId) // 1→4
+      for (let i = 0; i < 4; i++) await db.quotes.nextStatus(quoteId) // 1→4（1→2→7→3→4）
       const updated = await db.quotes.prevStatus(quoteId) // 4→3
       expect(updated!.status).toBe(3)
     })
 
     it('已发货已收款(5) → 已发货未收款(4)', async () => {
-      for (let i = 0; i < 4; i++) await db.quotes.nextStatus(quoteId) // 1→5
+      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→5
       const updated = await db.quotes.prevStatus(quoteId) // 5→4
       expect(updated!.status).toBe(4)
     })
 
     it('结束(6) → 已发货已收款(5)，结束状态可退回', async () => {
-      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→6
+      for (let i = 0; i < 6; i++) await db.quotes.nextStatus(quoteId) // 1→6
       const updated = await db.quotes.prevStatus(quoteId) // 6→5
       expect(updated!.status).toBe(5)
     })
@@ -128,9 +144,18 @@ describe('Quote 状态流转', () => {
       expect(updated!.endTime).toBeTruthy()
     })
 
+    it('打样完成(7) 可直接结束 → 结束(6)', async () => {
+      await db.quotes.nextStatus(quoteId) // 1→2
+      await db.quotes.nextStatus(quoteId) // 2→7
+      const updated = await db.quotes.endQuote(quoteId)
+      expect(updated!.status).toBe(6)
+      expect(updated!.endTime).toBeTruthy()
+    })
+
     it('做货中(3) 不能直接结束，应保持原状态', async () => {
       await db.quotes.nextStatus(quoteId) // 1→2
-      await db.quotes.nextStatus(quoteId) // 2→3
+      await db.quotes.nextStatus(quoteId) // 2→7
+      await db.quotes.nextStatus(quoteId) // 7→3
       const updated = await db.quotes.endQuote(quoteId)
       expect(updated!.status).toBe(3)
     })

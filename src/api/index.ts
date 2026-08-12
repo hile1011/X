@@ -185,11 +185,16 @@ export const api = {
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
     getImageFlags: () => authFetch(`${API_BASE}/quotes/image-flags`).then(handleResponse),
-    getThumbnailUrl: (id: string) => {
+    getThumbnailUrl: (id: string, version?: string) => {
       const token = getAuthToken()
       const url = `${API_BASE}/quotes/${id}/thumbnail`
       // <img> 标签无法设置 Authorization 头，通过 query 参数传递 token
-      return token ? `${url}?token=${encodeURIComponent(token)}` : url
+      // version 参数（通常传 quote.updated_at）用于在图片更新后强制浏览器刷新缩略图
+      const params = new URLSearchParams()
+      if (token) params.set('token', token)
+      if (version) params.set('_v', version)
+      const qs = params.toString()
+      return qs ? `${url}?${qs}` : url
     },
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
     create: (data: unknown) => authFetch(`${API_BASE}/quotes`, {
@@ -267,6 +272,53 @@ export const api = {
         throw new Error(msg)
       }
       return res.blob()
+    },
+    /**
+     * 导出收款单（仅"已发货未收款"订单）
+     * 30 秒超时；返回 { blob, filename }，filename 取自 X-Export-Filename 响应头
+     * @throws {Error} error.timeout=true 表示超时；error.message 含服务端错误信息
+     */
+    paymentReceipts: async (orderIds: string[], customerFilter: string): Promise<{ blob: Blob; filename: string }> => {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30_000)
+      try {
+        const res = await authFetch(`${API_BASE}/export/payment-receipts`, {
+          method: 'POST',
+          headers: jsonHeaders,
+          body: JSON.stringify({ orderIds, customerFilter }),
+          signal: controller.signal,
+        })
+        if (!res.ok) {
+          const text = await res.text()
+          let msg = `导出失败 (${res.status})`
+          let code: string | undefined
+          try { const err = JSON.parse(text); msg = err.error || msg; code = err.code } catch { if (text) msg = text }
+          const e = new Error(msg) as Error & { code?: string }
+          e.code = code
+          throw e
+        }
+        // 优先从 X-Export-Filename 头读取文件名（URL 编码），回退到 Content-Disposition
+        const rawName = res.headers.get('X-Export-Filename')
+        let filename = ''
+        if (rawName) {
+          try { filename = decodeURIComponent(rawName) } catch { filename = rawName }
+        }
+        if (!filename) {
+          filename = `收款单_${new Date().toISOString().replace(/[-T:]/g, '').substring(0, 14)}.xlsx`
+        }
+        const blob = await res.blob()
+        return { blob, filename }
+      } catch (error) {
+        // AbortError → 超时
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          const e = new Error('导出超时，请尝试减少数据量后重试') as Error & { timeout?: boolean }
+          e.timeout = true
+          throw e
+        }
+        throw error
+      } finally {
+        clearTimeout(timeoutId)
+      }
     },
   },
 }

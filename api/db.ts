@@ -265,8 +265,8 @@ export const dbApi = {
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
-        productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
-        FROM quotes ORDER BY status ASC, updated_at DESC, customerName ASC`).all()
+        sampleCompletedTime, productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
+        FROM quotes ORDER BY CASE status WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 7 THEN 3 WHEN 3 THEN 4 WHEN 4 THEN 5 WHEN 5 THEN 6 WHEN 6 THEN 7 ELSE 99 END ASC, updated_at DESC, customerName ASC`).all()
       return rows.map((r) => toCamelRow(r)) as Quote[]
     },
     getById: async (id: string) => {
@@ -287,9 +287,9 @@ export const dbApi = {
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
@@ -298,7 +298,7 @@ export const dbApi = {
         data.sampleFee || '', data.sampleDays || '', data.massDays || '',
         data.unitPrice || '', data.productionTimeStart || today, data.productionTimeEnd || '',
         data.costPrice || 0, data.priceWithTax || 0, data.sellPriceNoTax || 0, data.sellPriceWithTax || 0,
-        data.status || 1, today, '', '', '', '', '',
+        data.status || 1, today, '', '', '', '', '', '',
         JSON.stringify(data.images || []),
         JSON.stringify(data.tableData || []),
         JSON.stringify(data.removedFormulaAddresses || []),
@@ -327,7 +327,7 @@ export const dbApi = {
         sellPriceNoTax: data.sellPriceNoTax || 0,
         sellPriceWithTax: data.sellPriceWithTax || 0,
         status: data.status || 1, quoteTime: today,
-        sampleTime: '', productionStartTime: '',
+        sampleTime: '', sampleCompletedTime: '', productionStartTime: '',
         shippingTime: '', paymentTime: '', endTime: '',
         images: data.images || [],
         tableData: data.tableData || [],
@@ -372,7 +372,7 @@ export const dbApi = {
         productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
-        status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
+        status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
         images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id,
         updatedQuote.shippingAddress, updatedQuote.productStyle, updatedQuote.productSpec,
@@ -381,7 +381,7 @@ export const dbApi = {
         updatedQuote.sampleFee, updatedQuote.sampleDays, updatedQuote.massDays, updatedQuote.unitPrice,
         updatedQuote.productionTimeStart, updatedQuote.productionTimeEnd,
         updatedQuote.costPrice, updatedQuote.priceWithTax, updatedQuote.sellPriceNoTax, updatedQuote.sellPriceWithTax,
-        updatedQuote.status, updatedQuote.sampleTime, updatedQuote.productionStartTime,
+        updatedQuote.status, updatedQuote.sampleTime, updatedQuote.sampleCompletedTime, updatedQuote.productionStartTime,
         updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
         JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson, updatedQuote.updated_at, id
       )
@@ -396,7 +396,8 @@ export const dbApi = {
 
       switch (existing.status) {
         case 1: newStatus = 2; updates.sampleTime = today; break
-        case 2: newStatus = 3; updates.productionStartTime = today; break
+        case 2: newStatus = 7; updates.sampleCompletedTime = today; break
+        case 7: newStatus = 3; updates.productionStartTime = today; break
         case 3: newStatus = 4; updates.shippingTime = today; break
         case 4: newStatus = 5; updates.paymentTime = today; break
         case 5: newStatus = 6; updates.endTime = today; break
@@ -404,9 +405,10 @@ export const dbApi = {
       }
 
       const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, ...updates, updated_at: timeNow() }
-      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, updated_at=? WHERE id=?`).run(
+      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, updated_at=? WHERE id=?`).run(
         newStatus,
         updates.sampleTime || existing.sampleTime,
+        updates.sampleCompletedTime || (existing as any).sampleCompletedTime || '',
         updates.productionStartTime || existing.productionStartTime,
         updates.shippingTime || existing.shippingTime,
         updates.paymentTime || existing.paymentTime,
@@ -421,7 +423,8 @@ export const dbApi = {
       let newStatus = existing.status
       switch (existing.status) {
         case 2: newStatus = 1; break
-        case 3: newStatus = 2; break
+        case 7: newStatus = 2; break
+        case 3: newStatus = 7; break
         case 4: newStatus = 3; break
         case 5: newStatus = 4; break
         case 6: newStatus = 5; break
@@ -434,7 +437,7 @@ export const dbApi = {
     endQuote: async (id: string) => {
       const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
       if (!existing) return null
-      if (existing.status !== 1 && existing.status !== 2) return toCamelRow(existing) as Quote
+      if (existing.status !== 1 && existing.status !== 2 && existing.status !== 7) return toCamelRow(existing) as Quote
       const today = new Date().toISOString().split('T')[0]
       const updated = { ...(toCamelRow(existing) as Quote), status: 6, endTime: today, updated_at: timeNow() }
       await dbConn.prepare('UPDATE quotes SET status=?, endTime=?, updated_at=? WHERE id=?').run(6, today, updated.updated_at, id)
@@ -480,9 +483,9 @@ export const dbApi = {
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, productionStartTime,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         newId, existing.user_id || '', existing.customer_id || '', quoteNumber, customerName,
         existing.shippingAddress || '', productStyle, existing.productSpec || '',
         existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
@@ -491,7 +494,7 @@ export const dbApi = {
         existing.sampleFee || '', existing.sampleDays || '', existing.massDays || '',
         existing.unitPrice || '', today, '',
         existing.costPrice || 0, existing.priceWithTax || 0, existing.sellPriceNoTax || 0, existing.sellPriceWithTax || 0,
-        1, today, '', '', '', '', '',
+        1, today, '', '', '', '', '', '',
         existing.images || '[]',
         existing.tableData || '[]',
         existing.removedFormulaAddresses || '[]',
@@ -520,7 +523,7 @@ export const dbApi = {
         sellPriceNoTax: existing.sellPriceNoTax || 0,
         sellPriceWithTax: existing.sellPriceWithTax || 0,
         status: 1, quoteTime: today,
-        sampleTime: '', productionStartTime: '',
+        sampleTime: '', sampleCompletedTime: '', productionStartTime: '',
         shippingTime: '', paymentTime: '', endTime: '',
         images: typeof existing.images === 'string' ? JSON.parse(existing.images || '[]') : (existing.images || []),
         tableData: typeof existing.tableData === 'string' ? JSON.parse(existing.tableData || '[]') : (existing.tableData || []),

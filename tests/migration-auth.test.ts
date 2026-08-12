@@ -3,18 +3,19 @@
  *
  * 测试目标：
  *   - 5 张 RBAC 表已创建（users, roles, permissions, role_permissions, user_roles）
- *   - 38 项权限目录已预置
+ *   - 39 项权限目录已预置
  *   - admin 角色拥有全部权限
  *   - 默认管理员账号存在且关联 admin 角色
  *   - 默认管理员密码可校验
  *   - 迁移幂等：重新执行不重复插入
  *   - down 迁移：回滚到 v11 后表被删除
  *
- * 使用 MySQL 测试数据库（quote_system_test），已迁移至 v12。
+ * 使用 MySQL 测试数据库（quote_system_test），已迁移至最新版本。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { db } from '../api/db'
 import { resetTestDatabase } from './helpers/db-reset'
+import { CURRENT_SCHEMA_VERSION } from '../api/migrations/index.js'
 import bcrypt from 'bcryptjs'
 
 beforeAll(async () => {
@@ -25,9 +26,9 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  // 确保所有测试结束后 schema 恢复到 v13
+  // 确保所有测试结束后 schema 恢复到最新版本
   const version = await db.getSchemaVersion()
-  if (version < 13) {
+  if (version < CURRENT_SCHEMA_VERSION) {
     await db.runner.migrate()
   }
 })
@@ -103,9 +104,9 @@ describe('迁移 v12 - add-auth-rbac 表结构', () => {
 })
 
 describe('迁移 v12 - 权限目录种子数据', () => {
-  it('预置 38 项权限', async () => {
+  it('预置 39 项权限', async () => {
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(38)
+    expect(row.cnt).toBe(39)
   })
 
   it('权限码格式为 module:action', async () => {
@@ -142,11 +143,11 @@ describe('迁移 v12 - admin 角色种子数据', () => {
     expect(role.is_system).toBe(1)
   })
 
-  it('admin 角色拥有全部 38 项权限', async () => {
+  it('admin 角色拥有全部 39 项权限', async () => {
     const row = await db.db.prepare(
       'SELECT COUNT(*) as cnt FROM role_permissions WHERE role_id = ?'
     ).get('role-admin') as { cnt: number }
-    expect(row.cnt).toBe(38)
+    expect(row.cnt).toBe(39)
   })
 
   it('roles code 唯一索引：插入重复 code 报错', async () => {
@@ -188,7 +189,7 @@ describe('迁移 v12 - 默认管理员账号', () => {
        JOIN permissions p ON p.id = rp.permission_id
        WHERE ur.user_id = ?`
     ).get('user-admin-default') as { cnt: number }
-    expect(rows.cnt).toBe(38)
+    expect(rows.cnt).toBe(39)
   })
 })
 
@@ -196,7 +197,7 @@ describe('迁移 v12 - 幂等性', () => {
   it('重新执行 migrate 不重复插入权限', async () => {
     await db.runner.migrate()
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(38)
+    expect(row.cnt).toBe(39)
   })
 
   it('重新执行 migrate 不重复插入 admin 角色', async () => {
@@ -211,8 +212,8 @@ describe('迁移 v12 - 幂等性', () => {
     expect(row.cnt).toBe(1)
   })
 
-  it('Schema 版本为 13', async () => {
-    expect(await db.getSchemaVersion()).toBe(13)
+  it('Schema 版本为最新版本', async () => {
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
   })
 })
 
@@ -232,13 +233,13 @@ describe('迁移 v12 回滚（down）', () => {
     expect(await db.getSchemaVersion()).toBe(11)
   })
 
-  it('重新迁移到 v13 后表和数据恢复', async () => {
+  it('重新迁移到最新版本后表和数据恢复', async () => {
     await db.runner.migrate()
-    expect(await db.getSchemaVersion()).toBe(13)
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
 
     // 验证数据恢复
     const permCount = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(permCount.cnt).toBe(38)
+    expect(permCount.cnt).toBe(39)
 
     const admin = await db.db.prepare('SELECT * FROM users WHERE email = ?').get('517290808@qq.com') as any
     expect(admin).toBeTruthy()

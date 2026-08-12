@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
@@ -36,9 +36,10 @@ export interface Quote {
   priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
-  status: 1 | 2 | 3 | 4 | 5 | 6
+  status: 1 | 2 | 3 | 4 | 5 | 6 | 7
   quoteTime: string
   sampleTime: string
+  sampleCompletedTime: string
   productionStartTime: string
   shippingTime: string
   paymentTime: string
@@ -90,6 +91,10 @@ export default function Quotes() {
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState('')
+  // 收款单导出状态
+  const [exportingPayment, setExportingPayment] = useState(false)
+  const [paymentError, setPaymentError] = useState<{ type: 'network' | 'server' | 'timeout' | 'toomany'; message: string; detail?: string } | null>(null)
+  const [paymentToast, setPaymentToast] = useState<string>('')
   // 款式选项与产品列表：从产品管理模块动态获取
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -145,7 +150,7 @@ export default function Quotes() {
 
       const matchesStatus =
         statusFilter === 'all' ||
-        (statusFilter === 'active' && quote.status < 6) ||
+        (statusFilter === 'active' && quote.status !== 6) ||
         quote.status === parseInt(statusFilter)
 
       const matchesCustomer = !customerFilter ||
@@ -248,10 +253,57 @@ export default function Quotes() {
     setExporting(false)
   }
 
+  // 导出收款单：仅"已发货未收款"(status=4) 订单，按当前筛选条件全量导出
+  const handleExportPaymentReceipt = async () => {
+    setPaymentError(null)
+    setPaymentToast('')
+    // 收集当前筛选条件下、状态严格为 4 的订单（不限分页）
+    const paymentOrders = getFilteredQuotes().filter((q) => q.status === 4)
+    if (paymentOrders.length === 0) {
+      setPaymentToast('当前筛选条件下无符合“已发货未收款”状态的订单数据')
+      setTimeout(() => setPaymentToast(''), 3000)
+      return
+    }
+    if (paymentOrders.length > 1000) {
+      setPaymentError({
+        type: 'toomany',
+        message: `符合条件的数据共 ${paymentOrders.length} 条，超过单次导出上限 1000 条，请缩小筛选范围或分批导出`,
+      })
+      return
+    }
+    setExportingPayment(true)
+    try {
+      const { blob, filename } = await api.export.paymentReceipts(
+        paymentOrders.map((q) => q.id),
+        customerFilter,
+      )
+      downloadBlob(blob, filename)
+    } catch (error) {
+      const e = error as Error & { timeout?: boolean; code?: string }
+      if (e.code === 'NO_DATA') {
+        setPaymentToast('当前筛选条件下无符合“已发货未收款”状态的订单数据')
+        setTimeout(() => setPaymentToast(''), 3000)
+      } else if (e.code === 'TOO_MANY_ROWS') {
+        setPaymentError({ type: 'toomany', message: e.message })
+      } else if (e.timeout) {
+        setPaymentError({ type: 'timeout', message: e.message })
+      } else if (/network|fetch|Failed to fetch|网络|Load failed/i.test(e.message)) {
+        setPaymentError({ type: 'network', message: '网络连接异常，导出失败，请重试' })
+      } else if (/500|服务器|权限不足|token/i.test(e.message)) {
+        setPaymentError({ type: 'server', message: '服务器处理异常，请联系系统管理员', detail: e.message })
+      } else {
+        setPaymentError({ type: 'network', message: e.message || '导出失败，请重试' })
+      }
+    } finally {
+      setExportingPayment(false)
+    }
+  }
+
   const getStatusColor = (status: number) => {
     switch (status) {
       case 1: return 'bg-blue-100 text-blue-700'
       case 2: return 'bg-yellow-100 text-yellow-700'
+      case 7: return 'bg-cyan-100 text-cyan-700'
       case 3: return 'bg-purple-100 text-purple-700'
       case 4: return 'bg-orange-100 text-orange-700'
       case 5: return 'bg-green-100 text-green-700'
@@ -295,6 +347,17 @@ export default function Quotes() {
             >
               {exporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
               导出 Excel
+            </button>
+          )}
+          {hasPermission('quotes:export-payment') && (
+            <button
+              onClick={handleExportPaymentReceipt}
+              disabled={exportingPayment}
+              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="导出当前筛选条件下“已发货未收款”订单的收款单（Excel/ZIP）"
+            >
+              {exportingPayment ? <Loader2 size={18} className="animate-spin" /> : <Receipt size={18} />}
+              导出收款单
             </button>
           )}
           {hasPermission('quotes:create') && (
@@ -384,10 +447,10 @@ export default function Quotes() {
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">面料</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">工艺</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单状态</div>
-                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">成本价</div>
-                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(不含税)</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">卖价(含税)</div>
+                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">成本价</div>
+                  <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(不含税)</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(含税)</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">做货到期时间</div>
@@ -437,7 +500,7 @@ export default function Quotes() {
                             <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">
                               {imageFlags[quote.id] ? (
                                 <img
-                                  src={api.quotes.getThumbnailUrl(quote.id)}
+                                  src={api.quotes.getThumbnailUrl(quote.id, quote.updated_at)}
                                   alt="产品图"
                                   loading="lazy"
                                   className="w-10 h-10 rounded-lg object-cover border border-gray-200"
@@ -506,20 +569,6 @@ export default function Quotes() {
                               </span>
                             </div>
 
-                            {/* 成本价 */}
-                            <div className="w-28 px-4 py-4 flex-shrink-0">
-                              <span className="text-gray-600 font-medium text-sm">
-                                ¥{(quote.costPrice || 0).toFixed(2)}
-                              </span>
-                            </div>
-
-                            {/* 含税价 */}
-                            <div className="w-28 px-4 py-4 flex-shrink-0">
-                              <span className="text-gray-700 font-medium text-sm">
-                                ¥{(quote.priceWithTax || 0).toFixed(2)}
-                              </span>
-                            </div>
-
                             {/* 卖价(不含税) */}
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
@@ -531,6 +580,20 @@ export default function Quotes() {
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
                                 ¥{(quote.sellPriceWithTax || 0).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 成本价 */}
+                            <div className="w-28 px-4 py-4 flex-shrink-0">
+                              <span className="text-gray-600 font-medium text-sm">
+                                ¥{(quote.costPrice || 0).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 含税价 */}
+                            <div className="w-28 px-4 py-4 flex-shrink-0">
+                              <span className="text-gray-700 font-medium text-sm">
+                                ¥{(quote.priceWithTax || 0).toFixed(2)}
                               </span>
                             </div>
 
@@ -851,6 +914,83 @@ export default function Quotes() {
           styleLabel={getStyleLabelFromProducts(products, printTarget.productStyle)}
           onClose={() => setPrintTarget(null)}
         />
+      )}
+
+      {/* 收款单导出：全屏半透明遮罩 + 加载动画 */}
+      {exportingPayment && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center">
+          <div className="bg-white rounded-xl px-10 py-8 flex flex-col items-center gap-4 shadow-2xl">
+            <Loader2 size={40} className="animate-spin text-primary-600" />
+            <p className="text-gray-700 font-medium">数据导出中，请稍候...</p>
+          </div>
+        </div>
+      )}
+
+      {/* 收款单导出：错误弹窗（网络/服务器/超时/超量） */}
+      {paymentError && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertCircle className="text-red-500 flex-shrink-0 mt-0.5" size={20} />
+              <div className="flex-1 min-w-0">
+                <p className="text-gray-800 font-medium break-words">{paymentError.message}</p>
+                {paymentError.detail && (
+                  <p className="text-xs text-gray-500 mt-2 break-all">错误详情：{paymentError.detail}</p>
+                )}
+              </div>
+              <button onClick={() => setPaymentError(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0" title="关闭">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex justify-end gap-2 flex-wrap">
+              {(paymentError.type === 'network' || paymentError.type === 'timeout') && (
+                <button
+                  onClick={() => { setPaymentError(null); handleExportPaymentReceipt() }}
+                  className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  重试
+                </button>
+              )}
+              {paymentError.type === 'server' && (
+                <>
+                  <button
+                    onClick={() => {
+                      const text = paymentError.detail || paymentError.message
+                      try {
+                        navigator.clipboard?.writeText(text)
+                      } catch { /* 忽略剪贴板权限失败 */ }
+                      setPaymentToast('错误信息已复制到剪贴板')
+                      setTimeout(() => setPaymentToast(''), 2000)
+                    }}
+                    className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    <Copy size={14} />
+                    复制错误信息
+                  </button>
+                  <a
+                    href="mailto:517290808@qq.com?subject=收款单导出异常反馈"
+                    className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    联系管理员
+                  </a>
+                </>
+              )}
+              <button
+                onClick={() => setPaymentError(null)}
+                className="px-4 py-2 text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 收款单导出：轻提示（无数据 / 复制成功，自动消失） */}
+      {paymentToast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 text-white px-5 py-2.5 rounded-lg shadow-lg text-sm whitespace-nowrap">
+          {paymentToast}
+        </div>
       )}
     </div>
   )

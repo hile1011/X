@@ -1,4 +1,4 @@
-# VTable 复制功能在 HTTP（非安全上下文）下失效的 Bug 报告
+# VTable 复制/粘贴功能在 HTTP（非安全上下文）下失效的 Bug 报告
 
 ## 环境信息
 
@@ -11,7 +11,10 @@
 
 ## 问题概述
 
-在 HTTP 环境下（非安全上下文），VTable 的复制功能（Ctrl+C）**静默失败**——剪贴板中没有写入任何内容。这是因为 `handleCopy` 是 async 函数，内部有 `yield setTimeout(10)` 异步等待，导致 fallback 路径中的 `e.clipboardData.setData()` 和 `document.execCommand('copy')` 都失效。
+在 HTTP 环境下（非安全上下文），VTable 的复制和粘贴功能都存在 async setTimeout 时序问题：
+
+1. **复制（Ctrl+C）静默失败**—— `handleCopy` 是 async 函数，内部有 `yield setTimeout(10)`，导致 fallback 路径中的 `e.clipboardData.setData()` 和 `document.execCommand('copy')` 都失效。
+2. **粘贴（Ctrl+V）需按 2 次才能成功**—— `fallbackPasteFromClipboard` 是同样的 async 函数（含 `yield setTimeout(10)`），第一次粘贴时焦点不在表格元素 → `element.focus()` + `yield setTimeout(10)` → `e.clipboardData.getData()` 返回空字符串 → 粘贴失败。第二次粘贴时焦点已在表格元素上，跳过 `focus + setTimeout`，`getData` 正常 → 粘贴成功。
 
 ## 复现步骤
 
@@ -191,6 +194,65 @@ const data = this.table.getCopyValue(
 ### 建议
 
 VTable-Sheet 初始化时，默认将 `getCopyCellValue.value` 也设为与 `.html` 相同的 `getCellValueConsiderFormula` 逻辑（公式单元格返回公式字符串），让纯文本复制也能保留公式。
+
+## 补充问题 2：粘贴功能需按 2 次 Ctrl+V 才能成功
+
+### 问题描述
+
+在 HTTP 环境下（非安全上下文），用户需要连续按 2 次 Ctrl+V 才能成功粘贴。
+
+### 源码位置
+
+`@visactor/vtable/es/event/event.js` 第 428-441 行 `fallbackPasteFromClipboard`
+
+### 根因分析
+
+`fallbackPasteFromClipboard` 与 `handleCopy` 有完全相同的 async setTimeout 时序问题：
+
+```javascript
+fallbackPasteFromClipboard(e) {
+    return __awaiter(this, void 0, void 0, (function*() {
+        // ...
+        const element = table.getElement();
+        element && element !== document.activeElement && (
+            element.focus(),
+            yield new Promise((resolve => setTimeout(resolve, 10)))  // ⏸️ 异步等待
+        );
+        const clipboardData = e.clipboardData || window.clipboardData;
+        if (clipboardData) {
+            const pastedData = clipboardData.getData("text");  // ❌ yield 后返回空字符串
+            if (pastedData) return void (yield this.processPastedText(pastedData, col, row));
+        }
+    }));
+}
+```
+
+完整的失败链路：
+
+```
+第 1 次 Ctrl+V:
+  → paste 事件触发
+  → executePaste → navigator.clipboard 不可用 → fallbackPasteFromClipboard(async)
+    → element !== document.activeElement → element.focus()
+    → yield setTimeout(10)             ⏸️ 异步等待
+  → paste 事件分发结束                  ← e.clipboardData 已"脱钩"
+  → (10ms 后) async 恢复
+    → clipboardData.getData("text")    ❌ 返回空字符串（事件已结束）
+    → if (pastedData) → false          ← 空字符串是 falsy
+    → 什么都不做                        ← 粘贴失败
+  → 但焦点已被移到表格元素上
+
+第 2 次 Ctrl+V:
+  → paste 事件触发
+  → fallbackPasteFromClipboard(async)
+    → element === document.activeElement → 跳过 focus + setTimeout
+    → clipboardData.getData("text")    ✅ 同步读取，返回数据
+    → processPastedText(pastedData)    ✅ 粘贴成功
+```
+
+### 建议修复方案
+
+与 handleCopy 相同：在 `yield setTimeout` 之前同步读取 `e.clipboardData.getData()`。
 
 ## 附带文件
 

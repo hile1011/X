@@ -169,6 +169,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
     sampleTime: string
+    sampleCompletedTime: string
     productionStartTime: string
     shippingTime: string
     paymentTime: string
@@ -176,6 +177,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   }>({
     quoteTime: '',
     sampleTime: '',
+    sampleCompletedTime: '',
     productionStartTime: '',
     shippingTime: '',
     paymentTime: '',
@@ -282,6 +284,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -335,9 +338,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       priceWithTax: priceWithTax || 0,
       sellPriceNoTax: sellPrices.noTax || 0,
       sellPriceWithTax: sellPrices.withTax || 0,
-      status: status as 1 | 2 | 3 | 4 | 5 | 6,
+      status: status as 1 | 2 | 3 | 4 | 5 | 6 | 7,
       quoteTime: statusTimeNodes.quoteTime,
       sampleTime: statusTimeNodes.sampleTime,
+      sampleCompletedTime: statusTimeNodes.sampleCompletedTime,
       productionStartTime: statusTimeNodes.productionStartTime,
       shippingTime: statusTimeNodes.shippingTime,
       paymentTime: statusTimeNodes.paymentTime,
@@ -530,6 +534,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     const sivTimer = setTimeout(restoreSIV, 1000)
 
     const sheet = new VTableSheet(sheetContainerRef.current, {
+      showFormulaBar: true,
       undoRedo: { show: !readOnly },
       VTablePluginModules: readOnly ? [] : [
         { module: TableExportPlugin },
@@ -948,6 +953,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -972,6 +978,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -987,7 +994,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   }
 
   const handleEndQuote = async () => {
-    if (!isEditMode || (status !== 1 && status !== 2)) return
+    if (!isEditMode || !OrderStatus.canEnterFinished(status)) return
     setLoading(true)
     try {
       const data = await api.quotes.endQuote(id!)
@@ -996,6 +1003,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
           sampleTime: data.sampleTime || '',
+          sampleCompletedTime: data.sampleCompletedTime || '',
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
@@ -1014,9 +1022,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     setProductionStepStatus(prev => ({ ...prev, [stepId]: newStatus }))
   }
 
-  const canGoNext = status >= 1 && status <= 5
-  const canGoPrev = status >= 2 && status <= 6
-  const canEnd = status >= 1 && status <= 5
+  const canGoNext = OrderStatus.getNext(status) !== null
+  const canGoPrev = OrderStatus.getPrev(status) !== null
+  const canEnd = OrderStatus.canEnterFinished(status)
 
   // === 价格联动计算（实时联动：依赖 成本价/含税价/单个卖价/数量） ===
   // 保留2位小数辅助函数：总额计算以保留2位小数的价格为基础
@@ -1053,9 +1061,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               </div>
             </div>
             <div className="flex flex-wrap gap-1.5 sm:gap-2 justify-end">
-              <button onClick={() => navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
+              <button onClick={() => window.history.length > 1 ? navigate(-1) : navigate('/quotes')} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0">
                 <ArrowLeft size={16} />
-                返回列表
+                返回
               </button>
               {/* readOnly 模式：显示编辑按钮（仅有编辑权限时） */}
               {readOnly && canEdit && (
@@ -1143,10 +1151,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
             <div className="flex items-center px-1 min-w-[480px] sm:min-w-0">
             {STATUS_OPTIONS.map((option, index) => {
               const isCurrent = option.value === status
-              const isPast = option.value < status
+              const isPast = OrderStatus.getFlowPosition(option.value) < OrderStatus.getFlowPosition(status)
               const nodeTime = statusTimeNodes[
                 option.value === 1 ? 'quoteTime' :
                 option.value === 2 ? 'sampleTime' :
+                option.value === 7 ? 'sampleCompletedTime' :
                 option.value === 3 ? 'productionStartTime' :
                 option.value === 4 ? 'shippingTime' :
                 option.value === 5 ? 'paymentTime' : 'endTime'
@@ -1400,6 +1409,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                   <div className={`px-2 py-1 text-sm font-semibold rounded text-center ${
                     status === 1 ? 'bg-blue-100 text-blue-700' :
                     status === 2 ? 'bg-yellow-100 text-yellow-700' :
+                    status === 7 ? 'bg-cyan-100 text-cyan-700' :
                     status === 3 ? 'bg-purple-100 text-purple-700' :
                     status === 4 ? 'bg-orange-100 text-orange-700' :
                     status === 5 ? 'bg-green-100 text-green-700' :

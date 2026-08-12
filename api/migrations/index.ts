@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 13
+export const CURRENT_SCHEMA_VERSION = 15
 
 export interface Migration {
   version: number
@@ -715,6 +715,128 @@ const migrations: Migration[] = [
       await db.exec(`
         DROP TABLE IF EXISTS quote_history
       `)
+    },
+  },
+  {
+    version: 14,
+    name: 'add-sample-completed-status',
+    description: 'V0.8：新增打样完成状态(7)及 sampleCompletedTime 字段，重构状态流转为指针模式；更新审计触发器追踪新字段',
+    up: async (db: any) => {
+      // 1. 新增 sampleCompletedTime 字段（打样完成时间节点）
+      await db.exec(`ALTER TABLE quotes ADD COLUMN sampleCompletedTime VARCHAR(64) DEFAULT '' AFTER sampleTime`)
+
+      // 2. 更新审计触发器：将 sampleCompletedTime 加入追踪字段列表
+      //    需要先 DROP 旧触发器，再用包含新字段的 TRACKED_FIELDS 重建
+      const TRACKED_FIELDS = [
+        'user_id', 'customer_id', 'quote_number', 'customerName', 'shippingAddress',
+        'productStyle', 'productSpec', 'fabricMaterial', 'process', 'handleMaterial',
+        'handleSpec', 'quantity', 'boxSpec', 'remark', 'sampleFee', 'sampleDays',
+        'massDays', 'unitPrice', 'productionTimeStart', 'productionTimeEnd',
+        'sellPriceNoTax', 'sellPriceWithTax', 'status', 'quoteTime', 'sampleTime',
+        'sampleCompletedTime', 'productionStartTime', 'shippingTime', 'paymentTime', 'endTime',
+        'costPrice', 'priceWithTax',
+      ]
+      const newJson = TRACKED_FIELDS.map((f) => `'${f}', NEW.\`${f}\``).join(', ')
+      const changedExpr = TRACKED_FIELDS
+        .map((f) => `IF(NOT(OLD.\`${f}\` <=> NEW.\`${f}\`), '${f}', NULL)`)
+        .join(', ')
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_insert`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'insert', NULL, JSON_OBJECT(${newJson}), NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_update`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'update',
+          JSON_OBJECT(${TRACKED_FIELDS.map((f) => `'${f}', OLD.\`${f}\``).join(', ')}),
+          JSON_OBJECT(${newJson}),
+          CONCAT_WS(',', ${changedExpr}),
+          COALESCE(@app_operator, CURRENT_USER()))
+      `)
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_delete`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (OLD.id, 'delete', JSON_OBJECT(${TRACKED_FIELDS.map((f) => `'${f}', OLD.\`${f}\``).join(', ')}), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+    },
+    down: async (db: any) => {
+      // 恢复旧触发器（不含 sampleCompletedTime）
+      const OLD_TRACKED_FIELDS = [
+        'user_id', 'customer_id', 'quote_number', 'customerName', 'shippingAddress',
+        'productStyle', 'productSpec', 'fabricMaterial', 'process', 'handleMaterial',
+        'handleSpec', 'quantity', 'boxSpec', 'remark', 'sampleFee', 'sampleDays',
+        'massDays', 'unitPrice', 'productionTimeStart', 'productionTimeEnd',
+        'sellPriceNoTax', 'sellPriceWithTax', 'status', 'quoteTime', 'sampleTime',
+        'productionStartTime', 'shippingTime', 'paymentTime', 'endTime',
+        'costPrice', 'priceWithTax',
+      ]
+      const oldJson = OLD_TRACKED_FIELDS.map((f) => `'${f}', NEW.\`${f}\``).join(', ')
+      const oldChangedExpr = OLD_TRACKED_FIELDS
+        .map((f) => `IF(NOT(OLD.\`${f}\` <=> NEW.\`${f}\`), '${f}', NULL)`)
+        .join(', ')
+
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_insert`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'insert', NULL, JSON_OBJECT(${oldJson}), NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_update`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'update',
+          JSON_OBJECT(${OLD_TRACKED_FIELDS.map((f) => `'${f}', OLD.\`${f}\``).join(', ')}),
+          JSON_OBJECT(${oldJson}),
+          CONCAT_WS(',', ${oldChangedExpr}),
+          COALESCE(@app_operator, CURRENT_USER()))
+      `)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_delete`)
+      await db.exec(`
+        CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (OLD.id, 'delete', JSON_OBJECT(${OLD_TRACKED_FIELDS.map((f) => `'${f}', OLD.\`${f}\``).join(', ')}), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))
+      `)
+
+      // 删除 sampleCompletedTime 字段
+      await db.exec(`ALTER TABLE quotes DROP COLUMN sampleCompletedTime`)
+    },
+  },
+  {
+    version: 15,
+    name: 'add-payment-export-permission',
+    description: 'V0.9：新增 quotes:export-payment 权限（导出收款单），并分配给 admin 角色',
+    up: async (db: any) => {
+      // 1. 新增权限（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-quotes-export-payment',
+        'quotes:export-payment',
+        '订单-导出收款单',
+        'quotes',
+        'export-payment',
+        'button',
+        '导出已发货未收款订单的收款单（Excel/ZIP）',
+        18,
+      )
+
+      // 2. 分配给 admin 角色（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-quotes-export-payment')
+    },
+    down: async (db: any) => {
+      // 先删角色关联，再删权限（避免外键约束）
+      await db.prepare('DELETE FROM role_permissions WHERE permission_id = ?').run('perm-quotes-export-payment')
+      await db.prepare('DELETE FROM permissions WHERE id = ?').run('perm-quotes-export-payment')
     },
   },
 ]
