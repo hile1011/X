@@ -266,7 +266,7 @@ export const dbApi = {
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
         sampleCompletedTime, productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
-        FROM quotes ORDER BY CASE status WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 7 THEN 3 WHEN 3 THEN 4 WHEN 4 THEN 5 WHEN 5 THEN 6 WHEN 6 THEN 7 ELSE 99 END ASC, updated_at DESC, customerName ASC`).all()
+        FROM quotes ORDER BY updated_at DESC`).all()
       return rows.map((r) => toCamelRow(r)) as Quote[]
     },
     getById: async (id: string) => {
