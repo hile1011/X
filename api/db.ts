@@ -94,7 +94,11 @@ const getStyleLabel = async (value: string): Promise<string> => {
   return option ? option.label : value
 }
 
-const timeNow = () => new Date().toISOString().slice(0, 19).replace('T', ' ')
+const timeNow = () => {
+  const now = new Date()
+  const offset = now.getTimezoneOffset() * 60000
+  return new Date(now.getTime() - offset).toISOString().slice(0, 19).replace('T', ' ')
+}
 
 function toCamelRow(row: Record<string, any>): any {
   const result: Record<string, any> = {}

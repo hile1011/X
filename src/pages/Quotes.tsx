@@ -60,6 +60,7 @@ interface GroupedQuotes {
   customerName: string
   expanded: boolean
   quotes: Quote[]
+  visibleCount: number
 }
 
 // 生成分页页码序列：始终包含首页与末页，当前页前后各展示若干页，超出部分用省略号占位
@@ -179,11 +180,12 @@ export default function Quotes() {
       grouped[quote.customerName].push(quote)
     })
 
-    // 所有客户分组（保持插入顺序）
+    // 所有客户分组（保持插入顺序），每组默认显示前 5 条订单
     const allGroups = Object.entries(grouped).map(([customerName, quotes]) => ({
       customerName,
       expanded: true,
       quotes,
+      visibleCount: 5,
     }))
 
     // 客户总数（客户名称维度去重）
@@ -210,6 +212,16 @@ export default function Quotes() {
       prev.map((group) =>
         group.customerName === customerName
           ? { ...group, expanded: !group.expanded }
+          : group
+      )
+    )
+  }
+
+  const showMore = (customerName: string) => {
+    setGroupedQuotes((prev) =>
+      prev.map((group) =>
+        group.customerName === customerName
+          ? { ...group, visibleCount: group.visibleCount + 5 }
           : group
       )
     )
@@ -487,9 +499,9 @@ export default function Quotes() {
                       <div className="w-56 px-4 py-4 flex-shrink-0 sticky right-0 bg-gray-50/50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]"></div>
                     </div>
 
-                    {/* 子行 - 订单详情 */}
+                    {/* 子行 - 订单详情（每组默认显示前 5 条，可展开更多） */}
                     {group.expanded &&
-                      group.quotes.map((quote) => {
+                      group.quotes.slice(0, group.visibleCount).map((quote) => {
                         return (
                           <div
                             key={quote.id}
@@ -701,6 +713,21 @@ export default function Quotes() {
                           </div>
                         )
                       })}
+                    {/* 显示更多按钮：订单数超过当前可见数时显示 */}
+                    {group.expanded && group.quotes.length > group.visibleCount && (
+                      <div
+                        className="flex justify-center py-2 border-b border-gray-100 bg-gray-50/30"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          onClick={() => showMore(group.customerName)}
+                          className="flex items-center gap-1.5 px-4 py-1.5 text-sm text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg transition-colors"
+                        >
+                          <ChevronDown size={14} />
+                          显示更多（剩余 {group.quotes.length - group.visibleCount} 条）
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -735,7 +762,7 @@ export default function Quotes() {
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>
-                      当前页订单 <span className="font-semibold text-primary-600">{groupedQuotes.reduce((sum, g) => sum + g.quotes.length, 0)}</span> 个
+                      当前页订单 <span className="font-semibold text-primary-600">{groupedQuotes.reduce((sum, g) => sum + Math.min(g.visibleCount, g.quotes.length), 0)}</span> 个
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>

@@ -36,7 +36,7 @@ async function authFetch(url: string, options?: RequestInit): Promise<Response> 
     headers['X-Operator'] = encodeURIComponent(operator)
   }
 
-  let res = await fetch(url, { ...options, headers })
+  let res = await fetch(url, { ...options, headers, cache: 'no-store' })
 
   // 401 → 尝试刷新 token 后重试一次
   if (res.status === 401) {
