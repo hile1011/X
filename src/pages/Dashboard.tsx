@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { usePermission } from '../hooks/usePermission'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Activity, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, DollarSign, ClipboardCheck, Eye, Receipt, Loader2, X, Copy } from 'lucide-react'
+import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, DollarSign, ClipboardCheck, Eye, Receipt, Loader2, X, Copy } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
@@ -129,6 +129,7 @@ interface Quote {
   productionStartTime: string
   shippingTime: string
   images?: string[]
+  created_at: string
   updated_at: string
 }
 
@@ -453,6 +454,62 @@ export default function Dashboard() {
     }
   }, [quotes, selectedMonth])
 
+  // 今日新增报价数：按 created_at（订单创建日期）统计
+  const todayNewCount = useMemo(() => {
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    return quotes.filter((q) => {
+      const d = new Date(q.created_at)
+      if (isNaN(d.getTime())) return false
+      return d >= todayStart && d <= todayEnd
+    }).length
+  }, [quotes])
+
+  // 昨日新增报价数：用于与今日对比
+  const yesterdayNewCount = useMemo(() => {
+    const now = new Date()
+    const yesterdayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+    const yesterdayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999)
+    return quotes.filter((q) => {
+      const d = new Date(q.created_at)
+      if (isNaN(d.getTime())) return false
+      return d >= yesterdayStart && d <= yesterdayEnd
+    }).length
+  }, [quotes])
+
+  // 今日/昨日按状态分组的新增数（做货中=3、打样中=2、打样完成=7）
+  const todayStatusCounts = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+    const counts: Record<number, number> = { 2: 0, 3: 0, 7: 0 }
+    quotes.forEach((q) => {
+      const d = new Date(q.created_at)
+      if (isNaN(d.getTime())) return
+      if (d >= start && d <= end && counts[q.status] !== undefined) counts[q.status]++
+    })
+    return counts
+  }, [quotes])
+
+  const yesterdayStatusCounts = useMemo(() => {
+    const now = new Date()
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999)
+    const counts: Record<number, number> = { 2: 0, 3: 0, 7: 0 }
+    quotes.forEach((q) => {
+      const d = new Date(q.created_at)
+      if (isNaN(d.getTime())) return
+      if (d >= start && d <= end && counts[q.status] !== undefined) counts[q.status]++
+    })
+    return counts
+  }, [quotes])
+
+  // 当前做货中/打样中/打样完成总数
+  const currentProductionCount = useMemo(() => quotes.filter((q) => q.status === 3).length, [quotes])
+  const currentSampleCount = useMemo(() => quotes.filter((q) => q.status === 2).length, [quotes])
+  const currentSampleCompletedCount = useMemo(() => quotes.filter((q) => q.status === 7).length, [quotes])
+
   // 当前利润模式对应的月度/年度利润值
   const currentProfit = profitMode === 'noTax' ? monthlyStats.monthlyProfitNoTax : monthlyStats.monthlyProfitWithTax
   const currentYearProfit = profitMode === 'noTax' ? yearlyStats.yearlyProfitNoTax : yearlyStats.yearlyProfitWithTax
@@ -623,13 +680,34 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {/* 当月总销售额（含订单个数明细） */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          {/* 当月业绩（销售额 + 利润合并） */}
           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-purple-50 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="text-purple-600" size={18} />
+                </div>
+                <h3 className="text-base font-semibold text-gray-800">{monthLabel}业绩</h3>
+              </div>
+              {/* 利润模式切换（当月/全年联动） */}
+              <button
+                onClick={handleProfitModeToggle}
+                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
+                  profitMode === 'noTax'
+                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                    : 'bg-green-100 text-green-600 hover:bg-green-200'
+                }`}
+                title="点击切换不含税 / 含税"
+              >
+                {profitMode === 'noTax' ? '不含税' : '含税'}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {/* 销售额 */}
+              <div className="min-w-0">
                 <p className="text-sm text-gray-500 flex items-center">
-                  {monthLabel}总销售额
+                  销售额
                   <StatTooltip>
                     <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
                     <p>• 时间范围：做货开始时间在所选月份</p>
@@ -638,68 +716,61 @@ export default function Dashboard() {
                   </StatTooltip>
                 </p>
                 <p className="text-2xl font-bold text-gray-800 mt-1">¥{monthlyStats.monthlyRevenue.toLocaleString()}</p>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+                <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1.5">
                   <span className="text-xs text-blue-600">做货中 {monthlyStats.statusCounts[3]}</span>
                   <span className="text-xs text-amber-600">未收款 {monthlyStats.statusCounts[4]}</span>
                   <span className="text-xs text-green-600">已收款 {monthlyStats.statusCounts[5]}</span>
                   <span className="text-xs text-yellow-600">打样中 {monthlyStats.sampleCount}</span>
                 </div>
               </div>
-              <div className="w-12 h-12 bg-purple-50 rounded-lg flex items-center justify-center">
-                <TrendingUp className="text-purple-600" size={24} />
-              </div>
-            </div>
-          </div>
-
-          {/* 当月总利润（支持不含税/含税切换） */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-gray-500 flex items-center">
-                    {monthLabel}总利润
-                    <StatTooltip>
-                      <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                      <p>• 时间范围：做货开始时间在所选月份</p>
-                      <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
-                      <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
-                      <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">当前模式：{profitMode === 'noTax' ? '不含税' : '含税'}（点击右侧标签切换）</p>
-                    </StatTooltip>
-                  </p>
-                  {/* 利润模式切换 */}
-                  <button
-                    onClick={handleProfitModeToggle}
-                    className={`text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium transition-colors min-h-[36px] sm:min-h-0 ${
-                      profitMode === 'noTax'
-                        ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                        : 'bg-green-100 text-green-600 hover:bg-green-200'
-                    }`}
-                    title="点击切换不含税 / 含税"
-                  >
-                    {profitMode === 'noTax' ? '不含税' : '含税'}
-                  </button>
-                </div>
+              {/* 利润 */}
+              <div className="min-w-0">
+                <p className="text-sm text-gray-500 flex items-center">
+                  利润
+                  <StatTooltip>
+                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                    <p>• 时间范围：做货开始时间在所选月份</p>
+                    <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
+                    <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
+                  </StatTooltip>
+                </p>
                 <p className={`text-2xl font-bold mt-1 ${profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'}`}>
                   ¥{currentProfit.toLocaleString()}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {profitMode === 'noTax'
-                    ? '卖价(不含税) - 成本价'
-                    : '卖价(含税) - 含税价'}
+                  {profitMode === 'noTax' ? '卖价(不含税) - 成本价' : '卖价(含税) - 含税价'}
                 </p>
-              </div>
-              <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${profitMode === 'noTax' ? 'bg-red-50' : 'bg-green-50'}`}>
-                <Activity className={profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'} size={24} />
               </div>
             </div>
           </div>
 
-          {/* 全年总销售额 */}
+          {/* 全年业绩（销售额 + 利润合并） */}
           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center">
+                  <TrendingUp className="text-blue-600" size={18} />
+                </div>
+                <h3 className="text-base font-semibold text-gray-800">{yearLabel}业绩</h3>
+              </div>
+              {/* 利润模式切换（与当月联动同一状态） */}
+              <button
+                onClick={handleProfitModeToggle}
+                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
+                  profitMode === 'noTax'
+                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
+                    : 'bg-green-100 text-green-600 hover:bg-green-200'
+                }`}
+                title="点击切换不含税 / 含税"
+              >
+                {profitMode === 'noTax' ? '不含税' : '含税'}
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {/* 销售额 */}
+              <div className="min-w-0">
                 <p className="text-sm text-gray-500 flex items-center">
-                  {yearLabel}总销售额
+                  销售额
                   <StatTooltip>
                     <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
                     <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
@@ -709,51 +780,107 @@ export default function Dashboard() {
                 <p className="text-2xl font-bold text-gray-800 mt-1">¥{yearlyStats.yearlyRevenue.toLocaleString()}</p>
                 <p className="text-xs text-gray-400 mt-1">做货中/已发货订单 · {yearlyStats.orderCount} 笔</p>
               </div>
-              <div className="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center">
-                <TrendingUp className="text-blue-600" size={24} />
-              </div>
-            </div>
-          </div>
-
-          {/* 全年总利润（与当月利润共享 profitMode 切换） */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-gray-500 flex items-center">
-                    {yearLabel}总利润
-                    <StatTooltip>
-                      <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                      <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
-                      <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
-                      <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
-                      <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">当前模式：{profitMode === 'noTax' ? '不含税' : '含税'}（点击右侧标签切换）</p>
-                    </StatTooltip>
-                  </p>
-                  {/* 利润模式切换（与当月利润联动同一状态） */}
-                  <button
-                    onClick={handleProfitModeToggle}
-                    className={`text-[10px] px-2 py-1 sm:px-1.5 sm:py-0.5 rounded-full font-medium transition-colors min-h-[36px] sm:min-h-0 ${
-                      profitMode === 'noTax'
-                        ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                        : 'bg-green-100 text-green-600 hover:bg-green-200'
-                    }`}
-                    title="点击切换不含税 / 含税"
-                  >
-                    {profitMode === 'noTax' ? '不含税' : '含税'}
-                  </button>
-                </div>
+              {/* 利润 */}
+              <div className="min-w-0">
+                <p className="text-sm text-gray-500 flex items-center">
+                  利润
+                  <StatTooltip>
+                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
+                    <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
+                    <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
+                    <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
+                  </StatTooltip>
+                </p>
                 <p className={`text-2xl font-bold mt-1 ${profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'}`}>
                   ¥{currentYearProfit.toLocaleString()}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {profitMode === 'noTax'
-                    ? '卖价(不含税) - 成本价'
-                    : '卖价(含税) - 含税价'}
+                  {profitMode === 'noTax' ? '卖价(不含税) - 成本价' : '卖价(含税) - 含税价'}
                 </p>
               </div>
-              <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${profitMode === 'noTax' ? 'bg-red-50' : 'bg-green-50'}`}>
-                <Activity className={profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'} size={24} />
+            </div>
+          </div>
+
+          {/* 今日新增报价数 */}
+          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center">
+                  <Plus className="text-green-600" size={18} />
+                </div>
+                <h3 className="text-base font-semibold text-gray-800">今日新增</h3>
+              </div>
+              <StatTooltip>
+                <p>• 统计口径：以订单的创建日期为准</p>
+                <p>• 时间范围：今天 00:00 ~ 23:59</p>
+                <p>• 包含所有状态的订单</p>
+              </StatTooltip>
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              {/* 报价数 */}
+              <div>
+                <p className="text-sm text-gray-500">报价数</p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{todayNewCount}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  昨日 {yesterdayNewCount}
+                  {todayNewCount > yesterdayNewCount && (
+                    <span className="text-green-600 ml-0.5">↑{todayNewCount - yesterdayNewCount}</span>
+                  )}
+                  {todayNewCount < yesterdayNewCount && yesterdayNewCount > 0 && (
+                    <span className="text-red-500 ml-0.5">↓{yesterdayNewCount - todayNewCount}</span>
+                  )}
+                </p>
+              </div>
+              {/* 做货中 */}
+              <div>
+                <p className="text-sm text-gray-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                  做货中
+                </p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{currentProductionCount}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  今日 +{todayStatusCounts[3]}
+                  {todayStatusCounts[3] > yesterdayStatusCounts[3] && (
+                    <span className="text-green-600 ml-0.5">↑{todayStatusCounts[3] - yesterdayStatusCounts[3]}</span>
+                  )}
+                  {todayStatusCounts[3] < yesterdayStatusCounts[3] && (
+                    <span className="text-red-500 ml-0.5">↓{yesterdayStatusCounts[3] - todayStatusCounts[3]}</span>
+                  )}
+                </p>
+              </div>
+              {/* 打样中 */}
+              <div>
+                <p className="text-sm text-gray-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                  打样中
+                </p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{currentSampleCount}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  今日 +{todayStatusCounts[2]}
+                  {todayStatusCounts[2] > yesterdayStatusCounts[2] && (
+                    <span className="text-green-600 ml-0.5">↑{todayStatusCounts[2] - yesterdayStatusCounts[2]}</span>
+                  )}
+                  {todayStatusCounts[2] < yesterdayStatusCounts[2] && (
+                    <span className="text-red-500 ml-0.5">↓{yesterdayStatusCounts[2] - todayStatusCounts[2]}</span>
+                  )}
+                </p>
+              </div>
+              {/* 打样完成 */}
+              <div>
+                <p className="text-sm text-gray-500 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+                  打样完成
+                </p>
+                <p className="text-2xl font-bold text-gray-800 mt-1">{currentSampleCompletedCount}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  今日 +{todayStatusCounts[7]}
+                  {todayStatusCounts[7] > yesterdayStatusCounts[7] && (
+                    <span className="text-green-600 ml-0.5">↑{todayStatusCounts[7] - yesterdayStatusCounts[7]}</span>
+                  )}
+                  {todayStatusCounts[7] < yesterdayStatusCounts[7] && (
+                    <span className="text-red-500 ml-0.5">↓{yesterdayStatusCounts[7] - todayStatusCounts[7]}</span>
+                  )}
+                </p>
               </div>
             </div>
           </div>
@@ -1005,7 +1132,7 @@ export default function Dashboard() {
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
                         {getStatusLabel(quote.status)}
                       </span>
-                      <span className="text-sm text-gray-700 truncate">
+                      <span className="text-sm text-gray-700">
                         {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
                       </span>
                     </div>
@@ -1075,7 +1202,7 @@ export default function Dashboard() {
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
                         {getStatusLabel(quote.status)}
                       </span>
-                      <span className="text-sm text-gray-700 truncate">
+                      <span className="text-sm text-gray-700">
                         {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
                       </span>
                     </div>
@@ -1134,7 +1261,7 @@ export default function Dashboard() {
                       <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-cyan-100 text-cyan-700">
                         打样完成
                       </span>
-                      <span className="text-sm text-gray-700 truncate">
+                      <span className="text-sm text-gray-700">
                         {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
                       </span>
                     </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X } from 'lucide-react'
@@ -79,13 +79,53 @@ const getPageNumbers = (current: number, total: number): (number | 'ellipsis')[]
   return pages
 }
 
+// 订单列表查询条件持久化：离开列表页（进入详情/编辑）后返回时恢复查询条件
+const QUOTES_FILTERS_KEY = 'quotes_filters'
+
+interface SavedFilters {
+  searchTerm: string
+  statusFilter: string
+  customerFilter: string
+  styleFilter: string
+  currentPage: number
+  pageSize: number
+}
+
+const getInitialFilters = (): SavedFilters => {
+  try {
+    const saved = sessionStorage.getItem(QUOTES_FILTERS_KEY)
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      return {
+        searchTerm: parsed.searchTerm ?? '',
+        statusFilter: parsed.statusFilter ?? 'active',
+        customerFilter: parsed.customerFilter ?? '',
+        styleFilter: parsed.styleFilter ?? '',
+        currentPage: parsed.currentPage ?? 1,
+        pageSize: parsed.pageSize ?? 20,
+      }
+    }
+  } catch {
+    // sessionStorage 不可用或数据损坏，使用默认值
+  }
+  return {
+    searchTerm: '',
+    statusFilter: 'active',
+    customerFilter: '',
+    styleFilter: '',
+    currentPage: 1,
+    pageSize: 20,
+  }
+}
+
 export default function Quotes() {
+  const initialFilters = getInitialFilters()
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [groupedQuotes, setGroupedQuotes] = useState<GroupedQuotes[]>([])
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('active')
-  const [customerFilter, setCustomerFilter] = useState('')
-  const [styleFilter, setStyleFilter] = useState('')
+  const [searchTerm, setSearchTerm] = useState(initialFilters.searchTerm)
+  const [statusFilter, setStatusFilter] = useState<string>(initialFilters.statusFilter)
+  const [customerFilter, setCustomerFilter] = useState(initialFilters.customerFilter)
+  const [styleFilter, setStyleFilter] = useState(initialFilters.styleFilter)
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [printTarget, setPrintTarget] = useState<Quote | null>(null)
@@ -100,8 +140,8 @@ export default function Quotes() {
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
   const [products, setProducts] = useState<Product[]>([])
   // 分页：每页条数可设置（默认 20），currentPage 从 1 开始
-  const [pageSize, setPageSize] = useState(20)
-  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(initialFilters.pageSize)
+  const [currentPage, setCurrentPage] = useState(initialFilters.currentPage)
   const [filteredCount, setFilteredCount] = useState(0)
   // 筛选后的客户总数（以客户名称维度统计，一个客户下多条订单只算一个）
   const [filteredCustomerCount, setFilteredCustomerCount] = useState(0)
@@ -109,21 +149,78 @@ export default function Quotes() {
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
   const { hasPermission } = usePermission()
+  // 跳过首次挂载的筛选重置（从 sessionStorage 恢复时不重置页码）
+  const isInitialMount = useRef(true)
+  // 列表滚动容器引用：保存/恢复滚动位置
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const scrollRestoreRef = useRef<number | null>(null)
 
   useEffect(() => {
+    // 从 sessionStorage 恢复滚动位置
+    try {
+      const savedScroll = sessionStorage.getItem('quotes_scroll')
+      if (savedScroll) {
+        scrollRestoreRef.current = parseInt(savedScroll, 10)
+        sessionStorage.removeItem('quotes_scroll')
+      }
+    } catch { /* ignore */ }
     fetchQuotes()
     fetchStyleOptions().then(setStyleOptions)
     api.products.getAll().then((data: Product[]) => setProducts(data))
   }, [])
 
-  // 筛选条件变化时重置到第 1 页
+  // 查询条件持久化：变化时保存到 sessionStorage
   useEffect(() => {
+    try {
+      sessionStorage.setItem(QUOTES_FILTERS_KEY, JSON.stringify({
+        searchTerm,
+        statusFilter,
+        customerFilter,
+        styleFilter,
+        currentPage,
+        pageSize,
+      }))
+    } catch {
+      // sessionStorage 不可用，忽略
+    }
+  }, [searchTerm, statusFilter, customerFilter, styleFilter, currentPage, pageSize])
+
+  // 筛选条件变化时重置到第 1 页（跳过首次挂载，避免覆盖从 sessionStorage 恢复的页码）
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+      return
+    }
     setCurrentPage(1)
   }, [searchTerm, statusFilter, customerFilter, styleFilter])
 
   useEffect(() => {
     groupQuotes()
   }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products, currentPage, pageSize])
+
+  // 组件卸载时保存滚动位置（用户导航到详情/编辑页时触发）
+  useEffect(() => {
+    return () => {
+      try {
+        if (scrollContainerRef.current) {
+          sessionStorage.setItem('quotes_scroll', String(scrollContainerRef.current.scrollTop))
+        }
+      } catch { /* ignore */ }
+    }
+  }, [])
+
+  // 数据加载并渲染完成后恢复滚动位置
+  useEffect(() => {
+    if (scrollRestoreRef.current !== null && !loading) {
+      const targetScroll = scrollRestoreRef.current
+      scrollRestoreRef.current = null
+      requestAnimationFrame(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = targetScroll
+        }
+      })
+    }
+  }, [groupedQuotes, loading])
 
   const fetchQuotes = async () => {
     setLoading(true)
@@ -234,8 +331,12 @@ export default function Quotes() {
 
   const handleCopy = async (id: string) => {
     try {
-      await api.quotes.copy(id)
-      fetchQuotes()
+      const copied = await api.quotes.copy(id)
+      if (copied?.id) {
+        navigate(`/quotes/${copied.id}/edit`)
+      } else {
+        fetchQuotes()
+      }
     } catch (error) {
       console.error('复制订单失败:', error)
     }
@@ -447,7 +548,7 @@ export default function Quotes() {
           </div>
         ) : (
           <>
-          <div className="flex-1 overflow-auto min-h-0">
+          <div ref={scrollContainerRef} className="flex-1 overflow-auto min-h-0">
             <div className="min-w-[1764px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">

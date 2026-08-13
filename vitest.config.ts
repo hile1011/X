@@ -24,6 +24,7 @@ export default defineConfig({
       ],
       exclude: [
         'src/templates/types.ts', // 纯接口定义文件，无可执行代码
+        'src/utils/clipboardCopyEnhancer.ts', // VTable 临时补丁，等官方修复后整体移除
       ],
       thresholds: {
         lines: 90,

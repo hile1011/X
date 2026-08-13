@@ -1067,7 +1067,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               </button>
               {/* readOnly 模式：显示编辑按钮（仅有编辑权限时） */}
               {readOnly && canEdit && (
-                <button onClick={() => navigate(`/quotes/${id}/edit`)} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors min-h-[40px] sm:min-h-0">
+                <button onClick={() => navigate(`/quotes/${id}/edit`, { replace: true })} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors min-h-[40px] sm:min-h-0">
                   <Edit size={16} />
                   编辑
                 </button>
