@@ -1029,7 +1029,7 @@ export default function Dashboard() {
                         title="双击查看订单详情"
                         className="flex items-center gap-4 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
                       >
-                        <div className="w-48 shrink-0 flex items-center gap-2">
+                        <div className="w-72 shrink-0 flex items-center gap-2">
                           {/* 产品首图 */}
                           {imageFlags[quote.id] ? (
                             <img
@@ -1059,9 +1059,9 @@ export default function Dashboard() {
                               <span className={`px-1.5 py-0 text-[10px] font-medium rounded-full ${getStatusColor(quote.status)}`}>
                                 {getStatusLabel(quote.status)}
                               </span>
-                              <p className="text-sm font-medium text-gray-800 truncate">{quote.customerName}</p>
+                              <p className="text-sm font-medium text-gray-800">{quote.customerName}</p>
                             </div>
-                            <p className="text-xs text-gray-500 truncate">{getStyleLabelFromProducts(products, quote.productStyle)} · {quote.quantity}个</p>
+                            <p className="text-xs text-gray-500">{getStyleLabelFromProducts(products, quote.productStyle)} · {quote.quantity}个</p>
                           </div>
                         </div>
                         <div className="flex-1 relative h-8">

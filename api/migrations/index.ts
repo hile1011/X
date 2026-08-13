@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 15
+export const CURRENT_SCHEMA_VERSION = 16
 
 export interface Migration {
   version: number
@@ -837,6 +837,19 @@ const migrations: Migration[] = [
       // 先删角色关联，再删权限（避免外键约束）
       await db.prepare('DELETE FROM role_permissions WHERE permission_id = ?').run('perm-quotes-export-payment')
       await db.prepare('DELETE FROM permissions WHERE id = ?').run('perm-quotes-export-payment')
+    },
+  },
+  {
+    version: 16,
+    name: 'add-created-by-updated-by',
+    description: 'V0.9：quotes表新增 created_by 和 updated_by 字段，记录创建人和修改人',
+    up: async (db: any) => {
+      await db.exec(`ALTER TABLE quotes ADD COLUMN created_by VARCHAR(64) DEFAULT '' AFTER user_id`)
+      await db.exec(`ALTER TABLE quotes ADD COLUMN updated_by VARCHAR(64) DEFAULT '' AFTER created_by`)
+    },
+    down: async (db: any) => {
+      await db.exec(`ALTER TABLE quotes DROP COLUMN created_by`)
+      await db.exec(`ALTER TABLE quotes DROP COLUMN updated_by`)
     },
   },
 ]

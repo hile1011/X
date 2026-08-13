@@ -184,6 +184,8 @@ export const mockQuotes: Quote[] = [
   {
     id: 'quote-001',
     user_id: 'user-001',
+    created_by: '管理员',
+    updated_by: '管理员',
     customer_id: 'cust-001',
     quote_number: '上海科技有限公司-20240722100000-无底无侧普通款',
     customerName: '上海科技有限公司',
@@ -227,6 +229,8 @@ export const mockQuotes: Quote[] = [
   {
     id: 'quote-002',
     user_id: 'user-001',
+    created_by: '管理员',
+    updated_by: '管理员',
     customer_id: 'cust-002',
     quote_number: '北京贸易有限公司-20240722110000-无底无侧普通款',
     customerName: '北京贸易有限公司',
@@ -270,6 +274,8 @@ export const mockQuotes: Quote[] = [
   {
     id: 'quote-003',
     user_id: 'user-001',
+    created_by: '管理员',
+    updated_by: '管理员',
     customer_id: 'cust-003',
     quote_number: '深圳制造有限公司-20240722130000-有底有侧立体款',
     customerName: '深圳制造有限公司',

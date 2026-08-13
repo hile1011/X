@@ -81,14 +81,16 @@ quotesRouter.get('/:id', requirePermission('quotes:view'), asyncHandler(async (r
 
 // 新增订单：需要 quotes:create 权限
 quotesRouter.post('/', requirePermission('quotes:create'), asyncHandler(async (req, res) => {
-  const data = await db.quotes.create(req.body)
+  const operator = req.user?.name || ''
+  const data = await db.quotes.create({ ...req.body, created_by: operator, updated_by: operator })
   res.json(data)
 }))
 
 // 编辑订单：需要 quotes:edit 权限
 quotesRouter.put('/:id', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
   const { id } = req.params
-  const data = await db.quotes.update(id, req.body)
+  const operator = req.user?.name || ''
+  const data = await db.quotes.update(id, { ...req.body, updated_by: operator })
   if (!data) {
     return res.status(404).json({ error: '报价不存在' })
   }

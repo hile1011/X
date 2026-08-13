@@ -265,7 +265,7 @@ export const dbApi = {
   quotes: {
     /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取） */
     getAll: async () => {
-      const rows = await dbConn.prepare(`SELECT id, user_id, customer_id, quote_number, customerName, shippingAddress,
+      const rows = await dbConn.prepare(`SELECT id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
@@ -288,13 +288,13 @@ export const dbApi = {
       const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
       const id = `quote-${Date.now()}`
 
-      await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        id, data.user_id || '', data.customer_id || '', quoteNumber, customerName,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, data.user_id || '', data.created_by || '', data.updated_by || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
         data.handleMaterial || '帆布手提', data.handleSpec || '',
@@ -314,6 +314,7 @@ export const dbApi = {
       return {
         id, quote_number: quoteNumber, customerName,
         customer_id: data.customer_id || '', user_id: data.user_id || '',
+        created_by: data.created_by || '', updated_by: data.updated_by || '',
         shippingAddress: data.shippingAddress || '', productStyle,
         productSpec: data.productSpec || '',
         fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
@@ -372,13 +373,13 @@ export const dbApi = {
       const allFormulasJson = JSON.stringify(updatedQuote.allFormulas || {})
       const productionStepStatusJson = JSON.stringify(updatedQuote.productionStepStatus || {})
 
-      await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, shippingAddress=?,
+      await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, updated_by=?, shippingAddress=?,
         productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
         status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
         images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?, updated_at=? WHERE id=?`).run(
-        updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id,
+        updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id, updatedQuote.updated_by,
         updatedQuote.shippingAddress, updatedQuote.productStyle, updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
         updatedQuote.quantity, updatedQuote.boxSpec, updatedQuote.remark,

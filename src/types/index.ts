@@ -62,6 +62,8 @@ export interface OrderWithDetails extends Order {
 export interface Quote {
   id: string
   user_id: string
+  created_by: string
+  updated_by: string
   customer_id: string
   quote_number: string
   customerName: string

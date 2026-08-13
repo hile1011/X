@@ -811,15 +811,78 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     }
   }, [orderInfo.productStyle, tableDataVersion])
 
+  // 图片压缩：超过 1MB 的图片自动压缩到 1MB 以下
+  const compressImage = (file: File): Promise<string> => {
+    const MAX_SIZE = 1 * 1024 * 1024 // 1MB
+    // 1MB 以下直接返回原图 base64
+    if (file.size <= MAX_SIZE) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+    }
+    // 超过 1MB：用 canvas 压缩
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          const canvas = document.createElement('canvas')
+          const ctx = canvas.getContext('2d')!
+          // 初始尺寸：长边限制 1920px，避免超大图
+          let { width, height } = img
+          const MAX_DIM = 1920
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width > height) {
+              height = Math.round(height * MAX_DIM / width)
+              width = MAX_DIM
+            } else {
+              width = Math.round(width * MAX_DIM / height)
+              height = MAX_DIM
+            }
+          }
+          canvas.width = width
+          canvas.height = height
+          ctx.drawImage(img, 0, 0, width, height)
+          // 逐步降低质量直到小于 1MB
+          const mimeType = file.type === 'image/png' ? 'image/jpeg' : file.type
+          let quality = 0.85
+          let result = canvas.toDataURL(mimeType, quality)
+          while (result.length > MAX_SIZE && quality > 0.3) {
+            quality -= 0.1
+            result = canvas.toDataURL(mimeType, quality)
+          }
+          // 如果仍超过 1MB，按比例缩小尺寸
+          while (result.length > MAX_SIZE && width > 200) {
+            width = Math.round(width * 0.8)
+            height = Math.round(height * 0.8)
+            canvas.width = width
+            canvas.height = height
+            ctx.drawImage(img, 0, 0, width, height)
+            result = canvas.toDataURL(mimeType, quality)
+          }
+          resolve(result)
+        }
+        img.onerror = reject
+        img.src = reader.result as string
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
   const processFiles = (files: File[]) => {
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
     if (imageFiles.length === 0) return
-    imageFiles.forEach((file) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        setProductImages((prev) => [...prev, reader.result as string])
+    imageFiles.forEach(async (file) => {
+      try {
+        const base64 = await compressImage(file)
+        setProductImages((prev) => [...prev, base64])
+      } catch (error) {
+        console.error('图片处理失败:', error)
       }
-      reader.readAsDataURL(file)
     })
   }
 
