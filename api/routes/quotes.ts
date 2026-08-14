@@ -105,7 +105,8 @@ quotesRouter.delete('/:id', requirePermission('quotes:delete'), asyncHandler(cre
 // 复制订单：需要 quotes:copy 权限
 quotesRouter.post('/:id/copy', requirePermission('quotes:copy'), asyncHandler(async (req, res) => {
   const { id } = req.params
-  const data = await db.quotes.copy(id)
+  const operator = req.user?.name || ''
+  const data = await db.quotes.copy(id, operator)
   if (!data) {
     return res.status(404).json({ error: '报价不存在' })
   }

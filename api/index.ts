@@ -79,8 +79,10 @@ if (isProd && fs.existsSync(path.resolve(process.cwd(), 'dist', 'index.html'))) 
   })
 }
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[Server] 路由错误:', err.message)
+  if (err.sql) console.error('[Server] SQL:', err.sql.substring(0, 200))
+  if (err.stack) console.error('[Server] Stack:', err.stack.split('\n').slice(0, 5).join('\n'))
   res.status(500).json({ error: '服务器内部错误', message: err.message })
 })
 

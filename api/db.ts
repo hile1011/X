@@ -293,7 +293,7 @@ export const dbApi = {
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.created_by || '', data.updated_by || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
@@ -302,7 +302,7 @@ export const dbApi = {
         data.sampleFee || '', data.sampleDays || '', data.massDays || '',
         data.unitPrice || '', data.productionTimeStart || today, data.productionTimeEnd || '',
         data.costPrice || 0, data.priceWithTax || 0, data.sellPriceNoTax || 0, data.sellPriceWithTax || 0,
-        data.status || 1, today, '', '', '', '', '', '',
+        data.status || 1, today, '', '', '', '', '', '', '',
         JSON.stringify(data.images || []),
         JSON.stringify(data.tableData || []),
         JSON.stringify(data.removedFormulaAddresses || []),
@@ -472,7 +472,7 @@ export const dbApi = {
         return null
       }
     },
-    copy: async (id: string) => {
+    copy: async (id: string, operator: string = '') => {
       const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
       if (!existing) return null
 
@@ -485,13 +485,13 @@ export const dbApi = {
       const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
       const newId = `quote-${Date.now()}`
 
-      await dbConn.prepare(`INSERT INTO quotes (id, user_id, customer_id, quote_number, customerName, shippingAddress,
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
         productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        newId, existing.user_id || '', existing.customer_id || '', quoteNumber, customerName,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        newId, existing.user_id || '', operator, operator, existing.customer_id || '', quoteNumber, customerName,
         existing.shippingAddress || '', productStyle, existing.productSpec || '',
         existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
         existing.handleMaterial || '帆布手提', existing.handleSpec || '',
@@ -499,7 +499,7 @@ export const dbApi = {
         existing.sampleFee || '', existing.sampleDays || '', existing.massDays || '',
         existing.unitPrice || '', today, '',
         existing.costPrice || 0, existing.priceWithTax || 0, existing.sellPriceNoTax || 0, existing.sellPriceWithTax || 0,
-        1, today, '', '', '', '', '', '',
+        1, today, '', '', '', '', '', '', '',
         existing.images || '[]',
         existing.tableData || '[]',
         existing.removedFormulaAddresses || '[]',
@@ -511,6 +511,7 @@ export const dbApi = {
       return {
         id: newId, quote_number: quoteNumber, customerName,
         customer_id: existing.customer_id || '', user_id: existing.user_id || '',
+        created_by: operator, updated_by: operator,
         shippingAddress: existing.shippingAddress || '', productStyle,
         productSpec: existing.productSpec || '',
         fabricMaterial: existing.fabricMaterial || '10安涤棉新本色',

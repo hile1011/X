@@ -811,79 +811,84 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     }
   }, [orderInfo.productStyle, tableDataVersion])
 
-  // 图片压缩：超过 1MB 的图片自动压缩到 1MB 以下
+  // 图片压缩：所有图片统一通过 canvas 压缩为 JPEG，限制尺寸和大小
+  // 目标：单张图片 base64 不超过 200KB，避免多张图片叠加后数据量过大导致存储/传输异常
   const compressImage = (file: File): Promise<string> => {
-    const MAX_SIZE = 1 * 1024 * 1024 // 1MB
-    // 1MB 以下直接返回原图 base64
-    if (file.size <= MAX_SIZE) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-    }
-    // 超过 1MB：用 canvas 压缩
     return new Promise((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => {
         const img = new Image()
         img.onload = () => {
-          const canvas = document.createElement('canvas')
-          const ctx = canvas.getContext('2d')!
-          // 初始尺寸：长边限制 1920px，避免超大图
-          let { width, height } = img
-          const MAX_DIM = 1920
-          if (width > MAX_DIM || height > MAX_DIM) {
-            if (width > height) {
-              height = Math.round(height * MAX_DIM / width)
-              width = MAX_DIM
-            } else {
-              width = Math.round(width * MAX_DIM / height)
-              height = MAX_DIM
+          try {
+            const canvas = document.createElement('canvas')
+            const ctx = canvas.getContext('2d')
+            if (!ctx) {
+              reject(new Error('无法获取 canvas 上下文'))
+              return
             }
-          }
-          canvas.width = width
-          canvas.height = height
-          ctx.drawImage(img, 0, 0, width, height)
-          // 逐步降低质量直到小于 1MB
-          const mimeType = file.type === 'image/png' ? 'image/jpeg' : file.type
-          let quality = 0.85
-          let result = canvas.toDataURL(mimeType, quality)
-          while (result.length > MAX_SIZE && quality > 0.3) {
-            quality -= 0.1
-            result = canvas.toDataURL(mimeType, quality)
-          }
-          // 如果仍超过 1MB，按比例缩小尺寸
-          while (result.length > MAX_SIZE && width > 200) {
-            width = Math.round(width * 0.8)
-            height = Math.round(height * 0.8)
+            // 限制长边最大 1280px，避免超大图导致 canvas 内存过大
+            let { width, height } = img
+            const MAX_DIM = 1280
+            if (width > MAX_DIM || height > MAX_DIM) {
+              if (width > height) {
+                height = Math.round(height * MAX_DIM / width)
+                width = MAX_DIM
+              } else {
+                width = Math.round(width * MAX_DIM / height)
+                height = MAX_DIM
+              }
+            }
             canvas.width = width
             canvas.height = height
+            // PNG 等带透明通道的图片，先填充白底再绘制，避免透明区域变黑
+            ctx.fillStyle = '#ffffff'
+            ctx.fillRect(0, 0, width, height)
             ctx.drawImage(img, 0, 0, width, height)
-            result = canvas.toDataURL(mimeType, quality)
+            // 目标大小：200KB（base64 字符串长度）
+            const MAX_SIZE = 200 * 1024
+            let quality = 0.8
+            let result = canvas.toDataURL('image/jpeg', quality)
+            // 逐步降低质量
+            while (result.length > MAX_SIZE && quality > 0.3) {
+              quality -= 0.1
+              result = canvas.toDataURL('image/jpeg', quality)
+            }
+            // 如果仍超过目标，缩小尺寸后重试
+            while (result.length > MAX_SIZE && width > 400) {
+              width = Math.round(width * 0.8)
+              height = Math.round(height * 0.8)
+              canvas.width = width
+              canvas.height = height
+              ctx.fillStyle = '#ffffff'
+              ctx.fillRect(0, 0, width, height)
+              ctx.drawImage(img, 0, 0, width, height)
+              result = canvas.toDataURL('image/jpeg', quality)
+            }
+            resolve(result)
+          } catch (err) {
+            reject(err)
           }
-          resolve(result)
         }
-        img.onerror = reject
+        img.onerror = () => reject(new Error('图片加载失败'))
         img.src = reader.result as string
       }
-      reader.onerror = reject
+      reader.onerror = () => reject(new Error('文件读取失败'))
       reader.readAsDataURL(file)
     })
   }
 
-  const processFiles = (files: File[]) => {
+  // 串行处理多张图片，避免并发压缩导致内存飙升和主线程阻塞
+  const processFiles = async (files: File[]) => {
     const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'))
     if (imageFiles.length === 0) return
-    imageFiles.forEach(async (file) => {
+    for (const file of imageFiles) {
       try {
         const base64 = await compressImage(file)
         setProductImages((prev) => [...prev, base64])
       } catch (error) {
         console.error('图片处理失败:', error)
       }
-    })
+    }
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
