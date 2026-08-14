@@ -607,7 +607,8 @@ export default function Quotes() {
                           <div
                             key={quote.id}
                             className="flex items-center hover:bg-gray-50 cursor-pointer transition-colors"
-                            onDoubleClick={() => navigate(`/quotes/${quote.id}`)}
+                            onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                            title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
                           >
                             {/* 产品图 */}
                             <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">

@@ -844,12 +844,38 @@ const migrations: Migration[] = [
     name: 'add-created-by-updated-by',
     description: 'V0.9：quotes表新增 created_by 和 updated_by 字段，记录创建人和修改人',
     up: async (db: any) => {
-      await db.exec(`ALTER TABLE quotes ADD COLUMN created_by VARCHAR(64) DEFAULT '' AFTER user_id`)
-      await db.exec(`ALTER TABLE quotes ADD COLUMN updated_by VARCHAR(64) DEFAULT '' AFTER created_by`)
+      // 幂等：MySQL DDL（ALTER TABLE）隐式提交，事务回滚无法撤销已添加的列，
+      // 迁移中途失败再重试会因列已存在而报 "Duplicate column name"。
+      // 故先通过 information_schema 检查列是否存在，再决定是否 ADD。
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (!(await hasColumn('created_by'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN created_by VARCHAR(64) DEFAULT '' AFTER user_id`)
+      }
+      if (!(await hasColumn('updated_by'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN updated_by VARCHAR(64) DEFAULT '' AFTER created_by`)
+      }
     },
     down: async (db: any) => {
-      await db.exec(`ALTER TABLE quotes DROP COLUMN created_by`)
-      await db.exec(`ALTER TABLE quotes DROP COLUMN updated_by`)
+      // 幂等：DROP COLUMN 不存在会报错，先检查再删
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('updated_by')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN updated_by`)
+      }
+      if (await hasColumn('created_by')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN created_by`)
+      }
     },
   },
 ]

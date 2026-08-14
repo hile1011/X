@@ -1124,7 +1124,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 <ShoppingBag className="text-blue-600" size={20} />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-gray-800 leading-tight">订单管理</h1>
+                <div className="flex items-center gap-2 leading-tight">
+                  <h1 className="text-lg font-bold text-gray-800">订单管理</h1>
+                  {/* 当前模式状态标识：编辑/查看 */}
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${readOnly ? 'bg-gray-100 text-gray-600' : 'bg-green-100 text-green-700'}`}>
+                    {readOnly ? '查看模式' : '编辑模式'}
+                  </span>
+                </div>
                 <p className="text-[11px] text-gray-500 leading-tight">订单信息管理</p>
               </div>
             </div>
