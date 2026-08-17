@@ -271,8 +271,8 @@ export default function Dashboard() {
 
     const alerts = sortByStatusAndDueDate(
       quotesData.filter((quote) => {
-        // 排除报价中(1)、已发货未收款(4)、已发货已收款(5)、结束(6)
-        if ([1, 4, 5, 6].includes(quote.status)) return false
+        // 排除报价中(1)、打样完成(7)、已发货未收款(4)、已发货已收款(5)、结束(6)
+        if ([1, 4, 5, 6, 7].includes(quote.status)) return false
         if (!quote.productionTimeEnd) return false
         const endDate = new Date(quote.productionTimeEnd)
         endDate.setHours(0, 0, 0, 0)
@@ -1146,7 +1146,8 @@ export default function Dashboard() {
                       daysLeft <= 1 ? 'bg-orange-50 border-orange-500' :
                       'bg-yellow-50 border-yellow-500'
                     }`}
-                    onClick={() => navigate(`/quotes/${quote.id}`)}
+                    onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                    title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
@@ -1216,7 +1217,8 @@ export default function Dashboard() {
                       daysSinceShipped !== null && daysSinceShipped > 15 ? 'bg-orange-50 border-orange-500' :
                       'bg-amber-50 border-amber-500'
                     }`}
-                    onClick={() => navigate(`/quotes/${quote.id}`)}
+                    onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                    title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
@@ -1275,7 +1277,9 @@ export default function Dashboard() {
                 return (
                   <div
                     key={quote.id}
-                    className="flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 bg-cyan-50 border-cyan-500 hover:bg-cyan-100/50 transition-colors"
+                    className="flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 bg-cyan-50 border-cyan-500 hover:bg-cyan-100/50 transition-colors cursor-pointer"
+                    onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                    title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <span className="text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-cyan-100 text-cyan-700">

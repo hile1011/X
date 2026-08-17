@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit, Copy } from 'lucide-react'
 import { copyText } from '../utils/clipboard'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
@@ -163,6 +163,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>('')
   const [showCopySuccess, setShowCopySuccess] = useState(false)
+  const [copyingImage, setCopyingImage] = useState(false)
+  const [showCopyImageSuccess, setShowCopyImageSuccess] = useState(false)
+  const quoteCardRef = useRef<HTMLDivElement>(null)
+  const sellPriceRowRef = useRef<HTMLDivElement>(null)
+  const imagesEndRef = useRef<HTMLDivElement>(null)
   const [quoteNumber, setQuoteNumber] = useState<string>('')
   const [createdAt, setCreatedAt] = useState<string>('')
   const [printQuote, setPrintQuote] = useState<Quote | null>(null)
@@ -1014,6 +1019,85 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     })
   }
 
+  // 复制报价图片：从"单个卖价行"到"图片最底部"截图复制到剪贴板
+  const handleCopyQuoteImage = async () => {
+    const card = quoteCardRef.current
+    const startEl = sellPriceRowRef.current
+    const endEl = imagesEndRef.current
+    if (!card || !startEl || !endEl) return
+
+    setCopyingImage(true)
+    try {
+      // modern-screenshot 基于浏览器原生渲染，支持 flex/grid/gap/aspect-ratio/object-fit 等现代 CSS
+      const { domToPng } = await import('modern-screenshot')
+      const dataUrl = await domToPng(card, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+      })
+
+      // 将 dataURL 转为 canvas 并裁剪
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.src = dataUrl
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('图片加载失败'))
+      })
+
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('canvas 不可用')
+      ctx.drawImage(img, 0, 0)
+
+      // 计算裁剪范围（相对画布坐标）
+      const cardRect = card.getBoundingClientRect()
+      const startRect = startEl.getBoundingClientRect()
+      const endRect = endEl.getBoundingClientRect()
+      const scaleY = canvas.height / cardRect.height
+      const startY = (startRect.top - cardRect.top) * scaleY
+      const endY = (endRect.bottom - cardRect.top) * scaleY
+      const cropH = Math.max(1, endY - startY)
+
+      const cropped = document.createElement('canvas')
+      cropped.width = canvas.width
+      cropped.height = cropH
+      const cctx = cropped.getContext('2d')
+      if (!cctx) throw new Error('canvas 不可用')
+      cctx.drawImage(canvas, 0, startY, canvas.width, cropH, 0, 0, canvas.width, cropH)
+
+      // 复制到剪贴板（安全上下文）；否则降级下载图片
+      const blob: Blob | null = await new Promise((resolve) => cropped.toBlob(resolve, 'image/png'))
+      if (!blob) throw new Error('生成图片失败')
+
+      const fileName = `报价_${orderInfo.customerName || ''}_${orderInfo.productSpec || ''}.png`
+      if (navigator.clipboard && window.isSecureContext && typeof ClipboardItem !== 'undefined') {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+          setShowCopyImageSuccess(true)
+          setTimeout(() => setShowCopyImageSuccess(false), 2000)
+        } catch {
+          // 剪贴板写入失败（如浏览器不支持图片），降级下载
+          downloadBlob(blob, fileName)
+          setShowCopyImageSuccess(true)
+          setTimeout(() => setShowCopyImageSuccess(false), 2000)
+        }
+      } else {
+        // HTTP 环境降级下载
+        downloadBlob(blob, fileName)
+        setShowCopyImageSuccess(true)
+        setTimeout(() => setShowCopyImageSuccess(false), 2000)
+      }
+    } catch (err) {
+      console.error('复制报价图片失败:', err)
+      setSaveError('复制图片失败，请重试')
+      setTimeout(() => setSaveError(''), 3000)
+    } finally {
+      setCopyingImage(false)
+    }
+  }
+
   const handleNextStatus = async () => {
     if (!isEditMode || status === 6) return
     setLoading(true)
@@ -1152,6 +1236,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               <button onClick={handleCopyQuote} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors min-h-[40px] sm:min-h-0" title="复制订单信息为文本格式，方便报价">
                 <ClipboardList size={16} />
                 {showCopySuccess ? '已复制' : '复制报价'}
+              </button>
+              <button onClick={handleCopyQuoteImage} disabled={copyingImage} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0" title="复制卖价到图片的报价截图">
+                {copyingImage ? <Loader2 size={16} className="animate-spin" /> : <Copy size={16} />}
+                {copyingImage ? '截图中' : showCopyImageSuccess ? '已复制' : '复制图片'}
               </button>
               {/* readOnly 模式：隐藏保存和重置按钮 */}
               {!readOnly && (
@@ -1344,7 +1432,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-            <div className="p-3 pb-1 space-y-2">
+            <div ref={quoteCardRef} className="p-3 pb-1 space-y-2">
               {/* 成本价行：成本价(不含税) + 含税价 + 单个利润(不含税/含税) + 利润总额(不含税/含税) */}
               <div className={`flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-gray-50 to-transparent rounded-lg flex-wrap ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
                 {/* 成本价输入组 */}
@@ -1417,7 +1505,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               </div>
 
               {/* 单个卖价行：单个卖价(不含税) + 单个卖价(含税) + 销售总额(不含税/含税) */}
-              <div className="flex items-center gap-4 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg flex-wrap">
+              <div ref={sellPriceRowRef} className="flex items-center gap-4 px-3 py-1.5 bg-gradient-to-r from-blue-50 to-transparent rounded-lg flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <TrendingUp className="text-gray-400" size={15} />
                   <span className="text-xs text-gray-500">单个卖价</span>
@@ -1751,6 +1839,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                   </div>
                 )}
               </div>
+              {/* 图片区域底部标记（用于截图裁剪） */}
+              <div ref={imagesEndRef} />
             </div>
         </div>
 
