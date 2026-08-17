@@ -9,8 +9,8 @@ interface LayoutProps {
 }
 
 export default function Layout({ children }: LayoutProps) {
-  // 桌面端侧边栏折叠（md+）
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  // 桌面端侧边栏折叠（md+），默认收缩仅显示图标
+  const [isCollapsed, setIsCollapsed] = useState(true)
   // 移动端 drawer 开关（<md）
   const [isMobileOpen, setIsMobileOpen] = useState(false)
   const location = useLocation()

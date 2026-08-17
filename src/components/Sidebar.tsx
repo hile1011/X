@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, FileText, Users, Package, ClipboardList, BarChart3,
   LogOut, ChevronLeft, ChevronRight, ChevronDown, Shield, KeyRound, Lock,
@@ -111,6 +112,78 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
 
   const visibleItems = menuItems.filter(hasMenuPermission)
 
+  // ─── 折叠态浮层子菜单 ──────────────────────────────────────
+  // 用 Portal 渲染到 body，避免被 nav 的 overflow-y-auto 裁剪
+  const [openPopup, setOpenPopup] = useState<string | null>(null)
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const hideTimerRef = useRef<number | null>(null)
+  const popupItemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+
+  /** 显示浮层：计算锚点按钮位置，定位到按钮右侧 */
+  const showPopup = useCallback((label: string) => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+    const el = popupItemRefs.current[label]
+    if (el) {
+      const rect = el.getBoundingClientRect()
+      // 浮层贴在菜单项右侧 4px，顶部对齐菜单项顶部
+      setPopupPos({ top: rect.top, left: rect.right + 4 })
+    }
+    setOpenPopup(label)
+  }, [])
+
+  /** 立即隐藏浮层 */
+  const hidePopup = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+    setOpenPopup(null)
+  }, [])
+
+  /** 延迟隐藏（200ms 容差，便于鼠标从菜单项移到浮层） */
+  const scheduleHidePopup = useCallback(() => {
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = window.setTimeout(() => setOpenPopup(null), 200)
+  }, [])
+
+  /** 取消延迟隐藏 */
+  const cancelHidePopup = useCallback(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current)
+      hideTimerRef.current = null
+    }
+  }, [])
+
+  // 路由变化时关闭浮层
+  useEffect(() => {
+    setOpenPopup(null)
+  }, [location.pathname])
+
+  // 点击外部关闭浮层（捕获阶段，避免本组件 click 先触发）
+  useEffect(() => {
+    if (!openPopup) return
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      const popupEl = document.getElementById('sidebar-popup-' + openPopup)
+      const triggerEl = popupItemRefs.current[openPopup]
+      if (popupEl && popupEl.contains(target)) return
+      if (triggerEl && triggerEl.contains(target)) return
+      setOpenPopup(null)
+    }
+    document.addEventListener('click', handleClickOutside, true)
+    return () => document.removeEventListener('click', handleClickOutside, true)
+  }, [openPopup])
+
+  // 组件卸载时清理 timer
+  useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    }
+  }, [])
+
   return (
     <aside className={`fixed left-0 top-0 h-screen bg-white border-r border-gray-200 flex flex-col z-50
       transition-transform duration-300 md:transition-all
@@ -144,13 +217,34 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
             return (
               <div key={item.label}>
                 <button
-                  onClick={() => !isCollapsed && toggleGroup(item.label)}
+                  ref={(el) => { popupItemRefs.current[item.label] = el }}
+                  onClick={() => {
+                    if (isCollapsed) {
+                      // 折叠态：点击切换浮层（移动端主要交互方式）
+                      if (openPopup === item.label) hidePopup()
+                      else showPopup(item.label)
+                    } else {
+                      toggleGroup(item.label)
+                    }
+                  }}
+                  onMouseEnter={(e) => {
+                    if (isCollapsed) {
+                      const el = e.currentTarget as HTMLButtonElement
+                      popupItemRefs.current[item.label] = el
+                      showPopup(item.label)
+                    }
+                  }}
+                  onMouseLeave={() => {
+                    if (isCollapsed) scheduleHidePopup()
+                  }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 min-h-[44px] ${
-                    activeChild
+                    activeChild || (isCollapsed && openPopup === item.label)
                       ? 'bg-primary-50 text-primary-700 font-medium'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   } ${isCollapsed ? 'justify-center' : ''}`}
                   title={isCollapsed ? item.label : undefined}
+                  aria-haspopup="menu"
+                  aria-expanded={isCollapsed && openPopup === item.label}
                 >
                   <Icon size={20} className="shrink-0" />
                   {!isCollapsed && (
@@ -220,6 +314,66 @@ export default function Sidebar({ isCollapsed, onToggle, isMobileOpen, onMobileC
           {!isCollapsed && <span>退出登录</span>}
         </button>
       </div>
+
+      {/* 折叠态浮层子菜单：用 Portal 渲染到 body，避免被 nav 的 overflow-y-auto 裁剪。
+          每个父菜单对应一个浮层，通过 class 切换可见性实现平滑过渡。 */}
+      {isCollapsed && visibleItems
+        .filter((item) => item.children)
+        .map((item) => {
+          const visibleChildren = item.children!.filter(hasMenuPermission)
+          if (visibleChildren.length === 0) return null
+          const isOpen = openPopup === item.label
+          return createPortal(
+            <div
+              id={'sidebar-popup-' + item.label}
+              onMouseEnter={cancelHidePopup}
+              onMouseLeave={scheduleHidePopup}
+              style={{
+                position: 'fixed',
+                top: `${popupPos.top}px`,
+                left: `${popupPos.left}px`,
+                maxHeight: 'calc(100vh - 32px)',
+              }}
+              className={`z-50 min-w-[200px] py-2 bg-white rounded-lg shadow-xl border border-gray-200
+                transition-[opacity,transform] duration-200 ease-out origin-left
+                ${isOpen
+                  ? 'opacity-100 translate-x-0 pointer-events-auto'
+                  : 'opacity-0 -translate-x-2 pointer-events-none'
+                }`}
+              role="menu"
+              aria-hidden={!isOpen}
+            >
+              <div className="px-4 py-1.5 text-xs font-medium text-gray-400 uppercase tracking-wide border-b border-gray-100 mb-1">
+                {item.label}
+              </div>
+              {visibleChildren.map((child) => {
+                const ChildIcon = child.icon
+                const isActive = child.path ? isChildActive(child.path) : false
+                return (
+                  <button
+                    key={child.path}
+                    onClick={() => {
+                      if (child.path) {
+                        handleNavigate(child.path)
+                        hidePopup()
+                      }
+                    }}
+                    className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors duration-150 min-h-[40px] ${
+                      isActive
+                        ? 'bg-primary-50 text-primary-700 font-medium'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                    }`}
+                    role="menuitem"
+                  >
+                    <ChildIcon size={16} className="shrink-0" />
+                    <span className="truncate">{child.label}</span>
+                  </button>
+                )
+              })}
+            </div>,
+            document.body
+          )
+        })}
     </aside>
   )
 }

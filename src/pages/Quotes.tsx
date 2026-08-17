@@ -9,6 +9,7 @@ import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import { usePermission } from '../hooks/usePermission'
 import type { Product } from '../types'
+import { copyText } from '../utils/clipboard'
 
 export interface Quote {
   id: string
@@ -748,18 +749,6 @@ export default function Quotes() {
                             {/* 操作 - 固定列 */}
                             <div className="w-56 px-4 py-4 flex-shrink-0 sticky right-0 bg-white z-20 hover:bg-gray-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">
                               <div className="flex items-center gap-2">
-                                {hasPermission('quotes:view') && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      navigate(`/quotes/${quote.id}`)
-                                    }}
-                                    className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                                    title="查看详情"
-                                  >
-                                    <Eye size={16} />
-                                  </button>
-                                )}
                                 {hasPermission('quotes:edit') && (
                                   <button
                                     onClick={(e) => {
@@ -1083,14 +1072,13 @@ export default function Quotes() {
               {paymentError.type === 'server' && (
                 <>
                   <button
-                    onClick={() => {
-                      const text = paymentError.detail || paymentError.message
-                      try {
-                        navigator.clipboard?.writeText(text)
-                      } catch { /* 忽略剪贴板权限失败 */ }
-                      setPaymentToast('错误信息已复制到剪贴板')
-                      setTimeout(() => setPaymentToast(''), 2000)
-                    }}
+                      onClick={() => {
+                        const text = paymentError.detail || paymentError.message
+                        copyText(text).then((ok) => {
+                          setPaymentToast(ok ? '错误信息已复制到剪贴板' : '复制失败，请手动选择文本复制')
+                          setTimeout(() => setPaymentToast(''), 2000)
+                        })
+                      }}
                     className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                   >
                     <Copy size={14} />

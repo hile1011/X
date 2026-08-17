@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit } from 'lucide-react'
+import { copyText } from '../utils/clipboard'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
@@ -1002,12 +1003,14 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     if (orderInfo.remark) lines.push(`备注：${orderInfo.remark}`)
 
     const text = lines.join('\n')
-    navigator.clipboard.writeText(text).then(() => {
-      setShowCopySuccess(true)
-      setTimeout(() => setShowCopySuccess(false), 2000)
-    }).catch(() => {
-      setSaveError('复制失败，请手动选择文本复制')
-      setTimeout(() => setSaveError(''), 3000)
+    copyText(text).then((ok) => {
+      if (ok) {
+        setShowCopySuccess(true)
+        setTimeout(() => setShowCopySuccess(false), 2000)
+      } else {
+        setSaveError('复制失败，请手动选择文本复制')
+        setTimeout(() => setSaveError(''), 3000)
+      }
     })
   }
 

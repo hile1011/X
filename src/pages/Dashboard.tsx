@@ -6,6 +6,8 @@ import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, Che
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
+import { copyText } from '../utils/clipboard'
+import { sortByStatusAndDueDate } from '../utils/quoteSort'
 
 /**
  * 统计卡片问号说明：hover 显示计算逻辑
@@ -267,15 +269,18 @@ export default function Dashboard() {
     const alertDate = new Date(today)
     alertDate.setDate(today.getDate() + 3)
 
-    const alerts = quotesData.filter((quote) => {
-      // 排除报价中(1)、已发货未收款(4)、已发货已收款(5)、结束(6)
-      if ([1, 4, 5, 6].includes(quote.status)) return false
-      if (!quote.productionTimeEnd) return false
-      const endDate = new Date(quote.productionTimeEnd)
-      endDate.setHours(0, 0, 0, 0)
-      // 3天内到期 或 已逾期（endDate <= alertDate 包含过去日期）
-      return endDate <= alertDate
-    })
+    const alerts = sortByStatusAndDueDate(
+      quotesData.filter((quote) => {
+        // 排除报价中(1)、已发货未收款(4)、已发货已收款(5)、结束(6)
+        if ([1, 4, 5, 6].includes(quote.status)) return false
+        if (!quote.productionTimeEnd) return false
+        const endDate = new Date(quote.productionTimeEnd)
+        endDate.setHours(0, 0, 0, 0)
+        // 3天内到期 或 已逾期（endDate <= alertDate 包含过去日期）
+        return endDate <= alertDate
+      }),
+      'asc',
+    )
 
     setAlertQuotes(alerts)
 
@@ -570,21 +575,29 @@ export default function Dashboard() {
     return sorted
   }, [quotes, selectedStatuses, sortMode])
 
+  // 解析 "YYYY-MM-DD" 为本地时区 0 点（避免 new Date(str) 解析为 UTC 导致与 today 时区不一致）
+  const parseLocalDate = (str: string): Date => {
+    const [y, m, d] = str.split('T')[0].split('-').map(Number)
+    return new Date(y, m - 1, d)
+  }
+
   // 获取甘特图日期范围（从最早的开始日期到最晚的结束日期）
   const getGanttRange = () => {
     const today = new Date()
+    today.setHours(0, 0, 0, 0)
     const todayStr = today.toISOString().split('T')[0]
 
     const filteredQuotes = activeQuotes
-    
+
     let minDate = today
     let maxDate = today
 
     filteredQuotes.forEach((quote) => {
-      const startDate = quote.productionStartTime ? new Date(quote.productionStartTime) : new Date(quote.productionTimeStart)
+      const startStr = quote.productionStartTime || quote.productionTimeStart
+      const startDate = startStr ? parseLocalDate(startStr) : today
       const endDateStr = quote.productionTimeEnd || todayStr
-      const endDate = new Date(endDateStr)
-      
+      const endDate = parseLocalDate(endDateStr)
+
       if (startDate < minDate) minDate = startDate
       if (endDate > maxDate) maxDate = endDate
     })
@@ -599,6 +612,11 @@ export default function Dashboard() {
   }
 
   const { minDate, maxDate } = getGanttRange()
+
+  // 今天标记位置（本地 0 点，与进度条基准一致）
+  const todayForMark = new Date()
+  todayForMark.setHours(0, 0, 0, 0)
+  const todayMarkPercent = ((todayForMark.getTime() - minDate.getTime()) / (maxDate.getTime() - minDate.getTime())) * 100
 
   const generateGanttDays = () => {
     const days = []
@@ -615,29 +633,31 @@ export default function Dashboard() {
   const calculateProgress = (quote: Quote) => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    
-    const startDate = quote.productionStartTime ? new Date(quote.productionStartTime) : new Date(quote.productionTimeStart)
+
+    const startStr = quote.productionStartTime || quote.productionTimeStart
+    const startDate = startStr ? parseLocalDate(startStr) : today
     const endDateStr = quote.productionTimeEnd || today.toISOString().split('T')[0]
-    const endDate = new Date(endDateStr)
-    
+    const endDate = parseLocalDate(endDateStr)
+
     const totalDays = Math.max(1, (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
     const elapsedDays = Math.max(0, (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
-    
+
     return Math.min(100, (elapsedDays / totalDays) * 100)
   }
 
   const getGanttBarStyle = (quote: Quote) => {
-    const startDate = quote.productionStartTime ? new Date(quote.productionStartTime) : new Date(quote.productionTimeStart)
+    const startStr = quote.productionStartTime || quote.productionTimeStart
+    const startDate = startStr ? parseLocalDate(startStr) : minDate
     const endDateStr = quote.productionTimeEnd || new Date().toISOString().split('T')[0]
-    const endDate = new Date(endDateStr)
-    
+    const endDate = parseLocalDate(endDateStr)
+
     const totalDays = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
     const offsetDays = (startDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
     const durationDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
-    
+
     const left = Math.max(0, (offsetDays / totalDays) * 100)
     const width = Math.min(100 - left, (durationDays / totalDays) * 100)
-    
+
     return { left: `${left}%`, width: `${width}%` }
   }
 
@@ -996,8 +1016,8 @@ export default function Dashboard() {
               <div className="overflow-x-auto">
                 <div className="min-w-[800px]">
                   {/* 日期表头 */}
-                  <div className="flex border-b border-gray-200 pb-2 mb-2">
-                    <div className="w-56 shrink-0"></div>
+                  <div className="flex items-center gap-4 border-b border-gray-200 pb-2 mb-2">
+                    <div className="w-72 shrink-0"></div>
                     <div className="flex-1 flex">
                       {ganttDays.map((day, index) => (
                         <div
@@ -1012,7 +1032,7 @@ export default function Dashboard() {
                         </div>
                       ))}
                     </div>
-                    <div className="w-24 shrink-0 text-right">
+                    <div className="w-28 shrink-0 text-right">
                       <span className="text-xs text-gray-500">进度</span>
                     </div>
                   </div>
@@ -1078,10 +1098,10 @@ export default function Dashboard() {
                               style={{ width: `${progress}%` }}
                             ></div>
                           </div>
-                          {/* 当前日期标记 */}
+                          {/* 当前日期标记（本地 0 点，与进度条基准一致） */}
                           <div
                             className="absolute top-0 bottom-0 w-0.5 bg-red-500 rounded-full z-10"
-                            style={{ left: `${((new Date().getTime() - minDate.getTime()) / (maxDate.getTime() - minDate.getTime())) * 100}%` }}
+                            style={{ left: `${todayMarkPercent}%` }}
                           ></div>
                         </div>
                         <div className="w-28 shrink-0 text-right">
@@ -1358,11 +1378,10 @@ export default function Dashboard() {
                     <button
                       onClick={() => {
                         const text = paymentError.detail || paymentError.message
-                        try {
-                          navigator.clipboard?.writeText(text)
-                        } catch { /* 忽略剪贴板权限失败 */ }
-                        setPaymentToast('错误信息已复制到剪贴板')
-                        setTimeout(() => setPaymentToast(''), 2000)
+                        copyText(text).then((ok) => {
+                          setPaymentToast(ok ? '错误信息已复制到剪贴板' : '复制失败，请手动选择文本复制')
+                          setTimeout(() => setPaymentToast(''), 2000)
+                        })
                       }}
                       className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
                     >
