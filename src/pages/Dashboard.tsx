@@ -58,6 +58,14 @@ const MONTH_STORAGE_KEY = 'dashboard_selected_month'
 const PROFIT_MODE_STORAGE_KEY = 'dashboard_profit_mode'
 const SORT_MODE_STORAGE_KEY = 'dashboard_sort_mode'
 
+// 解析 "YYYY-MM-DD" 为本地时区 0 点（避免 new Date(str) 解析为 UTC 导致与 today 时区不一致）
+// 注意：必须放在组件外部，否则在 monthlyStats/yearlyStats 等 useMemo 中使用时会触发 TDZ 错误
+// （Cannot access 'parseLocalDate' before initialization）
+const parseLocalDate = (str: string): Date => {
+  const [y, m, d] = str.split('T')[0].split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
 type ProfitMode = 'noTax' | 'withTax'
 // 订单状态跟踪排序模式：按状态升序(1→6) / 降序(6→1)
 // 同状态内以交货日期升序作为稳定二级排序，使更紧急的订单排在前面
@@ -578,12 +586,6 @@ export default function Dashboard() {
     })
     return sorted
   }, [quotes, selectedStatuses, sortMode])
-
-  // 解析 "YYYY-MM-DD" 为本地时区 0 点（避免 new Date(str) 解析为 UTC 导致与 today 时区不一致）
-  const parseLocalDate = (str: string): Date => {
-    const [y, m, d] = str.split('T')[0].split('-').map(Number)
-    return new Date(y, m - 1, d)
-  }
 
   // 获取甘特图日期范围（从最早的开始日期到最晚的结束日期）
   const getGanttRange = () => {
