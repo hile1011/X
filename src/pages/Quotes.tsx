@@ -57,6 +57,9 @@ export interface Quote {
 // 订单状态选项统一使用 OrderStatus 枚举类，消除重复定义
 const STATUS_OPTIONS = OrderStatus.getAll()
 
+// 保留2位小数辅助函数：总额计算以保留2位小数的价格为基础（与订单编辑页 BagQuote 口径一致）
+const round2 = (n: number) => Math.round(n * 100) / 100
+
 interface GroupedQuotes {
   customerName: string
   expanded: boolean
@@ -310,24 +313,27 @@ export default function Quotes() {
     // 记录筛选后订单总数（用于导出等场景）
     setFilteredCount(filtered.length)
 
-    // 计算当前筛选数据的销售总额与利润总额（口径与仪表盘一致）
+    // 计算当前筛选数据的销售总额与利润总额（与订单编辑页 BagQuote 口径一致，不含税）
     let revenue = 0
     let profitNoTax = 0
     let profitWithTax = 0
     filtered.forEach((quote) => {
-      const quantity = parseFloat(quote.quantity) || 0
-      const cost = quote.costPrice || 0
-      const priceWithTax = quote.priceWithTax || 0
-      const sellNoTax = quote.sellPriceNoTax || 0
-      const sellWithTax = quote.sellPriceWithTax || 0
-      revenue += quantity * sellWithTax
-      profitNoTax += quantity * (sellNoTax - cost)
-      profitWithTax += quantity * (sellWithTax - priceWithTax)
+      const qty = parseFloat(quote.quantity) || 0
+      const sellNoTax = round2(quote.sellPriceNoTax || 0)
+      const cost = round2(quote.costPrice || 0)
+      const sellWithTax = round2(quote.sellPriceWithTax || 0)
+      const priceWithTax = round2(quote.priceWithTax || 0)
+      // 销售总额(不含税) = round2(round2(sellPriceNoTax) * qty)
+      revenue += round2(sellNoTax * qty)
+      // 利润总额(不含税) = round2(round2(round2(sellNoTax) - round2(cost)) * qty)
+      profitNoTax += round2(round2(sellNoTax - cost) * qty)
+      // 利润(含税) = round2(round2(round2(sellWithTax) - round2(priceWithTax)) * qty)
+      profitWithTax += round2(round2(sellWithTax - priceWithTax) * qty)
     })
     setFilteredTotals({
-      revenue: Math.round(revenue * 100) / 100,
-      profitNoTax: Math.round(profitNoTax * 100) / 100,
-      profitWithTax: Math.round(profitWithTax * 100) / 100,
+      revenue: round2(revenue),
+      profitNoTax: round2(profitNoTax),
+      profitWithTax: round2(profitWithTax),
     })
 
     // 先按客户名称分组（一个客户下多条订单归为一组）
@@ -807,17 +813,17 @@ export default function Quotes() {
                               </span>
                             </div>
 
-                            {/* 销售总额 = 数量 × 卖价(含税) */}
+                            {/* 销售总额 = 数量 × 卖价(不含税)，以保留2位小数的卖价为计算基础 */}
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
-                                ¥{((parseFloat(quote.quantity) || 0) * (quote.sellPriceWithTax || 0)).toFixed(2)}
+                                ¥{round2(round2(quote.sellPriceNoTax || 0) * (parseFloat(quote.quantity) || 0)).toFixed(2)}
                               </span>
                             </div>
 
-                            {/* 利润总额 = 数量 × (卖价含税 - 含税价) */}
+                            {/* 利润总额 = 数量 × 单个利润(不含税)，以保留2位小数的单个利润为计算基础 */}
                             <div className="w-32 px-4 py-4 flex-shrink-0">
-                              <span className={`font-semibold text-sm ${((parseFloat(quote.quantity) || 0) * ((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0))) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                ¥{((parseFloat(quote.quantity) || 0) * ((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0))).toFixed(2)}
+                              <span className={`font-semibold text-sm ${round2(round2(round2(quote.sellPriceNoTax || 0) - round2(quote.costPrice || 0)) * (parseFloat(quote.quantity) || 0)) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ¥{round2(round2(round2(quote.sellPriceNoTax || 0) - round2(quote.costPrice || 0)) * (parseFloat(quote.quantity) || 0)).toFixed(2)}
                               </span>
                             </div>
 
@@ -971,11 +977,11 @@ export default function Quotes() {
                     </div>
                     <span className="text-gray-300">·</span>
                     <span>
-                      销售总额 <span className="font-semibold text-gray-800">¥{filteredTotals.revenue.toLocaleString()}</span>
+                      销售总额(不含税) <span className="font-semibold text-gray-800">¥{filteredTotals.revenue.toLocaleString()}</span>
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>
-                      利润(不含税) <span className="font-semibold text-red-600">¥{filteredTotals.profitNoTax.toLocaleString()}</span>
+                      利润总额(不含税) <span className="font-semibold text-red-600">¥{filteredTotals.profitNoTax.toLocaleString()}</span>
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>

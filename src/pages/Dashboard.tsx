@@ -377,7 +377,9 @@ export default function Dashboard() {
 
     const productionQuotes = quotes.filter((quote) => {
       if (!STATS_STATUSES.includes(quote.status)) return false
-      const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
+      const dateStr = quote.productionStartTime || quote.productionTimeStart
+      if (!dateStr) return false
+      const productionDate = parseLocalDate(dateStr)
       if (isNaN(productionDate.getTime())) return false
       return productionDate >= monthStart && productionDate <= monthEnd
     })
@@ -429,7 +431,9 @@ export default function Dashboard() {
 
     const productionQuotes = quotes.filter((quote) => {
       if (!STATS_STATUSES.includes(quote.status)) return false
-      const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
+      const dateStr = quote.productionStartTime || quote.productionTimeStart
+      if (!dateStr) return false
+      const productionDate = parseLocalDate(dateStr)
       if (isNaN(productionDate.getTime())) return false
       return productionDate >= yearStart && productionDate <= yearEnd
     })

@@ -411,10 +411,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
 
       const quoteData = {
         ...orderInfo,
-        costPrice: costPrice || 0,
+        costPrice: Math.round((costPrice || 0) * 100) / 100,
         priceWithTax: priceWithTax || 0,
-        sellPriceNoTax: sellPrices.noTax || 0,
-        sellPriceWithTax: sellPrices.withTax || 0,
+        sellPriceNoTax: Math.round((sellPrices.noTax || 0) * 100) / 100,
+        sellPriceWithTax: Math.round((sellPrices.withTax || 0) * 100) / 100,
         status,
         images: productImages,
         tableData,
@@ -1632,7 +1632,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
                 <div className="lg:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">产品规格(CM)</label>
+                  <label className="block text-xs text-gray-400 mb-0.5">产品规格 宽*高*长(CM)</label>
                   <input type="text" value={orderInfo.productSpec} onChange={(e) => updateOrderField('productSpec', e.target.value)}
                     placeholder="产品规格"
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
