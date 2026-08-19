@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
@@ -146,9 +146,15 @@ export default function Quotes() {
   const [filteredCount, setFilteredCount] = useState(0)
   // 筛选后的客户总数（以客户名称维度统计，一个客户下多条订单只算一个）
   const [filteredCustomerCount, setFilteredCustomerCount] = useState(0)
+  // 筛选后订单的销售总额与利润总额（底部汇总）
+  const [filteredTotals, setFilteredTotals] = useState({ revenue: 0, profitNoTax: 0, profitWithTax: 0 })
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // 业绩明细筛选：从仪表盘双击业绩卡片跳转携带（month=YYYY-MM 或 year=YYYY）
+  // 匹配仪表盘统计口径：状态为做货中/已发货未收款/已发货已收款，做货开始时间在对应月份/年度
+  const [productionTimeFilter, setProductionTimeFilter] = useState<{ type: 'month' | 'year'; value: string } | null>(null)
   const { hasPermission } = usePermission()
   // 跳过首次挂载的筛选重置（从 sessionStorage 恢复时不重置页码）
   const isInitialMount = useRef(true)
@@ -186,6 +192,19 @@ export default function Quotes() {
     }
   }, [searchTerm, statusFilter, customerFilter, styleFilter, currentPage, pageSize])
 
+  // 从 URL 读取业绩明细筛选条件（仪表盘双击业绩卡片跳转携带）
+  useEffect(() => {
+    const month = searchParams.get('month')
+    const year = searchParams.get('year')
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      setProductionTimeFilter({ type: 'month', value: month })
+    } else if (year && /^\d{4}$/.test(year)) {
+      setProductionTimeFilter({ type: 'year', value: year })
+    } else {
+      setProductionTimeFilter(null)
+    }
+  }, [searchParams])
+
   // 筛选条件变化时重置到第 1 页（跳过首次挂载，避免覆盖从 sessionStorage 恢复的页码）
   useEffect(() => {
     if (isInitialMount.current) {
@@ -197,7 +216,7 @@ export default function Quotes() {
 
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products, currentPage, pageSize])
+  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products, currentPage, pageSize, productionTimeFilter])
 
   // 组件卸载时保存滚动位置（用户导航到详情/编辑页时触发）
   useEffect(() => {
@@ -259,7 +278,29 @@ export default function Quotes() {
         quote.productStyle === styleFilter ||
         getStyleLabelFromProducts(products, quote.productStyle) === getStyleLabelFromProducts(products, styleFilter)
 
-      return matchesSearch && matchesStatus && matchesCustomer && matchesStyle
+      // 业绩明细筛选（从仪表盘双击业绩卡片跳转）：状态为做货中/已发货未收款/已发货已收款，
+      // 做货开始时间在对应月份/年度，与仪表盘统计口径一致
+      const matchesProductionTime = (() => {
+        if (!productionTimeFilter) return true
+        if (![3, 4, 5].includes(quote.status)) return false
+        const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
+        if (isNaN(productionDate.getTime())) return false
+        if (productionTimeFilter.type === 'month') {
+          const [y, m] = productionTimeFilter.value.split('-')
+          const year = parseInt(y)
+          const month = parseInt(m) - 1
+          const monthStart = new Date(year, month, 1)
+          const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999)
+          return productionDate >= monthStart && productionDate <= monthEnd
+        } else {
+          const year = parseInt(productionTimeFilter.value)
+          const yearStart = new Date(year, 0, 1)
+          const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999)
+          return productionDate >= yearStart && productionDate <= yearEnd
+        }
+      })()
+
+      return matchesSearch && matchesStatus && matchesCustomer && matchesStyle && matchesProductionTime
     })
   }
 
@@ -268,6 +309,26 @@ export default function Quotes() {
 
     // 记录筛选后订单总数（用于导出等场景）
     setFilteredCount(filtered.length)
+
+    // 计算当前筛选数据的销售总额与利润总额（口径与仪表盘一致）
+    let revenue = 0
+    let profitNoTax = 0
+    let profitWithTax = 0
+    filtered.forEach((quote) => {
+      const quantity = parseFloat(quote.quantity) || 0
+      const cost = quote.costPrice || 0
+      const priceWithTax = quote.priceWithTax || 0
+      const sellNoTax = quote.sellPriceNoTax || 0
+      const sellWithTax = quote.sellPriceWithTax || 0
+      revenue += quantity * sellWithTax
+      profitNoTax += quantity * (sellNoTax - cost)
+      profitWithTax += quantity * (sellWithTax - priceWithTax)
+    })
+    setFilteredTotals({
+      revenue: Math.round(revenue * 100) / 100,
+      profitNoTax: Math.round(profitNoTax * 100) / 100,
+      profitWithTax: Math.round(profitWithTax * 100) / 100,
+    })
 
     // 先按客户名称分组（一个客户下多条订单归为一组）
     const grouped: Record<string, Quote[]> = {}
@@ -549,8 +610,26 @@ export default function Quotes() {
           </div>
         ) : (
           <>
+          {productionTimeFilter && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-primary-50 border-b border-primary-200 flex-shrink-0">
+              <Calendar size={14} className="text-primary-600" />
+              <span className="text-sm font-medium text-primary-700">
+                {productionTimeFilter.type === 'month'
+                  ? `${productionTimeFilter.value.split('-')[0]}年${parseInt(productionTimeFilter.value.split('-')[1])}月业绩明细`
+                  : `${productionTimeFilter.value}年业绩明细`}
+              </span>
+              <span className="text-xs text-primary-500">· 做货中/已发货订单</span>
+              <button
+                onClick={() => { setSearchParams({}); setProductionTimeFilter(null) }}
+                className="ml-auto flex items-center gap-1 text-xs text-primary-600 hover:text-primary-800 px-2 py-1 rounded hover:bg-primary-100 transition-colors"
+              >
+                <X size={12} />
+                清除筛选
+              </button>
+            </div>
+          )}
           <div ref={scrollContainerRef} className="flex-1 overflow-auto min-h-0">
-            <div className="min-w-[1764px]">
+            <div className="min-w-[2036px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                 <div className="flex">
@@ -567,6 +646,8 @@ export default function Quotes() {
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(不含税)</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(含税)</div>
+                  <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">销售总额</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润总额</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">做货到期时间</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">创建日期</div>
                   <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0 sticky right-0 bg-gray-50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">操作</div>
@@ -726,6 +807,20 @@ export default function Quotes() {
                               </span>
                             </div>
 
+                            {/* 销售总额 = 数量 × 卖价(含税) */}
+                            <div className="w-36 px-4 py-4 flex-shrink-0">
+                              <span className="text-primary-600 font-semibold text-sm">
+                                ¥{((parseFloat(quote.quantity) || 0) * (quote.sellPriceWithTax || 0)).toFixed(2)}
+                              </span>
+                            </div>
+
+                            {/* 利润总额 = 数量 × (卖价含税 - 含税价) */}
+                            <div className="w-32 px-4 py-4 flex-shrink-0">
+                              <span className={`font-semibold text-sm ${((parseFloat(quote.quantity) || 0) * ((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0))) >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ¥{((parseFloat(quote.quantity) || 0) * ((quote.sellPriceWithTax || 0) - (quote.priceWithTax || 0))).toFixed(2)}
+                              </span>
+                            </div>
+
                             {/* 做货到期时间 */}
                             <div className="w-44 px-4 py-4 flex-shrink-0">
                               <div className="flex items-center gap-2">
@@ -874,6 +969,18 @@ export default function Quotes() {
                       </select>
                       <span className="text-gray-500">个客户</span>
                     </div>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      销售总额 <span className="font-semibold text-gray-800">¥{filteredTotals.revenue.toLocaleString()}</span>
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      利润(不含税) <span className="font-semibold text-red-600">¥{filteredTotals.profitNoTax.toLocaleString()}</span>
+                    </span>
+                    <span className="text-gray-300">·</span>
+                    <span>
+                      利润(含税) <span className="font-semibold text-green-600">¥{filteredTotals.profitWithTax.toLocaleString()}</span>
+                    </span>
                   </div>
                   {/* 右侧：页码导航 + 跳转 */}
                   <div className="flex items-center gap-3">

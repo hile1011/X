@@ -702,7 +702,11 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {/* 当月业绩（销售额 + 利润合并） */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div
+            className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer"
+            onDoubleClick={() => navigate(`/quotes?month=${selectedMonth}`)}
+            title="双击查看当月业绩明细"
+          >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 bg-purple-50 rounded-lg flex items-center justify-center">
@@ -713,6 +717,7 @@ export default function Dashboard() {
               {/* 利润模式切换（当月/全年联动） */}
               <button
                 onClick={handleProfitModeToggle}
+                onDoubleClick={(e) => e.stopPropagation()}
                 className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
                   profitMode === 'noTax'
                     ? 'bg-red-100 text-red-600 hover:bg-red-200'
@@ -765,7 +770,11 @@ export default function Dashboard() {
           </div>
 
           {/* 全年业绩（销售额 + 利润合并） */}
-          <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+          <div
+            className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer"
+            onDoubleClick={() => navigate(`/quotes?year=${selectedMonth.split('-')[0]}`)}
+            title="双击查看全年业绩明细"
+          >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center">
@@ -776,6 +785,7 @@ export default function Dashboard() {
               {/* 利润模式切换（与当月联动同一状态） */}
               <button
                 onClick={handleProfitModeToggle}
+                onDoubleClick={(e) => e.stopPropagation()}
                 className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
                   profitMode === 'noTax'
                     ? 'bg-red-100 text-red-600 hover:bg-red-200'
