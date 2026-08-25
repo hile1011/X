@@ -1,6 +1,6 @@
 {
   "name": "quote-order-system",
-  "version": "1.1.24",
+  "version": "1.1.25",
   "description": "报价跟单系统",
   "type": "module",
   "scripts": {
@@ -35,6 +35,7 @@
     "@visactor/vtable": "^1.26.6",
     "@visactor/vtable-plugins": "^1.26.6",
     "@visactor/vtable-sheet": "^1.26.6",
+    "antd": "^6.6.1",
     "archiver": "^8.0.0",
     "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",

@@ -17,6 +17,7 @@ import BagQuote from './pages/BagQuote'
 import BagQuoteTable from './pages/BagQuoteTable'
 import BagQuoteWps from './pages/BagQuoteWps'
 import ProcessCost from './pages/ProcessCost'
+import SheetTemplates from './pages/SheetTemplates'
 import Users from './pages/Users'
 import Roles from './pages/Roles'
 import Permissions from './pages/Permissions'
@@ -97,6 +98,10 @@ function App() {
               } />
               <Route path="/process-costs" element={
                 <ProtectedRoute permission="process-costs:view"><ProcessCost /></ProtectedRoute>
+              } />
+              {/* 款式模板管理：在线可视化编辑试算表模板 */}
+              <Route path="/sheet-templates" element={
+                <ProtectedRoute permission="sheet-templates:view"><SheetTemplates /></ProtectedRoute>
               } />
               <Route path="/customers" element={
                 <ProtectedRoute permission="customers:view"><Customers /></ProtectedRoute>

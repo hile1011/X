@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 16
+export const CURRENT_SCHEMA_VERSION = 23
 
 export interface Migration {
   version: number
@@ -875,6 +875,381 @@ const migrations: Migration[] = [
       }
       if (await hasColumn('created_by')) {
         await db.exec(`ALTER TABLE quotes DROP COLUMN created_by`)
+      }
+    },
+  },
+  {
+    version: 17,
+    name: 'add-payment-fields',
+    description: 'V0.10：quotes表新增收款相关字段（实际收取打样费、打样费抵扣大货、收取定金、待收总金额）',
+    up: async (db: any) => {
+      // 幂等：先检查列是否存在再 ADD（ALTER TABLE 隐式提交，失败重试会报 Duplicate column）
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (!(await hasColumn('actualSampleFee'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN actualSampleFee DECIMAL(12,2) DEFAULT 0 AFTER sellPriceWithTax`)
+      }
+      if (!(await hasColumn('sampleFeeDeduct'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN sampleFeeDeduct TINYINT(1) DEFAULT 0 AFTER actualSampleFee`)
+      }
+      if (!(await hasColumn('deposit'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN deposit DECIMAL(12,2) DEFAULT 0 AFTER sampleFeeDeduct`)
+      }
+      if (!(await hasColumn('pendingAmount'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN pendingAmount DECIMAL(12,2) DEFAULT 0 AFTER deposit`)
+      }
+      // 重建审计触发器以追踪 4 个新收款字段（36 个业务字段）
+      // 触发器已存在时 DROP TRIGGER IF EXISTS 保证幂等
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_insert`)
+      await db.exec(`CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'insert', NULL, JSON_OBJECT('user_id', NEW.user_id, 'customer_id', NEW.customer_id, 'quote_number', NEW.quote_number, 'customerName', NEW.customerName, 'shippingAddress', NEW.shippingAddress, 'productStyle', NEW.productStyle, 'productSpec', NEW.productSpec, 'fabricMaterial', NEW.fabricMaterial, 'process', NEW.process, 'handleMaterial', NEW.handleMaterial, 'handleSpec', NEW.handleSpec, 'quantity', NEW.quantity, 'boxSpec', NEW.boxSpec, 'remark', NEW.remark, 'sampleFee', NEW.sampleFee, 'sampleDays', NEW.sampleDays, 'massDays', NEW.massDays, 'unitPrice', NEW.unitPrice, 'productionTimeStart', NEW.productionTimeStart, 'productionTimeEnd', NEW.productionTimeEnd, 'sellPriceNoTax', NEW.sellPriceNoTax, 'sellPriceWithTax', NEW.sellPriceWithTax, 'actualSampleFee', NEW.actualSampleFee, 'sampleFeeDeduct', NEW.sampleFeeDeduct, 'deposit', NEW.deposit, 'pendingAmount', NEW.pendingAmount, 'status', NEW.status, 'quoteTime', NEW.quoteTime, 'sampleTime', NEW.sampleTime, 'sampleCompletedTime', NEW.sampleCompletedTime, 'productionStartTime', NEW.productionStartTime, 'shippingTime', NEW.shippingTime, 'paymentTime', NEW.paymentTime, 'endTime', NEW.endTime, 'costPrice', NEW.costPrice, 'priceWithTax', NEW.priceWithTax), NULL, COALESCE(@app_operator, CURRENT_USER()))`)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_update`)
+      await db.exec(`CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'update', JSON_OBJECT('user_id', OLD.user_id, 'customer_id', OLD.customer_id, 'quote_number', OLD.quote_number, 'customerName', OLD.customerName, 'shippingAddress', OLD.shippingAddress, 'productStyle', OLD.productStyle, 'productSpec', OLD.productSpec, 'fabricMaterial', OLD.fabricMaterial, 'process', OLD.process, 'handleMaterial', OLD.handleMaterial, 'handleSpec', OLD.handleSpec, 'quantity', OLD.quantity, 'boxSpec', OLD.boxSpec, 'remark', OLD.remark, 'sampleFee', OLD.sampleFee, 'sampleDays', OLD.sampleDays, 'massDays', OLD.massDays, 'unitPrice', OLD.unitPrice, 'productionTimeStart', OLD.productionTimeStart, 'productionTimeEnd', OLD.productionTimeEnd, 'sellPriceNoTax', OLD.sellPriceNoTax, 'sellPriceWithTax', OLD.sellPriceWithTax, 'actualSampleFee', OLD.actualSampleFee, 'sampleFeeDeduct', OLD.sampleFeeDeduct, 'deposit', OLD.deposit, 'pendingAmount', OLD.pendingAmount, 'status', OLD.status, 'quoteTime', OLD.quoteTime, 'sampleTime', OLD.sampleTime, 'sampleCompletedTime', OLD.sampleCompletedTime, 'productionStartTime', OLD.productionStartTime, 'shippingTime', OLD.shippingTime, 'paymentTime', OLD.paymentTime, 'endTime', OLD.endTime, 'costPrice', OLD.costPrice, 'priceWithTax', OLD.priceWithTax), JSON_OBJECT('user_id', NEW.user_id, 'customer_id', NEW.customer_id, 'quote_number', NEW.quote_number, 'customerName', NEW.customerName, 'shippingAddress', NEW.shippingAddress, 'productStyle', NEW.productStyle, 'productSpec', NEW.productSpec, 'fabricMaterial', NEW.fabricMaterial, 'process', NEW.process, 'handleMaterial', NEW.handleMaterial, 'handleSpec', NEW.handleSpec, 'quantity', NEW.quantity, 'boxSpec', NEW.boxSpec, 'remark', NEW.remark, 'sampleFee', NEW.sampleFee, 'sampleDays', NEW.sampleDays, 'massDays', NEW.massDays, 'unitPrice', NEW.unitPrice, 'productionTimeStart', NEW.productionTimeStart, 'productionTimeEnd', NEW.productionTimeEnd, 'sellPriceNoTax', NEW.sellPriceNoTax, 'sellPriceWithTax', NEW.sellPriceWithTax, 'actualSampleFee', NEW.actualSampleFee, 'sampleFeeDeduct', NEW.sampleFeeDeduct, 'deposit', NEW.deposit, 'pendingAmount', NEW.pendingAmount, 'status', NEW.status, 'quoteTime', NEW.quoteTime, 'sampleTime', NEW.sampleTime, 'sampleCompletedTime', NEW.sampleCompletedTime, 'productionStartTime', NEW.productionStartTime, 'shippingTime', NEW.shippingTime, 'paymentTime', NEW.paymentTime, 'endTime', NEW.endTime, 'costPrice', NEW.costPrice, 'priceWithTax', NEW.priceWithTax), CONCAT_WS(',', IF(NOT(OLD.user_id <=> NEW.user_id), 'user_id', NULL), IF(NOT(OLD.customer_id <=> NEW.customer_id), 'customer_id', NULL), IF(NOT(OLD.quote_number <=> NEW.quote_number), 'quote_number', NULL), IF(NOT(OLD.customerName <=> NEW.customerName), 'customerName', NULL), IF(NOT(OLD.shippingAddress <=> NEW.shippingAddress), 'shippingAddress', NULL), IF(NOT(OLD.productStyle <=> NEW.productStyle), 'productStyle', NULL), IF(NOT(OLD.productSpec <=> NEW.productSpec), 'productSpec', NULL), IF(NOT(OLD.fabricMaterial <=> NEW.fabricMaterial), 'fabricMaterial', NULL), IF(NOT(OLD.process <=> NEW.process), 'process', NULL), IF(NOT(OLD.handleMaterial <=> NEW.handleMaterial), 'handleMaterial', NULL), IF(NOT(OLD.handleSpec <=> NEW.handleSpec), 'handleSpec', NULL), IF(NOT(OLD.quantity <=> NEW.quantity), 'quantity', NULL), IF(NOT(OLD.boxSpec <=> NEW.boxSpec), 'boxSpec', NULL), IF(NOT(OLD.remark <=> NEW.remark), 'remark', NULL), IF(NOT(OLD.sampleFee <=> NEW.sampleFee), 'sampleFee', NULL), IF(NOT(OLD.sampleDays <=> NEW.sampleDays), 'sampleDays', NULL), IF(NOT(OLD.massDays <=> NEW.massDays), 'massDays', NULL), IF(NOT(OLD.unitPrice <=> NEW.unitPrice), 'unitPrice', NULL), IF(NOT(OLD.productionTimeStart <=> NEW.productionTimeStart), 'productionTimeStart', NULL), IF(NOT(OLD.productionTimeEnd <=> NEW.productionTimeEnd), 'productionTimeEnd', NULL), IF(NOT(OLD.sellPriceNoTax <=> NEW.sellPriceNoTax), 'sellPriceNoTax', NULL), IF(NOT(OLD.sellPriceWithTax <=> NEW.sellPriceWithTax), 'sellPriceWithTax', NULL), IF(NOT(OLD.actualSampleFee <=> NEW.actualSampleFee), 'actualSampleFee', NULL), IF(NOT(OLD.sampleFeeDeduct <=> NEW.sampleFeeDeduct), 'sampleFeeDeduct', NULL), IF(NOT(OLD.deposit <=> NEW.deposit), 'deposit', NULL), IF(NOT(OLD.pendingAmount <=> NEW.pendingAmount), 'pendingAmount', NULL), IF(NOT(OLD.status <=> NEW.status), 'status', NULL), IF(NOT(OLD.quoteTime <=> NEW.quoteTime), 'quoteTime', NULL), IF(NOT(OLD.sampleTime <=> NEW.sampleTime), 'sampleTime', NULL), IF(NOT(OLD.sampleCompletedTime <=> NEW.sampleCompletedTime), 'sampleCompletedTime', NULL), IF(NOT(OLD.productionStartTime <=> NEW.productionStartTime), 'productionStartTime', NULL), IF(NOT(OLD.shippingTime <=> NEW.shippingTime), 'shippingTime', NULL), IF(NOT(OLD.paymentTime <=> NEW.paymentTime), 'paymentTime', NULL), IF(NOT(OLD.endTime <=> NEW.endTime), 'endTime', NULL), IF(NOT(OLD.costPrice <=> NEW.costPrice), 'costPrice', NULL), IF(NOT(OLD.priceWithTax <=> NEW.priceWithTax), 'priceWithTax', NULL)), COALESCE(@app_operator, CURRENT_USER()))`)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_delete`)
+      await db.exec(`CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (OLD.id, 'delete', JSON_OBJECT('user_id', OLD.user_id, 'customer_id', OLD.customer_id, 'quote_number', OLD.quote_number, 'customerName', OLD.customerName, 'shippingAddress', OLD.shippingAddress, 'productStyle', OLD.productStyle, 'productSpec', OLD.productSpec, 'fabricMaterial', OLD.fabricMaterial, 'process', OLD.process, 'handleMaterial', OLD.handleMaterial, 'handleSpec', OLD.handleSpec, 'quantity', OLD.quantity, 'boxSpec', OLD.boxSpec, 'remark', OLD.remark, 'sampleFee', OLD.sampleFee, 'sampleDays', OLD.sampleDays, 'massDays', OLD.massDays, 'unitPrice', OLD.unitPrice, 'productionTimeStart', OLD.productionTimeStart, 'productionTimeEnd', OLD.productionTimeEnd, 'sellPriceNoTax', OLD.sellPriceNoTax, 'sellPriceWithTax', OLD.sellPriceWithTax, 'actualSampleFee', OLD.actualSampleFee, 'sampleFeeDeduct', OLD.sampleFeeDeduct, 'deposit', OLD.deposit, 'pendingAmount', OLD.pendingAmount, 'status', OLD.status, 'quoteTime', OLD.quoteTime, 'sampleTime', OLD.sampleTime, 'sampleCompletedTime', OLD.sampleCompletedTime, 'productionStartTime', OLD.productionStartTime, 'shippingTime', OLD.shippingTime, 'paymentTime', OLD.paymentTime, 'endTime', OLD.endTime, 'costPrice', OLD.costPrice, 'priceWithTax', OLD.priceWithTax), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))`)
+    },
+    down: async (db: any) => {
+      // 幂等：先检查列是否存在再 DROP
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('pendingAmount')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN pendingAmount`)
+      }
+      if (await hasColumn('deposit')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN deposit`)
+      }
+      if (await hasColumn('sampleFeeDeduct')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN sampleFeeDeduct`)
+      }
+      if (await hasColumn('actualSampleFee')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN actualSampleFee`)
+      }
+      // 恢复 v16 版审计触发器（不含 4 个收款字段）
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_insert`)
+      await db.exec(`CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'insert', NULL, JSON_OBJECT('user_id', NEW.user_id, 'customer_id', NEW.customer_id, 'quote_number', NEW.quote_number, 'customerName', NEW.customerName, 'shippingAddress', NEW.shippingAddress, 'productStyle', NEW.productStyle, 'productSpec', NEW.productSpec, 'fabricMaterial', NEW.fabricMaterial, 'process', NEW.process, 'handleMaterial', NEW.handleMaterial, 'handleSpec', NEW.handleSpec, 'quantity', NEW.quantity, 'boxSpec', NEW.boxSpec, 'remark', NEW.remark, 'sampleFee', NEW.sampleFee, 'sampleDays', NEW.sampleDays, 'massDays', NEW.massDays, 'unitPrice', NEW.unitPrice, 'productionTimeStart', NEW.productionTimeStart, 'productionTimeEnd', NEW.productionTimeEnd, 'sellPriceNoTax', NEW.sellPriceNoTax, 'sellPriceWithTax', NEW.sellPriceWithTax, 'status', NEW.status, 'quoteTime', NEW.quoteTime, 'sampleTime', NEW.sampleTime, 'sampleCompletedTime', NEW.sampleCompletedTime, 'productionStartTime', NEW.productionStartTime, 'shippingTime', NEW.shippingTime, 'paymentTime', NEW.paymentTime, 'endTime', NEW.endTime, 'costPrice', NEW.costPrice, 'priceWithTax', NEW.priceWithTax), NULL, COALESCE(@app_operator, CURRENT_USER()))`)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_update`)
+      await db.exec(`CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (NEW.id, 'update', JSON_OBJECT('user_id', OLD.user_id, 'customer_id', OLD.customer_id, 'quote_number', OLD.quote_number, 'customerName', OLD.customerName, 'shippingAddress', OLD.shippingAddress, 'productStyle', OLD.productStyle, 'productSpec', OLD.productSpec, 'fabricMaterial', OLD.fabricMaterial, 'process', OLD.process, 'handleMaterial', OLD.handleMaterial, 'handleSpec', OLD.handleSpec, 'quantity', OLD.quantity, 'boxSpec', OLD.boxSpec, 'remark', OLD.remark, 'sampleFee', OLD.sampleFee, 'sampleDays', OLD.sampleDays, 'massDays', OLD.massDays, 'unitPrice', OLD.unitPrice, 'productionTimeStart', OLD.productionTimeStart, 'productionTimeEnd', OLD.productionTimeEnd, 'sellPriceNoTax', OLD.sellPriceNoTax, 'sellPriceWithTax', OLD.sellPriceWithTax, 'status', OLD.status, 'quoteTime', OLD.quoteTime, 'sampleTime', OLD.sampleTime, 'sampleCompletedTime', OLD.sampleCompletedTime, 'productionStartTime', OLD.productionStartTime, 'shippingTime', OLD.shippingTime, 'paymentTime', OLD.paymentTime, 'endTime', OLD.endTime, 'costPrice', OLD.costPrice, 'priceWithTax', OLD.priceWithTax), JSON_OBJECT('user_id', NEW.user_id, 'customer_id', NEW.customer_id, 'quote_number', NEW.quote_number, 'customerName', NEW.customerName, 'shippingAddress', NEW.shippingAddress, 'productStyle', NEW.productStyle, 'productSpec', NEW.productSpec, 'fabricMaterial', NEW.fabricMaterial, 'process', NEW.process, 'handleMaterial', NEW.handleMaterial, 'handleSpec', NEW.handleSpec, 'quantity', NEW.quantity, 'boxSpec', NEW.boxSpec, 'remark', NEW.remark, 'sampleFee', NEW.sampleFee, 'sampleDays', NEW.sampleDays, 'massDays', NEW.massDays, 'unitPrice', NEW.unitPrice, 'productionTimeStart', NEW.productionTimeStart, 'productionTimeEnd', NEW.productionTimeEnd, 'sellPriceNoTax', NEW.sellPriceNoTax, 'sellPriceWithTax', NEW.sellPriceWithTax, 'status', NEW.status, 'quoteTime', NEW.quoteTime, 'sampleTime', NEW.sampleTime, 'sampleCompletedTime', NEW.sampleCompletedTime, 'productionStartTime', NEW.productionStartTime, 'shippingTime', NEW.shippingTime, 'paymentTime', NEW.paymentTime, 'endTime', NEW.endTime, 'costPrice', NEW.costPrice, 'priceWithTax', NEW.priceWithTax), CONCAT_WS(',', IF(NOT(OLD.user_id <=> NEW.user_id), 'user_id', NULL), IF(NOT(OLD.customer_id <=> NEW.customer_id), 'customer_id', NULL), IF(NOT(OLD.quote_number <=> NEW.quote_number), 'quote_number', NULL), IF(NOT(OLD.customerName <=> NEW.customerName), 'customerName', NULL), IF(NOT(OLD.shippingAddress <=> NEW.shippingAddress), 'shippingAddress', NULL), IF(NOT(OLD.productStyle <=> NEW.productStyle), 'productStyle', NULL), IF(NOT(OLD.productSpec <=> NEW.productSpec), 'productSpec', NULL), IF(NOT(OLD.fabricMaterial <=> NEW.fabricMaterial), 'fabricMaterial', NULL), IF(NOT(OLD.process <=> NEW.process), 'process', NULL), IF(NOT(OLD.handleMaterial <=> NEW.handleMaterial), 'handleMaterial', NULL), IF(NOT(OLD.handleSpec <=> NEW.handleSpec), 'handleSpec', NULL), IF(NOT(OLD.quantity <=> NEW.quantity), 'quantity', NULL), IF(NOT(OLD.boxSpec <=> NEW.boxSpec), 'boxSpec', NULL), IF(NOT(OLD.remark <=> NEW.remark), 'remark', NULL), IF(NOT(OLD.sampleFee <=> NEW.sampleFee), 'sampleFee', NULL), IF(NOT(OLD.sampleDays <=> NEW.sampleDays), 'sampleDays', NULL), IF(NOT(OLD.massDays <=> NEW.massDays), 'massDays', NULL), IF(NOT(OLD.unitPrice <=> NEW.unitPrice), 'unitPrice', NULL), IF(NOT(OLD.productionTimeStart <=> NEW.productionTimeStart), 'productionTimeStart', NULL), IF(NOT(OLD.productionTimeEnd <=> NEW.productionTimeEnd), 'productionTimeEnd', NULL), IF(NOT(OLD.sellPriceNoTax <=> NEW.sellPriceNoTax), 'sellPriceNoTax', NULL), IF(NOT(OLD.sellPriceWithTax <=> NEW.sellPriceWithTax), 'sellPriceWithTax', NULL), IF(NOT(OLD.status <=> NEW.status), 'status', NULL), IF(NOT(OLD.quoteTime <=> NEW.quoteTime), 'quoteTime', NULL), IF(NOT(OLD.sampleTime <=> NEW.sampleTime), 'sampleTime', NULL), IF(NOT(OLD.sampleCompletedTime <=> NEW.sampleCompletedTime), 'sampleCompletedTime', NULL), IF(NOT(OLD.productionStartTime <=> NEW.productionStartTime), 'productionStartTime', NULL), IF(NOT(OLD.shippingTime <=> NEW.shippingTime), 'shippingTime', NULL), IF(NOT(OLD.paymentTime <=> NEW.paymentTime), 'paymentTime', NULL), IF(NOT(OLD.endTime <=> NEW.endTime), 'endTime', NULL), IF(NOT(OLD.costPrice <=> NEW.costPrice), 'costPrice', NULL), IF(NOT(OLD.priceWithTax <=> NEW.priceWithTax), 'priceWithTax', NULL)), COALESCE(@app_operator, CURRENT_USER()))`)
+      await db.exec(`DROP TRIGGER IF EXISTS quotes_audit_delete`)
+      await db.exec(`CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+        INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+        VALUES (OLD.id, 'delete', JSON_OBJECT('user_id', OLD.user_id, 'customer_id', OLD.customer_id, 'quote_number', OLD.quote_number, 'customerName', OLD.customerName, 'shippingAddress', OLD.shippingAddress, 'productStyle', OLD.productStyle, 'productSpec', OLD.productSpec, 'fabricMaterial', OLD.fabricMaterial, 'process', OLD.process, 'handleMaterial', OLD.handleMaterial, 'handleSpec', OLD.handleSpec, 'quantity', OLD.quantity, 'boxSpec', OLD.boxSpec, 'remark', OLD.remark, 'sampleFee', OLD.sampleFee, 'sampleDays', OLD.sampleDays, 'massDays', OLD.massDays, 'unitPrice', OLD.unitPrice, 'productionTimeStart', OLD.productionTimeStart, 'productionTimeEnd', OLD.productionTimeEnd, 'sellPriceNoTax', OLD.sellPriceNoTax, 'sellPriceWithTax', OLD.sellPriceWithTax, 'status', OLD.status, 'quoteTime', OLD.quoteTime, 'sampleTime', OLD.sampleTime, 'sampleCompletedTime', OLD.sampleCompletedTime, 'productionStartTime', OLD.productionStartTime, 'shippingTime', OLD.shippingTime, 'paymentTime', OLD.paymentTime, 'endTime', OLD.endTime, 'costPrice', OLD.costPrice, 'priceWithTax', OLD.priceWithTax), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))`)
+    },
+  },
+  {
+    version: 18,
+    name: 'add-receivable-sample-fee',
+    description: 'V0.11：quotes表新增应收打样费字段（receivableSampleFee），待收总额计算公式调整',
+    up: async (db: any) => {
+      // 幂等：先检查列是否存在再 ADD（ALTER TABLE 隐式提交，失败重试会报 Duplicate column）
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (!(await hasColumn('receivableSampleFee'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN receivableSampleFee DECIMAL(12,2) DEFAULT 0 AFTER sellPriceWithTax`)
+      }
+    },
+    down: async (db: any) => {
+      // 幂等：先检查列是否存在再 DROP
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'quotes' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('receivableSampleFee')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN receivableSampleFee`)
+      }
+    },
+  },
+  {
+    version: 19,
+    name: 'add-sheet-templates',
+    description: 'V0.12：新增在线表格模板表（sheet_templates）及管理权限，支持模板在线可视化编辑。内置模板作为兜底，数据库存储覆盖版本',
+    up: async (db: any) => {
+      // 1. 模板表（幂等：CREATE TABLE IF NOT EXISTS）
+      await db.exec(`CREATE TABLE IF NOT EXISTS sheet_templates (
+        id VARCHAR(64) PRIMARY KEY,
+        style_code VARCHAR(8) NOT NULL COMMENT '款式 code（1-6）',
+        name VARCHAR(64) NOT NULL DEFAULT '' COMMENT '款式名称',
+        data LONGTEXT NOT NULL COMMENT '表格二维数据 JSON',
+        formulas LONGTEXT NOT NULL COMMENT '公式映射 JSON',
+        updated_by VARCHAR(64) DEFAULT '' COMMENT '最后修改人',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uk_style_code (style_code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='在线表格模板（数据库覆盖版本，前端内置模板为兜底）'`)
+
+      // 2. 新增权限（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-sheet-templates-view',
+        'sheet-templates:view',
+        '模板管理-查看',
+        'sheet-templates',
+        'view',
+        'menu',
+        '查看在线表格模板管理页面',
+        19,
+      )
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-sheet-templates-edit',
+        'sheet-templates:edit',
+        '模板管理-编辑',
+        'sheet-templates',
+        'edit',
+        'button',
+        '编辑并保存在线表格模板',
+        20,
+      )
+
+      // 3. 分配给 admin 角色（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-sheet-templates-view')
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-sheet-templates-edit')
+    },
+    down: async (db: any) => {
+      // 先删角色关联，再删权限，最后删表（避免外键约束）
+      await db.prepare('DELETE FROM role_permissions WHERE permission_id IN (?, ?)').run('perm-sheet-templates-view', 'perm-sheet-templates-edit')
+      await db.prepare('DELETE FROM permissions WHERE id IN (?, ?)').run('perm-sheet-templates-view', 'perm-sheet-templates-edit')
+      await db.exec(`DROP TABLE IF EXISTS sheet_templates`)
+    },
+  },
+  {
+    version: 20,
+    name: 'add-order-templates',
+    description: 'V0.13：新增订单模板表（order_templates）及管理权限，支持将订单信息保存为可复用模板。与款式模板（sheet_templates）数据结构相互独立',
+    up: async (db: any) => {
+      // 1. 新增订单模板表（幂等）
+      await db.exec(`CREATE TABLE IF NOT EXISTS order_templates (
+        id VARCHAR(64) NOT NULL COMMENT '模板ID',
+        name VARCHAR(128) NOT NULL COMMENT '模板名称',
+        order_data LONGTEXT NOT NULL COMMENT '订单信息快照 JSON（款式/材质/工艺/价格等可复用字段）',
+        created_by VARCHAR(64) DEFAULT '' COMMENT '创建人',
+        updated_by VARCHAR(64) DEFAULT '' COMMENT '最后修改人',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单模板（可复用的订单信息快照）'`)
+
+      // 2. 新增权限（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-order-templates-view',
+        'order-templates:view',
+        '订单模板-查看',
+        'order-templates',
+        'view',
+        'menu',
+        '查看订单模板管理页面',
+        21,
+      )
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-order-templates-edit',
+        'order-templates:edit',
+        '订单模板-编辑',
+        'order-templates',
+        'edit',
+        'button',
+        '保存/编辑/重命名/删除订单模板',
+        22,
+      )
+
+      // 3. 分配给 admin 角色（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-order-templates-view')
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-order-templates-edit')
+    },
+    down: async (db: any) => {
+      // 先删角色关联，再删权限，最后删表（避免外键约束）
+      await db.prepare('DELETE FROM role_permissions WHERE permission_id IN (?, ?)').run('perm-order-templates-view', 'perm-order-templates-edit')
+      await db.prepare('DELETE FROM permissions WHERE id IN (?, ?)').run('perm-order-templates-view', 'perm-order-templates-edit')
+      await db.exec(`DROP TABLE IF EXISTS order_templates`)
+    },
+  },
+  {
+    version: 21,
+    name: 'add-user-tags-notes',
+    description: 'V0.13.1：users表新增 tags（用户标签）和 notes（用户备注）字段',
+    up: async (db: any) => {
+      // 幂等：MySQL DDL（ALTER TABLE）隐式提交，先通过 information_schema 检查列是否存在再 ADD
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (!(await hasColumn('tags'))) {
+        await db.exec(`ALTER TABLE users ADD COLUMN tags VARCHAR(500) AFTER phone`)
+      }
+      if (!(await hasColumn('notes'))) {
+        await db.exec(`ALTER TABLE users ADD COLUMN notes TEXT AFTER tags`)
+      }
+    },
+    down: async (db: any) => {
+      // 幂等：DROP COLUMN 不存在会报错，先检查再删
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('notes')) {
+        await db.exec(`ALTER TABLE users DROP COLUMN notes`)
+      }
+      if (await hasColumn('tags')) {
+        await db.exec(`ALTER TABLE users DROP COLUMN tags`)
+      }
+    },
+  },
+  {
+    version: 22,
+    name: 'add-customer-tags-remark',
+    description: 'V0.14：customers表新增 tags（客户标签，JSON数组字符串）和 remark（备注）字段',
+    up: async (db: any) => {
+      // 幂等：MySQL DDL（ALTER TABLE）隐式提交，先通过 information_schema 检查列是否存在再 ADD
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'customers' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      // tags：JSON 数组字符串，如 '["重点客户","老客户"]'；空字符串表示无标签
+      if (!(await hasColumn('tags'))) {
+        await db.exec(`ALTER TABLE customers ADD COLUMN tags TEXT AFTER industry`)
+      }
+      // remark：自由文本备注
+      if (!(await hasColumn('remark'))) {
+        await db.exec(`ALTER TABLE customers ADD COLUMN remark TEXT AFTER tags`)
+      }
+    },
+    down: async (db: any) => {
+      // 幂等：DROP COLUMN 不存在会报错，先检查再删
+      const hasColumn = async (col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = 'customers' AND column_name = ?`
+        ).get(col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('remark')) {
+        await db.exec(`ALTER TABLE customers DROP COLUMN remark`)
+      }
+      if (await hasColumn('tags')) {
+        await db.exec(`ALTER TABLE customers DROP COLUMN tags`)
+      }
+    },
+  },
+  {
+    version: 23,
+    name: 'sheet-templates-one-to-many',
+    description: 'V0.15：款式模板升级为一对多关系（同一款式可建多个差异化模板），quotes表新增template_id记录订单使用的模板',
+    up: async (db: any) => {
+      // 幂等：MySQL DDL（ALTER TABLE）隐式提交，先通过 information_schema 检查再执行
+      const hasColumn = async (table: string, col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+        ).get(table, col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      const hasIndex = async (table: string, indexName: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.statistics
+           WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`
+        ).get(table, indexName)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+
+      // 1. 去掉 style_code 唯一键（原一对一约束，放开后同款式可有多个模板）
+      if (await hasIndex('sheet_templates', 'uk_style_code')) {
+        await db.exec(`ALTER TABLE sheet_templates DROP INDEX uk_style_code`)
+      }
+      // 2. 新增 sort_order（同款式内的排序）
+      if (!(await hasColumn('sheet_templates', 'sort_order'))) {
+        await db.exec(`ALTER TABLE sheet_templates ADD COLUMN sort_order INT NOT NULL DEFAULT 0 COMMENT '同款式内排序（小在前）' AFTER formulas`)
+      }
+      // 3. 同款式模板名称唯一（业务唯一性约束）
+      if (!(await hasIndex('sheet_templates', 'uk_style_name'))) {
+        await db.exec(`ALTER TABLE sheet_templates ADD UNIQUE KEY uk_style_name (style_code, name)`)
+      }
+      // 4. quotes 记录订单使用的模板（'' = 内置默认模板，兼容历史订单）
+      if (!(await hasColumn('quotes', 'template_id'))) {
+        await db.exec(`ALTER TABLE quotes ADD COLUMN template_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT '使用的款式模板id（空=内置默认模板）' AFTER productStyle`)
+      }
+    },
+    down: async (db: any) => {
+      const hasColumn = async (table: string, col: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+        ).get(table, col)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      const hasIndex = async (table: string, indexName: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.statistics
+           WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`
+        ).get(table, indexName)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+
+      // 1. quotes 移除 template_id
+      if (await hasColumn('quotes', 'template_id')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN template_id`)
+      }
+      // 2. 移除同款式名称唯一键 + sort_order
+      if (await hasIndex('sheet_templates', 'uk_style_name')) {
+        await db.exec(`ALTER TABLE sheet_templates DROP INDEX uk_style_name`)
+      }
+      if (await hasColumn('sheet_templates', 'sort_order')) {
+        await db.exec(`ALTER TABLE sheet_templates DROP COLUMN sort_order`)
+      }
+      // 3. 恢复一对一约束：同款式仅保留最新一条（其余删除），再建 style_code 唯一键
+      if (!(await hasIndex('sheet_templates', 'uk_style_code'))) {
+        await db.exec(`DELETE t1 FROM sheet_templates t1
+          INNER JOIN sheet_templates t2
+          ON t1.style_code = t2.style_code
+          AND (t1.updated_at < t2.updated_at OR (t1.updated_at = t2.updated_at AND t1.id < t2.id))`)
+        await db.exec(`ALTER TABLE sheet_templates ADD UNIQUE KEY uk_style_code (style_code)`)
       }
     },
   },

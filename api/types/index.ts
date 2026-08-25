@@ -15,6 +15,8 @@ export interface Customer {
   email: string
   address: string
   industry: string
+  tags: string
+  remark: string
   created_at: string
   updated_at: string
 }
@@ -81,6 +83,8 @@ export interface Quote {
   customerName: string
   shippingAddress: string
   productStyle: string
+  /** 使用的款式模板 id（v23 一对多；空 = 内置默认模板） */
+  templateId?: string
   productSpec: string
   fabricMaterial: string
   process: string
@@ -99,6 +103,17 @@ export interface Quote {
   priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
+  // 收款相关（V17 新增）
+  /** 应收打样费（V18 新增） */
+  receivableSampleFee: number
+  /** 实际收取打样费 */
+  actualSampleFee: number
+  /** 打样费是否抵扣大货（数据库存 TINYINT 0/1） */
+  sampleFeeDeduct: boolean
+  /** 收取定金 */
+  deposit: number
+  /** 待收总金额 = 销售总额(不含税) - (抵扣时的打样费) - 定金 */
+  pendingAmount: number
   status: 1 | 2 | 3 | 4 | 5 | 6 | 7
   // 状态流转时间节点
   quoteTime: string

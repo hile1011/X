@@ -108,6 +108,39 @@ function toCamelRow(row: Record<string, any>): any {
   return result
 }
 
+/** 在线表格模板记录（v19：数据库覆盖版本，前端内置模板为兜底） */
+export interface SheetTemplateRecord {
+  id: string
+  styleCode: string
+  /** 模板名称（同款式内唯一，一对多） */
+  name: string
+  data: (string | number | null)[][]
+  formulas: Record<string, string>
+  sortOrder: number
+  updatedBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** 解析 sheet_templates 行：LONGTEXT JSON 字段反序列化 */
+function parseSheetTemplateRow(row: Record<string, any>): SheetTemplateRecord {
+  const parse = (val: any, defaultVal: string) => {
+    if (typeof val === 'string') return JSON.parse(val || defaultVal)
+    return val ?? JSON.parse(defaultVal)
+  }
+  return {
+    id: row.id,
+    styleCode: row.style_code,
+    name: row.name || '',
+    data: parse(row.data, '[]'),
+    formulas: parse(row.formulas, '{}'),
+    sortOrder: Number(row.sort_order ?? 0),
+    updatedBy: row.updated_by || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 /** 解析大字段的 JSON */
 function parseLargeFields(row: any) {
   const c = toCamelRow(row)
@@ -117,8 +150,30 @@ function parseLargeFields(row: any) {
   ;(c as any).removedFormulaAddresses = parse((c as any).removedFormulaAddresses, '[]')
   ;(c as any).modifiedFormulas = parse((c as any).modifiedFormulas, '{}')
   ;(c as any).allFormulas = parse((c as any).allFormulas, '{}')
-  ;(c as any).productionStepStatus = parse((c as any).productionStepStatus, '{}')
+  ;(c as any).productionStepStatus = parse(c.productionStepStatus, '{}')
+  // 模板关联（v23）：数据库列为 snake_case，统一映射为业务侧 templateId（空 = 内置默认模板）
+  ;(c as any).templateId = (c as any).template_id ?? ''
+  // 收款字段（v17/v18）：mysql2 将 DECIMAL 返回为字符串，TINYINT 返回 0/1，统一转为业务类型
+  if (typeof (c as any).receivableSampleFee === 'string') (c as any).receivableSampleFee = Number((c as any).receivableSampleFee)
+  if (typeof (c as any).actualSampleFee === 'string') (c as any).actualSampleFee = Number((c as any).actualSampleFee)
+  if (typeof (c as any).deposit === 'string') (c as any).deposit = Number((c as any).deposit)
+  if (typeof (c as any).pendingAmount === 'string') (c as any).pendingAmount = Number((c as any).pendingAmount)
+  ;(c as any).sampleFeeDeduct = !!(c as any).sampleFeeDeduct
   return c
+}
+
+/**
+ * 计算待收总金额（v18 公式）：
+ * - 抵扣大货=是：销售总额(不含税) - 已收打样费 - 定金
+ * - 抵扣大货=否：销售总额(不含税) + 应收打样费 - 已收打样费 - 定金
+ */
+function calcPendingAmount(q: { quantity?: string | number | null; sellPriceNoTax?: number | string | null; sampleFeeDeduct?: number | boolean | null; receivableSampleFee?: number | string | null; actualSampleFee?: number | string | null; deposit?: number | string | null }): number {
+  const qty = parseFloat(String(q.quantity ?? '')) || 0
+  const total = Math.round((Number(q.sellPriceNoTax) || 0) * qty * 100) / 100
+  const actualFee = Number(q.actualSampleFee) || 0
+  // 抵扣=是：只减已收打样费；抵扣=否：加应收打样费再减已收打样费
+  const feePart = q.sampleFeeDeduct ? -actualFee : Math.round(((Number(q.receivableSampleFee) || 0) - actualFee) * 100) / 100
+  return Math.round((total + feePart - (Number(q.deposit) || 0)) * 100) / 100
 }
 
 export const dbApi = {
@@ -144,10 +199,11 @@ export const dbApi = {
     },
     create: async (data: Partial<Customer>) => {
       const id = `cust-${Date.now()}`
-      await dbConn.prepare(`INSERT INTO customers (id, name, contact_person, phone, email, address, industry)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
+      await dbConn.prepare(`INSERT INTO customers (id, name, contact_person, phone, email, address, industry, tags, remark)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.name || '', data.contact_person || '', data.phone || '',
-        data.email || '', data.address || '', data.industry || ''
+        data.email || '', data.address || '', data.industry || '',
+        data.tags ?? '', data.remark ?? ''
       )
       const row = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
       return row as Customer
@@ -156,8 +212,8 @@ export const dbApi = {
       const existing = await dbConn.prepare('SELECT * FROM customers WHERE id = ?').get(id)
       if (!existing) return null
       const row = { ...existing, ...data, updated_at: timeNow() }
-      await dbConn.prepare(`UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, industry=?, updated_at=?
-        WHERE id=?`).run(row.name, row.contact_person, row.phone, row.email, row.address, row.industry, row.updated_at, id)
+      await dbConn.prepare(`UPDATE customers SET name=?, contact_person=?, phone=?, email=?, address=?, industry=?, tags=?, remark=?, updated_at=?
+        WHERE id=?`).run(row.name, row.contact_person, row.phone, row.email, row.address, row.industry, row.tags ?? '', row.remark ?? '', row.updated_at, id)
       return row as Customer
     },
     delete: async (id: string) => {
@@ -266,12 +322,14 @@ export const dbApi = {
     /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取） */
     getAll: async () => {
       const rows = await dbConn.prepare(`SELECT id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
-        productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
+        productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax,
+        receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
+        status, quoteTime, sampleTime,
         sampleCompletedTime, productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
         FROM quotes ORDER BY updated_at DESC`).all()
-      return rows.map((r) => toCamelRow(r)) as Quote[]
+      return rows.map((r) => parseLargeFields(r)) as Quote[]
     },
     getById: async (id: string) => {
       const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
@@ -289,19 +347,21 @@ export const dbApi = {
       const id = `quote-${Date.now()}`
 
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
-        productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
+        productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
+        status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.created_by || '', data.updated_by || '', data.customer_id || '', quoteNumber, customerName,
-        data.shippingAddress || '', productStyle, data.productSpec || '',
+        data.shippingAddress || '', productStyle, (data as any).templateId || '', data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
         data.handleMaterial || '帆布手提', data.handleSpec || '',
         data.quantity || '', data.boxSpec || '', data.remark || '',
         data.sampleFee || '', data.sampleDays || '', data.massDays || '',
         data.unitPrice || '', data.productionTimeStart || today, data.productionTimeEnd || '',
         data.costPrice || 0, data.priceWithTax || 0, data.sellPriceNoTax || 0, data.sellPriceWithTax || 0,
+        data.receivableSampleFee || 0, data.actualSampleFee || 0, data.sampleFeeDeduct ? 1 : 0, data.deposit || 0, data.pendingAmount || 0,
         data.status || 1, today, '', '', '', '', '', '',
         JSON.stringify(data.images || []),
         JSON.stringify(data.tableData || []),
@@ -316,6 +376,7 @@ export const dbApi = {
         customer_id: data.customer_id || '', user_id: data.user_id || '',
         created_by: data.created_by || '', updated_by: data.updated_by || '',
         shippingAddress: data.shippingAddress || '', productStyle,
+        templateId: (data as any).templateId || '',
         productSpec: data.productSpec || '',
         fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
         process: data.process || '单面数码uv印刷+口头2.5cm',
@@ -331,6 +392,11 @@ export const dbApi = {
         priceWithTax: data.priceWithTax || 0,
         sellPriceNoTax: data.sellPriceNoTax || 0,
         sellPriceWithTax: data.sellPriceWithTax || 0,
+        receivableSampleFee: data.receivableSampleFee || 0,
+        actualSampleFee: data.actualSampleFee || 0,
+        sampleFeeDeduct: !!data.sampleFeeDeduct,
+        deposit: data.deposit || 0,
+        pendingAmount: data.pendingAmount || 0,
         status: data.status || 1, quoteTime: today,
         sampleTime: '', sampleCompletedTime: '', productionStartTime: '',
         shippingTime: '', paymentTime: '', endTime: '',
@@ -353,6 +419,8 @@ export const dbApi = {
       existingParsed.modifiedFormulas = typeof (existingParsed as any).modifiedFormulas === 'string' ? JSON.parse((existingParsed as any).modifiedFormulas || '{}') : ((existingParsed as any).modifiedFormulas || {})
       existingParsed.allFormulas = typeof (existingParsed as any).allFormulas === 'string' ? JSON.parse((existingParsed as any).allFormulas || '{}') : ((existingParsed as any).allFormulas || {})
       existingParsed.productionStepStatus = typeof (existingParsed as any).productionStepStatus === 'string' ? JSON.parse((existingParsed as any).productionStepStatus || '{}') : ((existingParsed as any).productionStepStatus || {})
+      // 模板关联（v23）：原始行为 snake_case，补映射避免局部更新（如仅改状态）时 template_id 被清空
+      ;(existingParsed as any).templateId = (existing as any).template_id ?? (existingParsed as any).templateId ?? ''
       let updatedQuote: Quote = { ...existingParsed, ...data, updated_at: timeNow() }
 
       if (data.customerName !== undefined || data.productStyle !== undefined) {
@@ -374,18 +442,20 @@ export const dbApi = {
       const productionStepStatusJson = JSON.stringify(updatedQuote.productionStepStatus || {})
 
       await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, updated_by=?, shippingAddress=?,
-        productStyle=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
+        productStyle=?, template_id=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
+        receivableSampleFee=?, actualSampleFee=?, sampleFeeDeduct=?, deposit=?, pendingAmount=?,
         status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
         images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id, updatedQuote.updated_by,
-        updatedQuote.shippingAddress, updatedQuote.productStyle, updatedQuote.productSpec,
+        updatedQuote.shippingAddress, updatedQuote.productStyle, (updatedQuote as any).templateId || '', updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
         updatedQuote.quantity, updatedQuote.boxSpec, updatedQuote.remark,
         updatedQuote.sampleFee, updatedQuote.sampleDays, updatedQuote.massDays, updatedQuote.unitPrice,
         updatedQuote.productionTimeStart, updatedQuote.productionTimeEnd,
         updatedQuote.costPrice, updatedQuote.priceWithTax, updatedQuote.sellPriceNoTax, updatedQuote.sellPriceWithTax,
+        updatedQuote.receivableSampleFee || 0, updatedQuote.actualSampleFee || 0, updatedQuote.sampleFeeDeduct ? 1 : 0, updatedQuote.deposit || 0, updatedQuote.pendingAmount || 0,
         updatedQuote.status, updatedQuote.sampleTime, updatedQuote.sampleCompletedTime, updatedQuote.productionStartTime,
         updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
         JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson, updatedQuote.updated_at, id
@@ -410,7 +480,14 @@ export const dbApi = {
       }
 
       const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, ...updates, updated_at: timeNow() }
-      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, updated_at=? WHERE id=?`).run(
+      // 待收总额状态联动：仅做货中(3)/已发货未收款(4)保留计算；从非计算态进入时重算，离开时清零
+      const inCalcStates = (s: number) => s === 3 || s === 4
+      if (inCalcStates(newStatus) && !inCalcStates(existing.status)) {
+        updated.pendingAmount = calcPendingAmount(existing)
+      } else if (!inCalcStates(newStatus)) {
+        updated.pendingAmount = 0
+      }
+      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, pendingAmount=?, updated_at=? WHERE id=?`).run(
         newStatus,
         updates.sampleTime || existing.sampleTime,
         updates.sampleCompletedTime || (existing as any).sampleCompletedTime || '',
@@ -418,6 +495,7 @@ export const dbApi = {
         updates.shippingTime || existing.shippingTime,
         updates.paymentTime || existing.paymentTime,
         updates.endTime || existing.endTime,
+        updated.pendingAmount ?? (existing as any).pendingAmount ?? 0,
         updated.updated_at, id
       )
       return updated
@@ -436,7 +514,18 @@ export const dbApi = {
         case 1: return toCamelRow(existing) as Quote
       }
       const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, updated_at: timeNow() }
-      await dbConn.prepare('UPDATE quotes SET status=?, updated_at=? WHERE id=?').run(newStatus, updated.updated_at, id)
+      // 待收总额状态联动：退回离开做货中(3)/已发货未收款(4)时清零；从非计算态退回进入时重算（如已收款退回未收款）
+      const inCalcStates = (s: number) => s === 3 || s === 4
+      if (inCalcStates(newStatus) && !inCalcStates(existing.status)) {
+        updated.pendingAmount = calcPendingAmount(existing)
+      } else if (!inCalcStates(newStatus)) {
+        updated.pendingAmount = 0
+      }
+      await dbConn.prepare(`UPDATE quotes SET status=?, pendingAmount=?, updated_at=? WHERE id=?`).run(
+        newStatus,
+        updated.pendingAmount ?? (existing as any).pendingAmount ?? 0,
+        updated.updated_at, id
+      )
       return updated
     },
     endQuote: async (id: string) => {
@@ -486,19 +575,22 @@ export const dbApi = {
       const newId = `quote-${Date.now()}`
 
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
-        productStyle, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
+        productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
+        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
+        status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         newId, existing.user_id || '', operator, operator, existing.customer_id || '', quoteNumber, customerName,
-        existing.shippingAddress || '', productStyle, existing.productSpec || '',
+        existing.shippingAddress || '', productStyle, (existing as any).template_id || '', existing.productSpec || '',
         existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
         existing.handleMaterial || '帆布手提', existing.handleSpec || '',
         existing.quantity || '', existing.boxSpec || '', existing.remark || '',
         existing.sampleFee || '', existing.sampleDays || '', existing.massDays || '',
         existing.unitPrice || '', today, '',
         existing.costPrice || 0, existing.priceWithTax || 0, existing.sellPriceNoTax || 0, existing.sellPriceWithTax || 0,
+        // 复制订单：收款相关字段不复制（新订单重新收款），重置为默认值
+        0, 0, 0, 0, 0,
         1, today, '', '', '', '', '', '',
         existing.images || '[]',
         existing.tableData || '[]',
@@ -513,6 +605,7 @@ export const dbApi = {
         customer_id: existing.customer_id || '', user_id: existing.user_id || '',
         created_by: operator, updated_by: operator,
         shippingAddress: existing.shippingAddress || '', productStyle,
+        templateId: (existing as any).template_id || '',
         productSpec: existing.productSpec || '',
         fabricMaterial: existing.fabricMaterial || '10安涤棉新本色',
         process: existing.process || '单面数码uv印刷+口头2.5cm',
@@ -528,6 +621,12 @@ export const dbApi = {
         priceWithTax: existing.priceWithTax || 0,
         sellPriceNoTax: existing.sellPriceNoTax || 0,
         sellPriceWithTax: existing.sellPriceWithTax || 0,
+        // 收款相关字段重置
+        receivableSampleFee: 0,
+        actualSampleFee: 0,
+        sampleFeeDeduct: false,
+        deposit: 0,
+        pendingAmount: 0,
         status: 1, quoteTime: today,
         sampleTime: '', sampleCompletedTime: '', productionStartTime: '',
         shippingTime: '', paymentTime: '', endTime: '',
@@ -568,6 +667,62 @@ export const dbApi = {
     },
     delete: async (id: string) => {
       const info = await dbConn.prepare('DELETE FROM process_costs WHERE id = ?').run(id)
+      return info.changes > 0
+    },
+  },
+
+  sheetTemplates: {
+    /** 获取全部模板（按款式 code + 排序字段） */
+    getAll: async (): Promise<SheetTemplateRecord[]> => {
+      const rows = await dbConn.prepare('SELECT * FROM sheet_templates ORDER BY style_code ASC, sort_order ASC, updated_at DESC').all()
+      return rows.map(parseSheetTemplateRow)
+    },
+    /** 获取指定款式的全部模板（一对多） */
+    getByStyleCode: async (styleCode: string): Promise<SheetTemplateRecord[]> => {
+      const rows = await dbConn.prepare('SELECT * FROM sheet_templates WHERE style_code = ? ORDER BY sort_order ASC, updated_at DESC').all(styleCode)
+      return rows.map(parseSheetTemplateRow)
+    },
+    /** 按 id 获取单个模板 */
+    getById: async (id: string): Promise<SheetTemplateRecord | null> => {
+      const row = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
+      return row ? parseSheetTemplateRow(row as Record<string, any>) : null
+    },
+    /**
+     * 新增模板（一对多：同款式可有多个，名称在款式内唯一）
+     * @returns 新建的模板记录；重名时抛出错误
+     */
+    create: async (styleCode: string, name: string, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string): Promise<SheetTemplateRecord> => {
+      const trimmed = (name || '').trim()
+      if (!trimmed) throw new Error('模板名称不能为空')
+      const dup = await dbConn.prepare('SELECT id FROM sheet_templates WHERE style_code = ? AND name = ?').get(styleCode, trimmed)
+      if (dup) throw new Error(`该款式下已存在同名模板「${trimmed}」`)
+      const id = `sheet-tpl-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const maxSort = await dbConn.prepare('SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM sheet_templates WHERE style_code = ?').get(styleCode) as any
+      await dbConn.prepare('INSERT INTO sheet_templates (id, style_code, name, data, formulas, sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(id, styleCode, trimmed, JSON.stringify(data), JSON.stringify(formulas), Number(maxSort?.max_sort ?? 0) + 1, updatedBy)
+      const row = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
+      return parseSheetTemplateRow(row as Record<string, any>)
+    },
+    /**
+     * 更新模板（内容必传，名称可选改名）
+     * @returns 更新后的模板记录；改名重名时抛出错误
+     */
+    update: async (id: string, name: string | undefined, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string): Promise<SheetTemplateRecord | null> => {
+      const existing = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
+      if (!existing) return null
+      const nextName = name !== undefined ? name.trim() : (existing as any).name
+      if (!nextName) throw new Error('模板名称不能为空')
+      const dup = await dbConn.prepare('SELECT id FROM sheet_templates WHERE style_code = ? AND name = ? AND id != ?')
+        .get((existing as any).style_code, nextName, id)
+      if (dup) throw new Error(`该款式下已存在同名模板「${nextName}」`)
+      await dbConn.prepare('UPDATE sheet_templates SET name=?, data=?, formulas=?, updated_by=? WHERE id=?')
+        .run(nextName, JSON.stringify(data), JSON.stringify(formulas), updatedBy, id)
+      const row = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
+      return parseSheetTemplateRow(row as Record<string, any>)
+    },
+    /** 删除模板（订单保存的 tableData 不受影响，历史订单仍可正常编辑） */
+    remove: async (id: string): Promise<boolean> => {
+      const info = await dbConn.prepare('DELETE FROM sheet_templates WHERE id = ?').run(id)
       return info.changes > 0
     },
   },

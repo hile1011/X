@@ -55,21 +55,16 @@ export default function CustomerSelect({ value, onChange, onAddressChange, place
 
   const handleSelect = useCallback((customer: Customer) => {
     onChange(customer.name)
-    if (onAddressChange) {
-      // 收货地址显示：客户名称 电话 地址
-      const parts = [customer.name, customer.phone, customer.address].filter(Boolean)
-      onAddressChange(parts.join(' '))
-    }
     // 关闭下拉框并清空搜索词（不调用 handleClose，避免搜索词覆盖已选客户名称）
     setIsOpen(false)
     setSearchTerm('')
-  }, [onChange, onAddressChange])
+  }, [onChange])
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
     onChange(newValue)
     setSearchTerm(newValue)
-    
+
     // 如果输入的名称不在客户列表中，清空地址
     const exists = customers.some((c) => c.name === newValue)
     if (!exists && onAddressChange) {

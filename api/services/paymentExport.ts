@@ -6,7 +6,9 @@
  * 2. 多客户 → 每个客户一个 Excel，打包成 ZIP（archiver）
  *
  * 固定列结构：客户名称、数量、产品图片缩略图(80×80)、大货日期(从-到)、工艺、
- *             单个卖价(不含税)、单个卖价(含税)、销售总额(不含税)、销售总额(含税)
+ *             单个卖价(不含税)、单个卖价(含税)、销售总额(不含税)、销售总额(含税)、
+ *             应收打样费、实收打样费、抵扣大货(是/否)、待收总额
+ * 汇总行：数量、销售总额(不含税)、销售总额(含税)、待收总额
  *
  * 设计要点：
  * - 金额以 round2（Math.round(n×100)/100）为基础，2 位小数，确保汇总 = 明细之和
@@ -39,6 +41,10 @@ export const PAYMENT_COLUMNS: PaymentColumn[] = [
   { header: '单个卖价(含税)', key: 'sellPriceWithTax', width: 16, type: 'currency' },
   { header: '销售总额(不含税)', key: 'sellTotalNoTax', width: 18, type: 'currency' },
   { header: '销售总额(含税)', key: 'sellTotalWithTax', width: 18, type: 'currency' },
+  { header: '应收打样费', key: 'receivableSampleFee', width: 14, type: 'currency' },
+  { header: '实收打样费', key: 'actualSampleFee', width: 14, type: 'currency' },
+  { header: '抵扣大货', key: 'sampleFeeDeduct', width: 10, type: 'text' },
+  { header: '待收总额', key: 'pendingAmount', width: 14, type: 'currency' },
 ]
 
 /** 单次导出数据量上限（超过需缩小筛选范围或分批） */
@@ -145,6 +151,8 @@ export interface PaymentSummary {
   totalSellNoTax: number
   /** 销售总额(含税) = Σ round2(sellPriceWithTax) × 数量 */
   totalSellWithTax: number
+  /** 待收总额 = Σ pendingAmount */
+  totalPendingAmount: number
 }
 
 /**
@@ -155,6 +163,7 @@ export function calculatePaymentSummary(orders: Quote[]): PaymentSummary {
   let totalQuantity = 0
   let totalSellNoTax = 0
   let totalSellWithTax = 0
+  let totalPendingAmount = 0
   for (const o of orders) {
     const qty = parseQuantity(o.quantity)
     const sellNoTax = round2(typeof o.sellPriceNoTax === 'number' ? o.sellPriceNoTax : 0)
@@ -162,12 +171,14 @@ export function calculatePaymentSummary(orders: Quote[]): PaymentSummary {
     totalQuantity += qty
     totalSellNoTax += sellNoTax * qty
     totalSellWithTax += sellWithTax * qty
+    totalPendingAmount += typeof (o as any).pendingAmount === 'number' ? (o as any).pendingAmount : 0
   }
   return {
     orderCount: orders.length,
     totalQuantity,
     totalSellNoTax: round2(totalSellNoTax),
     totalSellWithTax: round2(totalSellWithTax),
+    totalPendingAmount: round2(totalPendingAmount),
   }
 }
 
@@ -306,6 +317,25 @@ export async function generatePaymentReceiptExcel(
           cell.numFmt = CURRENCY_FMT
           cell.alignment = { horizontal: 'right', vertical: 'middle' }
           break
+        case 'receivableSampleFee':
+          cell.value = typeof (order as any).receivableSampleFee === 'number' ? (order as any).receivableSampleFee : 0
+          cell.numFmt = CURRENCY_FMT
+          cell.alignment = { horizontal: 'right', vertical: 'middle' }
+          break
+        case 'actualSampleFee':
+          cell.value = typeof (order as any).actualSampleFee === 'number' ? (order as any).actualSampleFee : 0
+          cell.numFmt = CURRENCY_FMT
+          cell.alignment = { horizontal: 'right', vertical: 'middle' }
+          break
+        case 'sampleFeeDeduct':
+          cell.value = (order as any).sampleFeeDeduct ? '是' : '否'
+          cell.alignment = { horizontal: 'center', vertical: 'middle' }
+          break
+        case 'pendingAmount':
+          cell.value = typeof (order as any).pendingAmount === 'number' ? (order as any).pendingAmount : 0
+          cell.numFmt = CURRENCY_FMT
+          cell.alignment = { horizontal: 'right', vertical: 'middle' }
+          break
       }
       cell.border = thinBorder()
     })
@@ -358,6 +388,11 @@ export async function generatePaymentReceiptExcel(
         break
       case 'sellTotalWithTax':
         cell.value = summary.totalSellWithTax
+        cell.numFmt = CURRENCY_FMT
+        cell.alignment = { horizontal: 'right', vertical: 'middle' }
+        break
+      case 'pendingAmount':
+        cell.value = summary.totalPendingAmount
         cell.numFmt = CURRENCY_FMT
         cell.alignment = { horizontal: 'right', vertical: 'middle' }
         break

@@ -3,7 +3,7 @@
  *
  * 测试目标：
  *   - 5 张 RBAC 表已创建（users, roles, permissions, role_permissions, user_roles）
- *   - 39 项权限目录已预置
+ *   - 43 项权限目录已预置
  *   - admin 角色拥有全部权限
  *   - 默认管理员账号存在且关联 admin 角色
  *   - 默认管理员密码可校验
@@ -104,9 +104,9 @@ describe('迁移 v12 - add-auth-rbac 表结构', () => {
 })
 
 describe('迁移 v12 - 权限目录种子数据', () => {
-  it('预置 39 项权限', async () => {
+  it('预置 43 项权限', async () => {
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(39)
+    expect(row.cnt).toBe(43)
   })
 
   it('权限码格式为 module:action', async () => {
@@ -143,11 +143,11 @@ describe('迁移 v12 - admin 角色种子数据', () => {
     expect(role.is_system).toBe(1)
   })
 
-  it('admin 角色拥有全部 39 项权限', async () => {
+  it('admin 角色拥有全部 43 项权限', async () => {
     const row = await db.db.prepare(
       'SELECT COUNT(*) as cnt FROM role_permissions WHERE role_id = ?'
     ).get('role-admin') as { cnt: number }
-    expect(row.cnt).toBe(39)
+    expect(row.cnt).toBe(43)
   })
 
   it('roles code 唯一索引：插入重复 code 报错', async () => {
@@ -189,7 +189,7 @@ describe('迁移 v12 - 默认管理员账号', () => {
        JOIN permissions p ON p.id = rp.permission_id
        WHERE ur.user_id = ?`
     ).get('user-admin-default') as { cnt: number }
-    expect(rows.cnt).toBe(39)
+    expect(rows.cnt).toBe(43)
   })
 })
 
@@ -197,7 +197,7 @@ describe('迁移 v12 - 幂等性', () => {
   it('重新执行 migrate 不重复插入权限', async () => {
     await db.runner.migrate()
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(39)
+    expect(row.cnt).toBe(43)
   })
 
   it('重新执行 migrate 不重复插入 admin 角色', async () => {
@@ -239,7 +239,7 @@ describe('迁移 v12 回滚（down）', () => {
 
     // 验证数据恢复
     const permCount = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(permCount.cnt).toBe(39)
+    expect(permCount.cnt).toBe(43)
 
     const admin = await db.db.prepare('SELECT * FROM users WHERE email = ?').get('517290808@qq.com') as any
     expect(admin).toBeTruthy()

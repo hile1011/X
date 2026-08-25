@@ -19,10 +19,111 @@
  */
 
 import type { SheetTemplate } from './types'
+import { api } from '../api'
+
+/** 数据库模板条目（一对多：id 为唯一键，同款式可有多个） */
+export interface SheetTemplateEntry {
+  id: string
+  styleCode: string
+  name: string
+  template: SheetTemplate
+}
 
 export class SheetTemplateManager {
   /** 默认款式 code（无底无侧普通袋） */
   static readonly DEFAULT_STYLE = '1'
+
+  /**
+   * 数据库模板缓存（v23：sheet_templates 表，款式一对多）
+   * key = 模板 id，value = { styleCode, name, data, formulas }
+   * 内置模板始终可用作兜底：订单 templateId 为空或模板被删除时使用内置默认
+   */
+  private static entries: Record<string, SheetTemplateEntry> = {}
+  /** 缓存是否已从后端加载（进程内只加载一次，管理页保存后同步更新） */
+  private static entriesLoaded = false
+
+  /**
+   * 从后端加载数据库模板到内存缓存（幂等，进程内只请求一次）
+   * - 订单编辑/新建页初始化表格前调用，确保使用最新模板列表
+   * - 网络失败时静默回退内置模板（下次调用可重试）
+   * @param force 强制重新加载（管理页保存后刷新）
+   */
+  static async loadOverrides(force = false): Promise<void> {
+    if (SheetTemplateManager.entriesLoaded && !force) return
+    try {
+      const records = await api.sheetTemplates.getAll() as Array<{
+        id: string
+        styleCode: string
+        name: string
+        data: (string | number | null)[][]
+        formulas: Record<string, string>
+      }>
+      const next: Record<string, SheetTemplateEntry> = {}
+      for (const r of records) {
+        if (r?.id && r.styleCode && Array.isArray(r.data) && r.data.length > 0) {
+          next[r.id] = {
+            id: r.id,
+            styleCode: r.styleCode,
+            name: r.name || '',
+            template: { data: r.data, formulas: r.formulas || {} },
+          }
+        }
+      }
+      SheetTemplateManager.entries = next
+      SheetTemplateManager.entriesLoaded = true
+    } catch {
+      // 加载失败（网络/权限等）：保持内置模板，允许下次重试
+    }
+  }
+
+  /**
+   * 写入/更新单条模板缓存（模板管理页保存成功后调用，无需重新拉取全量）
+   */
+  static setOverride(id: string, styleCode: string, name: string, template: SheetTemplate): void {
+    SheetTemplateManager.entries[id] = {
+      id, styleCode, name,
+      template: SheetTemplateManager.deepClone(template),
+    }
+    SheetTemplateManager.entriesLoaded = true
+  }
+
+  /**
+   * 删除单条模板缓存（模板管理页删除模板后调用）
+   */
+  static removeOverride(id: string): void {
+    delete SheetTemplateManager.entries[id]
+  }
+
+  /**
+   * 获取指定款式的全部数据库模板（一对多，按后端排序）
+   */
+  static listByStyle(styleCode: string): SheetTemplateEntry[] {
+    return Object.values(SheetTemplateManager.entries)
+      .filter((e) => e.styleCode === styleCode)
+      .sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  /**
+   * 按模板 id 获取数据库模板（深拷贝）；不存在时返回 null
+   */
+  static getTemplateById(id: string): SheetTemplate | null {
+    const entry = SheetTemplateManager.entries[id]
+    return entry ? SheetTemplateManager.deepClone(entry.template) : null
+  }
+
+  /**
+   * 按模板 id 获取模板名称；不存在时返回 null
+   */
+  static getTemplateName(id: string): string | null {
+    return SheetTemplateManager.entries[id]?.name ?? null
+  }
+
+  /**
+   * 判断指定款式是否存在数据库覆盖版本
+   */
+  static isOverridden(styleCode: string): boolean {
+    return SheetTemplateManager.listByStyle(styleCode).length > 0
+  }
 
   /**
    * 所有模板映射（private，防止外部直接访问）
@@ -411,23 +512,39 @@ export class SheetTemplateManager {
   }
 
   /**
-   * 根据款式 code 获取模板（返回深拷贝，防止外部修改内部数据）
+   * 根据款式 code + 模板 id 获取模板（返回深拷贝，防止外部修改内部数据）
    *
-   * 业务规则：无绑定模板的产品（无 code 或 code 非 1-6）默认使用「无底无侧」模板
+   * 查找优先级：templateId 对应的数据库模板 → 内置款式模板 → 默认内置模板
+   * - templateId 为空（历史订单/未选择）：使用内置模板兜底
+   * - templateId 对应模板已被删除：回退内置模板（订单保存的 tableData 不受影响）
    *
    * @param style 款式 code（'1'-'6'）或其他值
+   * @param templateId 数据库模板 id（'' = 内置默认）
    * @returns 模板的深拷贝
    */
-  static getTemplate(style: string): SheetTemplate {
-    const template = SheetTemplateManager.TEMPLATES[style] ?? SheetTemplateManager.TEMPLATES[SheetTemplateManager.DEFAULT_STYLE]
+  static getTemplate(style: string, templateId?: string): SheetTemplate {
+    if (templateId) {
+      const byId = SheetTemplateManager.getTemplateById(templateId)
+      if (byId) return byId
+    }
+    const template = SheetTemplateManager.TEMPLATES[style]
+      ?? SheetTemplateManager.TEMPLATES[SheetTemplateManager.DEFAULT_STYLE]
     return SheetTemplateManager.deepClone(template)
   }
 
   /**
-   * 获取默认模板（无底无侧普通袋）的深拷贝
+   * 获取内置默认模板（无底无侧普通袋）的深拷贝
    */
   static getDefaultTemplate(): SheetTemplate {
     return SheetTemplateManager.deepClone(SheetTemplateManager.TEMPLATES[SheetTemplateManager.DEFAULT_STYLE])
+  }
+
+  /**
+   * 获取内置模板（忽略数据库覆盖）的深拷贝 — 模板管理页"从当前模板开始编辑"时使用
+   */
+  static getBuiltinTemplate(style: string): SheetTemplate {
+    const template = SheetTemplateManager.TEMPLATES[style] ?? SheetTemplateManager.TEMPLATES[SheetTemplateManager.DEFAULT_STYLE]
+    return SheetTemplateManager.deepClone(template)
   }
 
   /**

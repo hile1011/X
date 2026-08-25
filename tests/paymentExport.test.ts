@@ -74,6 +74,11 @@ function createPaymentQuote(overrides: Partial<Quote> = {}): Quote {
     priceWithTax: 3.27,
     sellPriceNoTax: 3.42,
     sellPriceWithTax: 3.76,
+    receivableSampleFee: 0,
+    actualSampleFee: 0,
+    sampleFeeDeduct: false,
+    deposit: 0,
+    pendingAmount: 0,
     status: 4, // 已发货未收款
     quoteTime: '2024-07-22',
     sampleTime: '2024-07-25',
@@ -263,6 +268,7 @@ describe('calculatePaymentSummary - 收款单汇总计算', () => {
     expect(summary.totalQuantity).toBe(0)
     expect(summary.totalSellNoTax).toBe(0)
     expect(summary.totalSellWithTax).toBe(0)
+    expect(summary.totalPendingAmount).toBe(0)
   })
 
   it('单订单汇总正确', () => {
@@ -270,33 +276,38 @@ describe('calculatePaymentSummary - 收款单汇总计算', () => {
       quantity: '7200',
       sellPriceNoTax: 3.42,
       sellPriceWithTax: 3.76,
+      pendingAmount: 24000,
     })
     const summary = calculatePaymentSummary([order])
     expect(summary.orderCount).toBe(1)
     expect(summary.totalQuantity).toBe(7200)
     expect(summary.totalSellNoTax).toBe(round2(3.42 * 7200))
     expect(summary.totalSellWithTax).toBe(round2(3.76 * 7200))
+    expect(summary.totalPendingAmount).toBe(24000)
   })
 
-  it('多订单汇总为各订单之和', () => {
+  it('多订单汇总为各订单之和（含待收总额，不含实收打样费汇总）', () => {
     const orders = [
       createPaymentQuote({
         id: 'p1',
         quantity: '100',
         sellPriceNoTax: 3.0,
         sellPriceWithTax: 3.3,
+        pendingAmount: 200,
       }),
       createPaymentQuote({
         id: 'p2',
         quantity: '200',
         sellPriceNoTax: 4.0,
         sellPriceWithTax: 4.4,
+        pendingAmount: 750,
       }),
       createPaymentQuote({
         id: 'p3',
         quantity: '300',
         sellPriceNoTax: 5.0,
         sellPriceWithTax: 5.5,
+        pendingAmount: 1500,
       }),
     ]
     const summary = calculatePaymentSummary(orders)
@@ -304,6 +315,16 @@ describe('calculatePaymentSummary - 收款单汇总计算', () => {
     expect(summary.totalQuantity).toBe(600)
     expect(summary.totalSellNoTax).toBe(round2(3.0 * 100 + 4.0 * 200 + 5.0 * 300))
     expect(summary.totalSellWithTax).toBe(round2(3.3 * 100 + 4.4 * 200 + 5.5 * 300))
+    expect(summary.totalPendingAmount).toBe(2450)
+  })
+
+  it('pendingAmount 为 undefined/null 时按 0 处理', () => {
+    const order = createPaymentQuote({
+      quantity: '100',
+      pendingAmount: undefined as unknown as number,
+    })
+    const summary = calculatePaymentSummary([order])
+    expect(summary.totalPendingAmount).toBe(0)
   })
 
   it('汇总 = 明细行之和（精度一致性校验）', () => {
@@ -564,7 +585,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     expect(workbook.worksheets[0].name.length).toBeLessThanOrEqual(31)
   })
 
-  it('表头行（第 2 行）包含所有 9 列固定字段', async () => {
+  it('表头行（第 2 行）包含所有 13 列固定字段', async () => {
     const orders = [createPaymentQuote()]
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '测试客户')
@@ -581,6 +602,10 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
       '单个卖价(含税)',
       '销售总额(不含税)',
       '销售总额(含税)',
+      '应收打样费',
+      '实收打样费',
+      '抵扣大货',
+      '待收总额',
     ])
   })
 
@@ -699,10 +724,10 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     expect(summaryRow.getCell(1).value).toBe('合计')
   })
 
-  it('汇总行数量、金额与 calculatePaymentSummary 结果一致', async () => {
+  it('汇总行数量、金额与 calculatePaymentSummary 结果一致（不含实收打样费汇总）', async () => {
     const orders = [
-      createPaymentQuote({ id: 'p1', quantity: '1000', sellPriceNoTax: 3.0, sellPriceWithTax: 3.3 }),
-      createPaymentQuote({ id: 'p2', quantity: '2000', sellPriceNoTax: 4.0, sellPriceWithTax: 4.4 }),
+      createPaymentQuote({ id: 'p1', quantity: '1000', sellPriceNoTax: 3.0, sellPriceWithTax: 3.3, actualSampleFee: 100, pendingAmount: 2900 }),
+      createPaymentQuote({ id: 'p2', quantity: '2000', sellPriceNoTax: 4.0, sellPriceWithTax: 4.4, actualSampleFee: 50, pendingAmount: 7950 }),
     ]
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
@@ -713,6 +738,77 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     expect(summaryRow.getCell(2).value).toBe(expected.totalQuantity)
     expect(summaryRow.getCell(8).value).toBe(expected.totalSellNoTax)
     expect(summaryRow.getCell(9).value).toBe(expected.totalSellWithTax)
+    expect(summaryRow.getCell(10).value).toBe('') // 实收打样费已从汇总中移除
+    expect(summaryRow.getCell(13).value).toBe(expected.totalPendingAmount)
+  })
+
+  it('数据行正确填充实收打样费、抵扣大货、待收总额', async () => {
+    const orders = [
+      createPaymentQuote({
+        quantity: '7200',
+        sellPriceNoTax: 3.42,
+        actualSampleFee: 500,
+        sampleFeeDeduct: true,
+        pendingAmount: 24000,
+      }),
+    ]
+    const thumbnails = new Map<string, Buffer | null>()
+    const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
+    const sheet = workbook.worksheets[0]
+    const dataRow = sheet.getRow(3)
+    expect(dataRow.getCell(11).value).toBe(500)
+    expect(dataRow.getCell(12).value).toBe('是')
+    expect(dataRow.getCell(13).value).toBe(24000)
+  })
+
+  it('数据行正确填充应收打样费', async () => {
+    const orders = [
+      createPaymentQuote({
+        quantity: '7200',
+        sellPriceNoTax: 3.42,
+        receivableSampleFee: 1500,
+      }),
+    ]
+    const thumbnails = new Map<string, Buffer | null>()
+    const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
+    const sheet = workbook.worksheets[0]
+    expect(sheet.getRow(3).getCell(10).value).toBe(1500)
+  })
+
+  it('抵扣大货为 false 时显示"否"', async () => {
+    const orders = [createPaymentQuote({ sampleFeeDeduct: false })]
+    const thumbnails = new Map<string, Buffer | null>()
+    const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
+    const sheet = workbook.worksheets[0]
+    expect(sheet.getRow(3).getCell(12).value).toBe('否')
+  })
+
+  it('应收打样费、实收打样费、待收总额为 undefined 时数据行显示 0', async () => {
+    const orders = [
+      createPaymentQuote({
+        receivableSampleFee: undefined as unknown as number,
+        actualSampleFee: undefined as unknown as number,
+        pendingAmount: undefined as unknown as number,
+      }),
+    ]
+    const thumbnails = new Map<string, Buffer | null>()
+    const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
+    const sheet = workbook.worksheets[0]
+    const dataRow = sheet.getRow(3)
+    expect(dataRow.getCell(10).value).toBe(0)
+    expect(dataRow.getCell(11).value).toBe(0)
+    expect(dataRow.getCell(13).value).toBe(0)
+  })
+
+  it('应收打样费、实收打样费、待收总额列应用货币格式', async () => {
+    const orders = [createPaymentQuote({ quantity: '1000', receivableSampleFee: 1500, actualSampleFee: 100, pendingAmount: 3000 })]
+    const thumbnails = new Map<string, Buffer | null>()
+    const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
+    const sheet = workbook.worksheets[0]
+    const dataRow = sheet.getRow(3)
+    expect(dataRow.getCell(10).numFmt).toBe('¥#,##0.00')
+    expect(dataRow.getCell(11).numFmt).toBe('¥#,##0.00')
+    expect(dataRow.getCell(13).numFmt).toBe('¥#,##0.00')
   })
 
   it('汇总行应用加粗字体', async () => {
@@ -877,8 +973,8 @@ describe('workbookToBuffer - Workbook 转 Buffer', () => {
 // ============================ 常量定义测试 ============================
 
 describe('PAYMENT_COLUMNS - 固定列定义', () => {
-  it('列数为 9（按需求规范）', () => {
-    expect(PAYMENT_COLUMNS.length).toBe(9)
+  it('列数为 13（按需求规范）', () => {
+    expect(PAYMENT_COLUMNS.length).toBe(13)
   })
 
   it('列顺序符合需求规范', () => {
@@ -893,6 +989,10 @@ describe('PAYMENT_COLUMNS - 固定列定义', () => {
       'sellPriceWithTax',
       'sellTotalNoTax',
       'sellTotalWithTax',
+      'receivableSampleFee',
+      'actualSampleFee',
+      'sampleFeeDeduct',
+      'pendingAmount',
     ])
   })
 
@@ -908,6 +1008,10 @@ describe('PAYMENT_COLUMNS - 固定列定义', () => {
       '单个卖价(含税)',
       '销售总额(不含税)',
       '销售总额(含税)',
+      '应收打样费',
+      '实收打样费',
+      '抵扣大货',
+      '待收总额',
     ])
   })
 

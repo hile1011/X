@@ -66,6 +66,48 @@ body {
   background: #94a3b8;
 }
 
+/* 款式/表格模板树形下拉（antd TreeSelect）：视觉与订单编辑页原生输入框一致
+   Tailwind 任意变体类在字符串拼接场景下提取不稳定，改用全局 CSS + !important 兜底
+   色值对应 Tailwind blue 色板：200=#bfdbfe 400=#60a5fa 500=#3b82f6 600=#2563eb
+   blue-50/40 = rgba(239,246,255,.4)，blue-100/60 = rgba(219,234,254,.6) */
+.style-template-select .ant-select-selector {
+  height: 30px !important;
+  border-radius: 4px !important;
+  border-color: #bfdbfe !important;
+  background-color: rgba(239, 246, 255, 0.4) !important;
+  padding: 0 8px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: #2563eb !important;
+}
+
+.style-template-select .ant-select-selection-item {
+  line-height: 28px !important;
+  color: #2563eb !important;
+}
+
+.style-template-select .ant-select-arrow {
+  color: #60a5fa !important;
+}
+
+.style-template-select:hover .ant-select-selector {
+  border-color: #60a5fa !important;
+}
+
+/* 聚焦态：用 :focus-within 标准伪类，不依赖 antd 内部 focused 类名 */
+.style-template-select:focus-within .ant-select-selector {
+  border-color: #3b82f6 !important;
+  background-color: rgba(219, 234, 254, 0.6) !important;
+  box-shadow: none !important;
+}
+
+/* 下拉面板（portal 渲染到 body）：长模板名省略号截断，避免节点换行撑高 */
+.style-template-select-dropdown .ant-select-tree-node-content-wrapper {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* 修复 VTable 右键菜单在页面滚动时错位的问题 */
 /* 主菜单：CSS 直接设为 fixed（left/top 使用 clientX/clientY 视口坐标，fixed 匹配） */
 .vtable-context-menu-container:not(.vtable-context-submenu-container) {

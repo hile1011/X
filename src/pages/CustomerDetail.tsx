@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { ArrowLeft, Building2, User, Phone, Mail, MapPin, Briefcase, ShoppingCart } from 'lucide-react'
+import { ArrowLeft, Building2, User, Phone, Mail, MapPin, Briefcase, ShoppingCart, Tag, StickyNote } from 'lucide-react'
+import { parseCustomerTags } from '../utils/customerTags'
 import type { Customer, Quote } from '../types'
 
 export default function CustomerDetail() {
@@ -132,6 +133,33 @@ export default function CustomerDetail() {
                     <p className="text-gray-900">{(customer as { address: string }).address || '-'}</p>
                   </div>
                 </div>
+                {parseCustomerTags((customer as { tags?: string }).tags).length > 0 && (
+                  <div className="flex items-start gap-3 sm:col-span-2 min-w-0">
+                    <Tag className="text-gray-400 shrink-0 mt-0.5" size={20} />
+                    <div className="min-w-0">
+                      <label className="block text-sm text-gray-500">标签</label>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {parseCustomerTags((customer as { tags?: string }).tags).map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-2 py-0.5 bg-primary-50 text-primary-600 text-xs rounded-full border border-primary-100"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {(customer as { remark?: string }).remark && (
+                  <div className="flex items-start gap-3 sm:col-span-2 min-w-0">
+                    <StickyNote className="text-gray-400 shrink-0 mt-0.5" size={20} />
+                    <div className="min-w-0">
+                      <label className="block text-sm text-gray-500">备注</label>
+                      <p className="text-gray-900 whitespace-pre-wrap break-words">{(customer as { remark?: string }).remark}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

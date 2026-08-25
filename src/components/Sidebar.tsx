@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  LayoutDashboard, FileText, Users, Package, ClipboardList, BarChart3,
+  LayoutDashboard, FileText, Users, Package, ClipboardList, BarChart3, Table2,
   LogOut, ChevronLeft, ChevronRight, ChevronDown, Shield, KeyRound, Lock,
   Settings, UserCog, type LucideIcon,
 } from 'lucide-react'
@@ -26,6 +26,7 @@ const menuItems: MenuItem[] = [
     label: '基础设置',
     children: [
       { icon: ClipboardList, path: '/process-costs', label: '工艺成本管理', permission: 'process-costs:view' },
+      { icon: Table2, path: '/sheet-templates', label: '款式模板管理', permission: 'sheet-templates:view' },
       { icon: Users, path: '/customers', label: '客户管理', permission: 'customers:view' },
       { icon: Package, path: '/products', label: '产品管理', permission: 'products:view' },
     ],

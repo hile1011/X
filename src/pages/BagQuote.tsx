@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { TreeSelect } from 'antd'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit, Copy } from 'lucide-react'
 import { copyText } from '../utils/clipboard'
@@ -29,6 +30,8 @@ interface OrderInfo {
   customerName: string
   shippingAddress: string
   productStyle: string
+  /** 使用的表格模板 id（v23 一对多；'' = 内置默认模板） */
+  templateId: string
   productSpec: string
   fabricMaterial: string
   process: string
@@ -53,6 +56,7 @@ const DEFAULT_ORDER_INFO: OrderInfo = {
   customerName: '',
   shippingAddress: '',
   productStyle: '1',
+  templateId: '',
   productSpec: '',
   fabricMaterial: '10安涤棉新本色',
   process: '单面数码uv印刷+口头2.5cm',
@@ -141,6 +145,43 @@ interface BagQuoteProps {
   readOnly?: boolean
 }
 
+/**
+ * 金额输入框：支持直接输入小数
+ * 聚焦时显示草稿字符串（可输入 "3."、"3.5" 等中间态），失焦后格式化为两位小数。
+ * 直接绑定 number + toFixed 会导致输入小数点时被立即格式化吞掉。
+ */
+function PriceInput({ value, onChange, className }: {
+  value: number | null
+  onChange: (v: number | null) => void
+  className?: string
+}) {
+  const [draft, setDraft] = useState('')
+  const [focused, setFocused] = useState(false)
+  const display = focused ? draft : (value !== null ? value.toFixed(2) : '')
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={display}
+      onFocus={() => { setFocused(true); setDraft(value !== null ? value.toFixed(2) : '') }}
+      onBlur={() => setFocused(false)}
+      onChange={(e) => {
+        const raw = e.target.value
+        // 只允许数字和小数点（单个）
+        if (raw !== '' && !/^\d*\.?\d*$/.test(raw)) return
+        setDraft(raw)
+        if (raw === '' || raw === '.') {
+          onChange(null)
+        } else {
+          onChange(Number(raw))
+        }
+      }}
+      placeholder="0.00"
+      className={className}
+    />
+  )
+}
+
 export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -208,15 +249,65 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 表格对订单信息的联动：成本价、含税价、单个卖价(不含税)/单个卖价(含税)
   const [costPrice, setCostPrice] = useState<number | null>(null)
   const [priceWithTax, setPriceWithTax] = useState<number | null>(null)
+  // 收款相关：应收打样费、实际收取打样费、打样费是否抵扣大货、收取定金、待收总金额（手动覆盖标记）
+  const [receivableSampleFee, setReceivableSampleFee] = useState<number | null>(null)
+  const [actualSampleFee, setActualSampleFee] = useState<number | null>(null)
+  const [sampleFeeDeduct, setSampleFeeDeduct] = useState(false)
+  const [deposit, setDeposit] = useState<number | null>(null)
+  const [pendingAmount, setPendingAmount] = useState<number | null>(null)
+  // 用户是否手动修改过待收总金额：true 时不再自动重算，直到重新加载订单
+  const pendingAmountManualRef = useRef(false)
   const [sellPrices, setSellPrices] = useState<{ noTax: number | null; withTax: number | null }>({ noTax: null, withTax: null })
   // 款式选项：从产品管理模块动态获取（code 1-6 对应在线表格模板）
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
   // 选中单元格汇总结果：null 表示当前无选区
   const [selectionSummary, setSelectionSummary] = useState<SelectionSummary | null>(null)
+  // 数据库模板覆盖是否已加载（sheet_templates 表，v19）：新建订单需等覆盖加载后再初始化表格
+  const [templatesReady, setTemplatesReady] = useState(false)
 
   useEffect(() => {
     fetchStyleOptions().then(setStyleOptions)
   }, [])
+
+  // 加载数据库模板覆盖（幂等，进程内一次）：加载失败时静默使用内置模板
+  useEffect(() => {
+    SheetTemplateManager.loadOverrides().finally(() => setTemplatesReady(true))
+  }, [])
+
+  // 款式/表格模板树形下拉数据（antd TreeSelect）：
+  // 一级 = 款式（仅分组节点不可选，点击标题展开/收起）；二级 = 该款式下的模板叶子（可选）
+  // 叶子 value 编码 `${styleCode}|${templateId}`（templateId 空 = 内置默认模板），
+  // label 字段为"款式 / 模板名"（treeNodeLabelProp 指定后选中时显示在输入框）
+  const styleTemplateTreeData = useMemo(() => {
+    return styleOptions.map((style) => {
+      // 二级：该款式下的数据库模板（templatesReady 后渲染，未加载完成时仅显示默认项）
+      const entries = templatesReady ? SheetTemplateManager.listByStyle(style.value) : []
+      // 订单记录的模板已删除或不在该款式下：保留占位叶子避免选中值显示空白（表格回退内置默认）
+      const missing = templatesReady
+        && style.value === orderInfo.productStyle
+        && orderInfo.templateId !== ''
+        && !entries.some((e) => e.id === orderInfo.templateId)
+      return {
+        title: style.label,
+        // 款式节点唯一 value（selectable: false 仅作分组；onChange 再按 "|" 防御兜底）
+        value: `style:${style.value}`,
+        selectable: false,
+        children: [
+          { title: '默认模板（内置）', label: `${style.label} / 默认模板（内置）`, value: `${style.value}|` },
+          ...entries.map((entry) => ({
+            title: entry.name,
+            label: `${style.label} / ${entry.name}`,
+            value: `${style.value}|${entry.id}`,
+          })),
+          ...(missing ? [{
+            title: '模板已删除（回退默认）',
+            label: `${style.label} / 模板已删除（回退默认）`,
+            value: `${style.value}|${orderInfo.templateId}`,
+          }] : []),
+        ],
+      }
+    })
+  }, [styleOptions, templatesReady, orderInfo.productStyle, orderInfo.templateId])
 
   // 进入页面时停留在最上方：SPA 的 pushState 导航不会重置窗口滚动位置，
   // 会沿用前一页（如订单列表）的滚动位置，导致进入编辑页时下滑到在线表格。
@@ -268,6 +359,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           customerName: data.customerName || '',
           shippingAddress: data.shippingAddress || '',
           productStyle: data.productStyle || '1',
+          templateId: data.templateId || '',
           productSpec: data.productSpec || '',
           fabricMaterial: data.fabricMaterial || '10安涤棉新本色',
           process: data.process || '单面数码uv印刷+口头2.5cm',
@@ -286,6 +378,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         })
         setCostPrice(data.costPrice || null)
         setPriceWithTax(data.priceWithTax || null)
+        // 收款相关字段（V17/V18 新增）
+        setReceivableSampleFee(data.receivableSampleFee ?? null)
+        setActualSampleFee(data.actualSampleFee ?? null)
+        setSampleFeeDeduct(!!data.sampleFeeDeduct)
+        setDeposit(data.deposit ?? null)
+        setPendingAmount(data.pendingAmount ?? null)
+        pendingAmountManualRef.current = false
         setStatus(data.status || 1)
         setStatusTimeNodes({
           quoteTime: data.quoteTime || '',
@@ -415,6 +514,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         priceWithTax: priceWithTax || 0,
         sellPriceNoTax: Math.round((sellPrices.noTax || 0) * 100) / 100,
         sellPriceWithTax: Math.round((sellPrices.withTax || 0) * 100) / 100,
+        // 收款相关字段（V17/V18 新增）
+        receivableSampleFee: receivableSampleFee !== null ? Math.round(receivableSampleFee * 100) / 100 : 0,
+        actualSampleFee: actualSampleFee !== null ? Math.round(actualSampleFee * 100) / 100 : 0,
+        sampleFeeDeduct,
+        deposit: deposit !== null ? Math.round(deposit * 100) / 100 : 0,
+        // 仅做货中(3)/已发货未收款(4)保存待收总额，其他状态强制为 0
+        pendingAmount: (status === 3 || status === 4) ? (pendingAmount !== null ? Math.round(pendingAmount * 100) / 100 : 0) : 0,
         status,
         images: productImages,
         tableData,
@@ -476,9 +582,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         }
         tableData.push(rowData)
       }
-      // 公式来源优先级：当前表格实时收集的公式 > 数据库 allFormulas > 款式模板
+      // 公式来源优先级：当前表格实时收集的公式 > 数据库 allFormulas > 所选模板（含内置兜底）
       // 实时收集确保导出与页面显示完全一致（含用户未保存的修改）
-      const template = SheetTemplateManager.getTemplate(orderInfo.productStyle)
+      const template = SheetTemplateManager.getTemplate(orderInfo.productStyle, orderInfo.templateId)
       const fm = (sheet as any).formulaManager
       const exportFormulas: Record<string, string> = {}
       const expRowCount = activeTable?.rowCount ?? 0
@@ -512,7 +618,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     // 被 recalculateFormulas 用公式结果覆盖用户编辑值（tableDataVersion=0 表示尚未加载）
     if (hasQuoteId && tableDataVersion === 0) return
 
-    const template = SheetTemplateManager.getTemplate(orderInfo.productStyle)
+    // 等数据库模板加载完成（v23）：新建订单/切换款式或模板时使用所选模板，内置模板兜底
+    if (!templatesReady) return
+
+    const template = SheetTemplateManager.getTemplate(orderInfo.productStyle, orderInfo.templateId)
     // 编辑已有订单时优先使用数据库保存的表格数据；新增订单时用模板数据
     const initialData = loadedTableDataRef.current && loadedTableDataRef.current.length > 0
       ? loadedTableDataRef.current
@@ -572,8 +681,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
 
     // 表格对订单信息的联动（动态定位行和列）：
     // 成本价       = 汇总行 × 参考卖价列（以"汇总"文字定位行，以"参考卖价"列标题定位列）
-    // 单个卖价(不含税) = 参考卖价行 × 参考卖价列（以"参考卖价"文字定位行）
-    // 单个卖价(含税)   = 参考卖价行 × 含税价列
+    // 单个卖价：已改为手动输入，不再与表格联动（数据库加载时恢复，保存时随订单持久化）
     // 产品规格 = 成品行 宽(CM) "*" 高(CM) "*" 底(CM)
     // 数量     = 成品行 数量(个)
     // 直接通过 formulaManager 读取公式计算结果（构造时已载入引擎，编辑后由 WorkSheet 级联重算）
@@ -609,17 +717,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         // 含税价 = 成本价 × 1.1（自动计算）
         setPriceWithTax(costVal !== null ? Number((costVal * 1.1).toFixed(2)) : null)
 
-        // 卖价（公式单元格，读取引擎计算结果）
-        const rNoTax = pos.refSellRow >= 0
-          ? fm.getCellValue({ sheet: TableConstants.SHEET_KEY, row: pos.refSellRow, col: pos.refSellCol })
-          : null
-        const rWithTax = pos.refSellRow >= 0
-          ? fm.getCellValue({ sheet: TableConstants.SHEET_KEY, row: pos.refSellRow, col: pos.withTaxCol })
-          : null
-        setSellPrices({
-          noTax: rNoTax && typeof rNoTax.value === 'number' && !isNaN(rNoTax.value) ? rNoTax.value : null,
-          withTax: rWithTax && typeof rWithTax.value === 'number' && !isNaN(rWithTax.value) ? rWithTax.value : null,
-        })
+        // 单个卖价不与表格联动：保留用户手动输入的值（loadQuote 时从数据库恢复）
 
         // 产品规格 / 数量（成品行数据单元格）
         const fmtVal = (v: any): string => (v == null || v === '') ? '' : String(v)
@@ -815,7 +913,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       // 重置汇总状态栏，避免重建表格后残留旧选区数据
       setSelectionSummary(null)
     }
-  }, [orderInfo.productStyle, tableDataVersion])
+  }, [orderInfo.productStyle, orderInfo.templateId, tableDataVersion, templatesReady])
 
   // 图片压缩：所有图片统一通过 canvas 压缩为 JPEG，限制尺寸和大小
   // 目标：单张图片 base64 不超过 200KB，避免多张图片叠加后数据量过大导致存储/传输异常
@@ -959,18 +1057,29 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   }
 
   const updateOrderField = (field: keyof OrderInfo, value: string) => {
-    // 切换款式时：若有未保存编辑则提示确认，确认=切换款式，取消=不切换
-    if (field === 'productStyle' && value !== orderInfo.productStyle) {
-      if (isTableDirty) {
-        const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确认"切换款式（未保存的修改将丢失），点击"取消"保持当前款式。')
-        if (!ok) return // 取消：不切换款式
-      }
-      // 清除所有表格相关状态，加载新款式模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
-      loadedTableDataRef.current = null
-      allFormulasRef.current = {}
-      setIsTableDirty(false)
+    setOrderInfo((prev) => ({
+      ...prev,
+      [field]: value,
+    }))
+  }
+
+  // 款式/表格模板树形二级下拉：一次选择同时更新款式（一级）与该款式下的模板（二级）
+  // 选项值编码为 `${styleCode}|${templateId}`，templateId 为空 = 内置默认模板
+  // 切换时若有未保存的表格编辑则提示确认；确认后清除表格状态，触发表格按新款式/模板重新初始化
+  const handleStyleTemplateChange = (combined: string) => {
+    const sep = combined.indexOf('|')
+    const style = combined.slice(0, sep)
+    const templateId = combined.slice(sep + 1)
+    if (style === orderInfo.productStyle && templateId === orderInfo.templateId) return
+    if (isTableDirty) {
+      const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确认"切换款式/模板（未保存的修改将丢失），点击"取消"保持现状。')
+      if (!ok) return // 取消：保持现状
     }
-    setOrderInfo((prev) => ({ ...prev, [field]: value }))
+    // 清除所有表格相关状态，加载新模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
+    loadedTableDataRef.current = null
+    allFormulasRef.current = {}
+    setIsTableDirty(false)
+    setOrderInfo((prev) => ({ ...prev, productStyle: style, templateId }))
   }
 
   const handleReset = () => {
@@ -1199,6 +1308,30 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 销售总额 = 数量 × 单个卖价，以保留2位小数的单个卖价为计算基础
   const sellTotalNoTax = round2(sellNoTaxVal * qty)
   const sellTotalWithTax = round2(sellWithTaxVal * qty)
+
+  // 待收总金额自动重算（v18 公式）：
+  //   抵扣大货=是：销售总额(不含税) - 已收打样费 - 定金
+  //   抵扣大货=否：销售总额(不含税) + 应收打样费 - 已收打样费 - 定金
+  // 仅"做货中(3)"状态触发自动计算；"已发货已收款(5)"状态待收总额归零；其他状态不自动重算
+  // 用户手动修改过待收总金额后不再自动重算（pendingAmountManualRef 标记）
+  const receivableFeeVal = round2(receivableSampleFee ?? 0)
+  const sampleFeeVal = round2(actualSampleFee ?? 0)
+  const depositVal = round2(deposit ?? 0)
+  const autoPendingAmount = round2(
+    sellTotalNoTax + (sampleFeeDeduct ? -sampleFeeVal : round2(receivableFeeVal - sampleFeeVal)) - depositVal
+  )
+  useEffect(() => {
+    if (status === 3 || status === 4) {
+      // 做货中 / 已发货未收款：自动计算待收总额（手动修改过则保留手动值）
+      if (!pendingAmountManualRef.current) {
+        setPendingAmount(autoPendingAmount)
+      }
+    } else {
+      // 其他状态（已发货已收款、退回打样等）：待收总额清零
+      setPendingAmount(0)
+      pendingAmountManualRef.current = false
+    }
+  }, [autoPendingAmount, status])
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -1443,28 +1576,21 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[11px] text-gray-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={costPrice !== null ? costPrice.toFixed(2) : ''}
-                    onChange={(e) => {
-                      const val = e.target.value === '' ? null : Number(e.target.value)
+                  <PriceInput
+                    value={costPrice}
+                    onChange={(val) => {
                       setCostPrice(val)
                       setPriceWithTax(val !== null ? Number((val * 1.1).toFixed(2)) : null)
                     }}
-                    placeholder="0.00"
                     className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
                   />
                 </div>
                 <div className="flex items-center gap-1">
                   <span className="text-[11px] text-gray-400">含税</span>
                   <span className="text-[11px] text-gray-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={priceWithTax !== null ? priceWithTax.toFixed(2) : ''}
-                    onChange={(e) => setPriceWithTax(e.target.value === '' ? null : Number(e.target.value))}
-                    placeholder="0.00"
+                  <PriceInput
+                    value={priceWithTax}
+                    onChange={setPriceWithTax}
                     className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-gray-600 bg-gray-50/40 border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-gray-400 focus:border-gray-400"
                   />
                 </div>
@@ -1513,12 +1639,12 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 <div className="flex items-center gap-1">
                   <span className="text-[11px] text-red-400">不含税</span>
                   <span className="text-xs text-red-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={sellPrices.noTax !== null ? sellPrices.noTax.toFixed(2) : ''}
-                    onChange={(e) => setSellPrices(prev => ({ ...prev, noTax: e.target.value === '' ? null : Number(e.target.value) }))}
-                    placeholder="0.00"
+                  <PriceInput
+                    value={sellPrices.noTax}
+                    onChange={(val) => {
+                      // 含税 = 不含税 × 1.1（自动联动，与成本价→含税价模式一致）
+                      setSellPrices({ noTax: val, withTax: val !== null ? Number((val * 1.1).toFixed(2)) : null })
+                    }}
                     className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-red-600 bg-red-50/40 border border-red-200 rounded focus:outline-none focus:ring-1 focus:ring-red-400 focus:border-red-400"
                   />
                 </div>
@@ -1526,12 +1652,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                   <TrendingUp className="text-blue-400" size={14} />
                   <span className="text-[11px] text-blue-400">含税</span>
                   <span className="text-xs text-blue-400">¥</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={sellPrices.withTax !== null ? sellPrices.withTax.toFixed(2) : ''}
-                    onChange={(e) => setSellPrices(prev => ({ ...prev, withTax: e.target.value === '' ? null : Number(e.target.value) }))}
-                    placeholder="0.00"
+                  <PriceInput
+                    value={sellPrices.withTax}
+                    onChange={(val) => setSellPrices(prev => ({ ...prev, withTax: val }))}
                     className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-blue-600 bg-blue-50/40 border border-blue-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400"
                   />
                 </div>
@@ -1550,6 +1673,59 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                   <span className="text-[11px] text-blue-500">¥</span>
                   <div className="w-28 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-blue-700 bg-blue-100/50 border border-blue-300 rounded text-right">
                     {sellTotalWithTax.toFixed(2)}
+                  </div>
+                </div>
+                <div className="w-px h-5 bg-gray-200" />
+                {/* 收款信息组：应收打样费 + 实收打样费 + 抵扣开关 + 定金 + 待收总额（紧凑排版，内层 gap-2） */}
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1" title="应收打样费：客户应付的打样费用">
+                    <span className="text-[11px] text-gray-500">应收打样费</span>
+                    <span className="text-[11px] text-orange-500">¥</span>
+                    <PriceInput
+                      value={receivableSampleFee}
+                      onChange={setReceivableSampleFee}
+                      className="w-20 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-orange-600 bg-orange-50/40 border border-orange-200 rounded focus:outline-none focus:ring-1 focus:ring-orange-400 focus:border-orange-400"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1" title="实际收取打样费">
+                    <span className="text-[11px] text-gray-500">实收打样费</span>
+                    <span className="text-[11px] text-amber-500">¥</span>
+                    <PriceInput
+                      value={actualSampleFee}
+                      onChange={setActualSampleFee}
+                      className="w-20 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-amber-600 bg-amber-50/40 border border-amber-200 rounded focus:outline-none focus:ring-1 focus:ring-amber-400 focus:border-amber-400"
+                    />
+                  </div>
+                  <label className="flex items-center gap-1 cursor-pointer select-none shrink-0" title="打样费是否抵扣大货">
+                    <input
+                      type="checkbox"
+                      checked={sampleFeeDeduct}
+                      onChange={(e) => setSampleFeeDeduct(e.target.checked)}
+                      className="w-3 h-3 accent-amber-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-gray-400">抵扣大货</span>
+                  </label>
+                  <div className="flex items-center gap-1" title="收取定金">
+                    <span className="text-[11px] text-gray-500">定金</span>
+                    <span className="text-[11px] text-purple-400">¥</span>
+                    <PriceInput
+                      value={deposit}
+                      onChange={setDeposit}
+                      className="w-20 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-purple-600 bg-purple-50/40 border border-purple-200 rounded focus:outline-none focus:ring-1 focus:ring-purple-400 focus:border-purple-400"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1" title="待收总金额 = 销售总额(不含税) - 已收打样费 - 定金（抵扣大货=是）；销售总额(不含税) + 应收打样费 - 已收打样费 - 定金（抵扣大货=否）">
+                    <span className="text-[11px] text-gray-500">待收总额</span>
+                    <span className="text-[11px] text-emerald-500">¥</span>
+                    <PriceInput
+                      value={pendingAmount}
+                      onChange={(val) => {
+                        // 手动修改后停止自动重算
+                        pendingAmountManualRef.current = true
+                        setPendingAmount(val)
+                      }}
+                      className="w-24 px-1.5 py-1.5 sm:py-0.5 text-sm font-bold text-emerald-700 bg-emerald-50/40 border border-emerald-200 rounded focus:outline-none focus:ring-1 focus:ring-emerald-400 focus:border-emerald-400"
+                    />
                   </div>
                 </div>
               </div>
@@ -1610,20 +1786,25 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                     className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors" />
                 </div>
 
-                {/* 行2：款式 + 数量 + 产品规格 + 大货日期 + 天数 */}
+                {/* 行2：款式/表格模板（antd TreeSelect 树形二级联动下拉）+ 数量 + 产品规格 + 大货日期 + 天数 */}
                 <div className="lg:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">款式</label>
-                  <select
-                    value={orderInfo.productStyle}
-                    onChange={(e) => updateOrderField('productStyle', e.target.value)}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors"
-                  >
-                    {styleOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="block text-xs text-gray-400 mb-0.5">款式 / 模板</label>
+                  <TreeSelect
+                    value={`${orderInfo.productStyle}|${orderInfo.templateId}`}
+                    onChange={(value: unknown) => {
+                      // 仅处理叶子节点（`${styleCode}|${templateId}` 编码）；款式分组节点被意外选中时忽略
+                      if (typeof value === 'string' && value.includes('|')) {
+                        handleStyleTemplateChange(value)
+                      }
+                    }}
+                    treeData={styleTemplateTreeData}
+                    treeNodeLabelProp="label"
+                    treeDefaultExpandAll
+                    treeExpandAction="click"
+                    style={{ width: '100%' }}
+                    className="style-template-select"
+                    classNames={{ popup: { root: 'style-template-select-dropdown' } }}
+                  />
                 </div>
                 <div className="lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">数量(个)</label>
@@ -1777,6 +1958,64 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                     <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
                   </label>
                   )
+                ) : productImages.length === 1 ? (
+                  // 单图：突出展示，水平垂直居中（与多图相同的边距和缩放规则）
+                  <div
+                    className="w-full px-2"
+                    onDragOver={readOnly ? undefined : handleDragOver}
+                    onDragLeave={readOnly ? undefined : handleDragLeave}
+                    onDrop={readOnly ? undefined : handleDrop}
+                  >
+                    <div className={`flex flex-wrap items-start justify-center gap-2 rounded-lg transition-colors ${
+                      isDragging ? 'bg-blue-100/30 p-1' : ''
+                    }`}>
+                      <div
+                        className={`relative w-40 sm:w-48 md:w-56 aspect-square ${readOnly ? 'cursor-zoom-in' : 'cursor-grab'} ${
+                          draggedIndex === 0 ? 'opacity-40 ring-2 ring-primary-400 ring-dashed' : ''
+                        } ${
+                          dragOverIndex === 0 && draggedIndex !== null
+                            ? 'ring-2 ring-primary-500 ring-offset-1'
+                            : ''
+                        }`}
+                        draggable={!readOnly}
+                        onDragStart={readOnly ? undefined : () => handleImageDragStart(0)}
+                        onDragOver={readOnly ? undefined : (e) => handleImageDragOver(e, 0)}
+                        onDragEnd={readOnly ? undefined : handleImageDragEnd}
+                        onDrop={readOnly ? undefined : (e) => handleImageDrop(e, 0)}
+                      >
+                        <div
+                          className="w-full h-full cursor-zoom-in flex items-center justify-center p-1 bg-white border border-gray-200 rounded-lg"
+                          onClick={() => { setPreviewImageSrc(productImages[0]); setIsPreviewOpen(true); }}
+                        >
+                          <img
+                            src={productImages[0]}
+                            alt="产品图片 1"
+                            className="max-w-full max-h-full object-contain rounded transition-all duration-200"
+                          />
+                        </div>
+                        {!readOnly && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleImageRemove(0); }}
+                            className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 transition-colors shadow-sm z-10"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                        <span className="absolute bottom-1 left-1 text-xs text-white bg-black/50 px-1 py-0.5 rounded">
+                          1
+                        </span>
+                      </div>
+                      {!readOnly && (
+                        <label className={`w-24 sm:w-28 md:w-32 aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+                          isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
+                        }`}>
+                          <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />
+                          <span className={`text-xs ${isDragging ? 'text-blue-600' : 'text-gray-500'}`}>添加</span>
+                          <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" />
+                        </label>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div
                     className="w-full px-2"
@@ -1784,13 +2023,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                     onDragLeave={readOnly ? undefined : handleDragLeave}
                     onDrop={readOnly ? undefined : handleDrop}
                   >
-                    <div className={`grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 rounded-lg transition-colors ${
+                    <div className={`flex flex-wrap items-start justify-center gap-2 rounded-lg transition-colors ${
                       isDragging ? 'bg-blue-100/30 p-1' : ''
                     }`}>
                       {productImages.map((img, index) => (
                         <div
                           key={index}
-                          className={`relative aspect-square ${readOnly ? 'cursor-zoom-in' : 'cursor-grab'} ${
+                          className={`relative aspect-square w-[calc(33.3333%_-_0.3333rem)] sm:w-[calc(25%_-_0.375rem)] md:w-[calc(16.6667%_-_0.4167rem)] ${readOnly ? 'cursor-zoom-in' : 'cursor-grab'} ${
                             draggedIndex === index ? 'opacity-40 ring-2 ring-primary-400 ring-dashed' : ''
                           } ${
                             dragOverIndex === index && draggedIndex !== null && draggedIndex !== index
@@ -1804,13 +2043,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                           onDrop={readOnly ? undefined : (e) => handleImageDrop(e, index)}
                         >
                           <div
-                            className="w-full h-full cursor-zoom-in"
+                            className="w-full h-full cursor-zoom-in flex items-center justify-center p-1 bg-white border border-gray-200 rounded-lg"
                             onClick={() => { setPreviewImageSrc(img); setIsPreviewOpen(true); }}
                           >
                             <img
                               src={img}
                               alt={`产品图片 ${index + 1}`}
-                              className="w-full h-full object-cover rounded-lg border border-gray-200"
+                              className="max-w-full max-h-full object-contain rounded transition-all duration-200"
                             />
                           </div>
                           {!readOnly && (
@@ -1827,7 +2066,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                         </div>
                       ))}
                       {!readOnly && (
-                        <label className={`aspect-square flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
+                        <label className={`aspect-square w-[calc(33.3333%_-_0.3333rem)] sm:w-[calc(25%_-_0.375rem)] md:w-[calc(16.6667%_-_0.4167rem)] flex flex-col items-center justify-center border-2 border-dashed rounded-lg transition-colors cursor-pointer ${
                           isDragging ? 'border-blue-500 bg-blue-100/50' : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50/50'
                         }`}>
                           <Upload size={16} className={isDragging ? 'text-blue-600' : 'text-gray-400'} />

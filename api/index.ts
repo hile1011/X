@@ -12,6 +12,7 @@ import { uploadRouter } from './routes/upload.js'
 import { bagQuoteRouter } from './routes/bagQuote.js'
 import { quotesRouter } from './routes/quotes.js'
 import { processCostsRouter } from './routes/processCosts.js'
+import { sheetTemplatesRouter } from './routes/sheetTemplates.js'
 import { exportRouter } from './routes/export.js'
 import { operationLogsRouter } from './routes/operationLogs.js'
 import { authRouter } from './routes/auth.js'
@@ -66,6 +67,7 @@ app.use('/api/upload', authenticate, uploadRouter)
 app.use('/api/bag-quote', authenticate, bagQuoteRouter)
 app.use('/api/quotes', authenticate, quotesRouter)
 app.use('/api/process-costs', authenticate, processCostsRouter)
+app.use('/api/sheet-templates', authenticate, sheetTemplatesRouter) // 款式模板管理（在线可视化编辑）
 app.use('/api/export', authenticate, exportRouter)
 app.use('/api/operation-logs', authenticate, operationLogsRouter)
 

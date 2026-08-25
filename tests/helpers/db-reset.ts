@@ -20,6 +20,7 @@ const TABLES_TO_RESET = [
   'process_costs',
   'products',
   'customers',
+  'sheet_templates',
   // RBAC 表（按 FK 依赖顺序删除）
   'user_roles',
   'role_permissions',
@@ -52,6 +53,10 @@ const SEED_PERMISSIONS = [
   { id: 'perm-quotes-print', code: 'quotes:print', name: '订单-打印', module: 'quotes', action: 'print', type: 'button', sort: 16 },
   { id: 'perm-quotes-status', code: 'quotes:status-transition', name: '订单-状态流转', module: 'quotes', action: 'status-transition', type: 'button', sort: 17 },
   { id: 'perm-quotes-export-payment', code: 'quotes:export-payment', name: '订单-导出收款单', module: 'quotes', action: 'export-payment', type: 'button', sort: 18 },
+  { id: 'perm-sheet-templates-view', code: 'sheet-templates:view', name: '模板管理-查看', module: 'sheet-templates', action: 'view', type: 'menu', sort: 19 },
+  { id: 'perm-sheet-templates-edit', code: 'sheet-templates:edit', name: '模板管理-编辑', module: 'sheet-templates', action: 'edit', type: 'button', sort: 20 },
+  { id: 'perm-order-templates-view', code: 'order-templates:view', name: '订单模板-查看', module: 'order-templates', action: 'view', type: 'menu', sort: 21 },
+  { id: 'perm-order-templates-edit', code: 'order-templates:edit', name: '订单模板-编辑', module: 'order-templates', action: 'edit', type: 'button', sort: 22 },
   { id: 'perm-quotes-table-view', code: 'quotes-table:view', name: '订单表格版-查看', module: 'quotes-table', action: 'view', type: 'menu', sort: 20 },
   { id: 'perm-quotes-wps-view', code: 'quotes-wps:view', name: '订单WPS版-查看', module: 'quotes-wps', action: 'view', type: 'menu', sort: 30 },
   { id: 'perm-process-costs-view', code: 'process-costs:view', name: '工艺成本-查看', module: 'process-costs', action: 'view', type: 'menu', sort: 40 },

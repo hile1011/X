@@ -1,0 +1,100 @@
+import express from 'express'
+import { db } from '../db.js'
+import { asyncHandler } from '../asyncHandler.js'
+import { requirePermission } from '../middleware/auth.js'
+
+export const sheetTemplatesRouter = express.Router()
+
+/** 有效款式 code（1-6） */
+const VALID_STYLE_CODES = ['1', '2', '3', '4', '5', '6']
+
+/** 校验模板保存请求体：data 为二维数组、formulas 为字符串映射 */
+function validateTemplateBody(body: any): { ok: true; data: (string | number | null)[][]; formulas: Record<string, string> } | { ok: false; error: string } {
+  const { data, formulas } = body || {}
+  if (!Array.isArray(data) || data.length === 0) {
+    return { ok: false, error: 'data 必须为非空二维数组' }
+  }
+  if (!Array.isArray(data[0])) {
+    return { ok: false, error: 'data 必须为二维数组' }
+  }
+  if (formulas !== undefined && (typeof formulas !== 'object' || formulas === null || Array.isArray(formulas))) {
+    return { ok: false, error: 'formulas 必须为对象' }
+  }
+  return {
+    ok: true,
+    data: data as (string | number | null)[][],
+    formulas: (formulas ?? {}) as Record<string, string>,
+  }
+}
+
+// 模板列表（全部款式；可选 ?styleCode= 过滤）
+// 读取接口仅需认证：订单编辑页创建表格时需加载模板数据，使用者不一定有模板管理权限
+sheetTemplatesRouter.get('/', asyncHandler(async (req, res) => {
+  const { styleCode } = req.query
+  if (styleCode !== undefined) {
+    if (typeof styleCode !== 'string' || !VALID_STYLE_CODES.includes(styleCode)) {
+      return res.status(400).json({ error: '无效的款式 code' })
+    }
+    res.json(await db.sheetTemplates.getByStyleCode(styleCode))
+    return
+  }
+  res.json(await db.sheetTemplates.getAll())
+}))
+
+// 按 id 获取单个模板
+sheetTemplatesRouter.get('/:id', asyncHandler(async (req, res) => {
+  const data = await db.sheetTemplates.getById(req.params.id)
+  if (!data) {
+    return res.status(404).json({ error: '模板不存在' })
+  }
+  res.json(data)
+}))
+
+// 新增模板（一对多：同款式可有多个，名称款式内唯一）
+// data/formulas 可选：为空时创建空白模板（前端新增时通常传入内置模板作为初始内容）
+sheetTemplatesRouter.post('/', requirePermission('sheet-templates:edit'), asyncHandler(async (req, res) => {
+  const { styleCode, name } = req.body || {}
+  if (!VALID_STYLE_CODES.includes(styleCode)) {
+    return res.status(400).json({ error: '无效的款式 code（仅支持 1-6）' })
+  }
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: '模板名称不能为空' })
+  }
+  const data = Array.isArray(req.body?.data) && req.body.data.length > 0 ? req.body.data : [[null]]
+  const formulas = (req.body?.formulas && typeof req.body.formulas === 'object' && !Array.isArray(req.body.formulas)) ? req.body.formulas : {}
+  try {
+    const created = await db.sheetTemplates.create(styleCode, name, data, formulas, req.user?.name || '')
+    res.status(201).json(created)
+  } catch (error: any) {
+    // 同款式重名（uk_style_name）等业务校验错误返回 409
+    res.status(409).json({ error: error?.message || '创建模板失败' })
+  }
+}))
+
+// 更新模板（内容必传，名称可选改名）
+sheetTemplatesRouter.put('/:id', requirePermission('sheet-templates:edit'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const validated = validateTemplateBody(req.body)
+  if (!validated.ok) {
+    return res.status(400).json({ error: validated.error })
+  }
+  const name = typeof req.body?.name === 'string' ? req.body.name : undefined
+  try {
+    const saved = await db.sheetTemplates.update(id, name, validated.data, validated.formulas, req.user?.name || '')
+    if (!saved) {
+      return res.status(404).json({ error: '模板不存在' })
+    }
+    res.json(saved)
+  } catch (error: any) {
+    res.status(409).json({ error: error?.message || '保存模板失败' })
+  }
+}))
+
+// 删除模板（订单保存的 tableData 不受影响）
+sheetTemplatesRouter.delete('/:id', requirePermission('sheet-templates:edit'), asyncHandler(async (req, res) => {
+  const deleted = await db.sheetTemplates.remove(req.params.id)
+  if (!deleted) {
+    return res.status(404).json({ error: '模板不存在' })
+  }
+  res.json({ success: true })
+}))

@@ -242,6 +242,28 @@ export const api = {
     delete: (id: string) => authFetch(`${API_BASE}/process-costs/${id}`, { method: 'DELETE' }).then(handleResponse),
     deleteCheck: (id: string) => authFetch(`${API_BASE}/process-costs/${id}/delete-check`).then(handleResponse),
   },
+  sheetTemplates: {
+    /** 全部模板（一对多）；可选 styleCode 过滤该款式的全部模板 */
+    getAll: (styleCode?: string) => authFetch(
+      `${API_BASE}/sheet-templates${styleCode ? `?styleCode=${encodeURIComponent(styleCode)}` : ''}`
+    ).then(handleResponse),
+    getById: (id: string) => authFetch(`${API_BASE}/sheet-templates/${id}`).then(handleResponse),
+    /** 新增模板：{ styleCode, name, data?, formulas? }，重名时后端返回 409 */
+    create: (payload: { styleCode: string; name: string; data?: (string | number | null)[][]; formulas?: Record<string, string> }) =>
+      authFetch(`${API_BASE}/sheet-templates`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      }).then(handleResponse),
+    /** 更新模板：{ name?, data, formulas }，改名重名时后端返回 409 */
+    update: (id: string, payload: { name?: string; data: (string | number | null)[][]; formulas: Record<string, string> }) =>
+      authFetch(`${API_BASE}/sheet-templates/${id}`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify(payload),
+      }).then(handleResponse),
+    delete: (id: string) => authFetch(`${API_BASE}/sheet-templates/${id}`, { method: 'DELETE' }).then(handleResponse),
+  },
   export: {
     /** 导出订单列表（返回 Blob 用于下载） */
     orders: async (orderIds: string[]): Promise<Blob> => {

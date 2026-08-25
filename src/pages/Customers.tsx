@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { Plus, Search, Eye, Edit, Trash2, Users, Building2, Mail, Phone } from 'lucide-react'
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
+import { parseCustomerTags } from '../utils/customerTags'
 import type { Customer } from '../types'
 
 export default function Customers() {
@@ -30,9 +31,10 @@ export default function Customers() {
 
   const filteredCustomers = customers.filter((customer) => {
     const search = searchTerm.toLowerCase()
-    return customer.name.toLowerCase().includes(search) || 
+    return customer.name.toLowerCase().includes(search) ||
            (customer.contact_person && customer.contact_person.toLowerCase().includes(search)) ||
-           (customer.industry && customer.industry.toLowerCase().includes(search))
+           (customer.industry && customer.industry.toLowerCase().includes(search)) ||
+           (customer.tags && customer.tags.toLowerCase().includes(search))
   })
 
   return (
@@ -78,16 +80,30 @@ export default function Customers() {
                   className="bg-gray-50 rounded-xl p-4 hover:bg-gray-100 transition-colors"
                 >
                   <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center shrink-0">
                         <Users className="text-primary-600" size={20} />
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-800">{customer.name}</h3>
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-gray-800 truncate">{customer.name}</h3>
                         <p className="text-sm text-gray-500">{customer.industry || '未分类'}</p>
                       </div>
                     </div>
                   </div>
+
+                  {parseCustomerTags(customer.tags).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {parseCustomerTags(customer.tags).map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-2 py-0.5 bg-primary-50 text-primary-600 text-xs rounded-full border border-primary-100 truncate max-w-[140px]"
+                          title={tag}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2 text-gray-600">
