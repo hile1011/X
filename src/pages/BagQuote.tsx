@@ -277,7 +277,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 款式/表格模板树形下拉数据（antd TreeSelect）：
   // 一级 = 款式（仅分组节点不可选，点击标题展开/收起）；二级 = 该款式下的模板叶子（可选）
   // 叶子 value 编码 `${styleCode}|${templateId}`（templateId 空 = 内置默认模板），
-  // label 字段为"款式 / 模板名"（treeNodeLabelProp 指定后选中时显示在输入框）
+  // 展开时 title 显示完整"款式 / 模板名"便于区分；选中后通过 displayRender 仅显示款式名
   const styleTemplateTreeData = useMemo(() => {
     return styleOptions.map((style) => {
       // 二级：该款式下的数据库模板（templatesReady 后渲染，未加载完成时仅显示默认项）
@@ -293,15 +293,15 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         value: `style:${style.value}`,
         selectable: false,
         children: [
-          { title: '默认模板（内置）', label: `${style.label} / 默认模板（内置）`, value: `${style.value}|` },
+          { title: '默认模板（内置）', label: style.label, value: `${style.value}|` },
           ...entries.map((entry) => ({
             title: entry.name,
-            label: `${style.label} / ${entry.name}`,
+            label: style.label,
             value: `${style.value}|${entry.id}`,
           })),
           ...(missing ? [{
             title: '模板已删除（回退默认）',
-            label: `${style.label} / 模板已删除（回退默认）`,
+            label: style.label,
             value: `${style.value}|${orderInfo.templateId}`,
           }] : []),
         ],

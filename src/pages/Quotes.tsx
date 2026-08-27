@@ -91,6 +91,8 @@ interface SavedFilters {
   statusFilter: string
   customerFilter: string
   styleFilter: string
+  productionDateStart: string
+  productionDateEnd: string
   currentPage: number
   pageSize: number
 }
@@ -105,6 +107,8 @@ const getInitialFilters = (): SavedFilters => {
         statusFilter: parsed.statusFilter ?? 'active',
         customerFilter: parsed.customerFilter ?? '',
         styleFilter: parsed.styleFilter ?? '',
+        productionDateStart: parsed.productionDateStart ?? '',
+        productionDateEnd: parsed.productionDateEnd ?? '',
         currentPage: parsed.currentPage ?? 1,
         pageSize: parsed.pageSize ?? 20,
       }
@@ -117,6 +121,8 @@ const getInitialFilters = (): SavedFilters => {
     statusFilter: 'active',
     customerFilter: '',
     styleFilter: '',
+    productionDateStart: '',
+    productionDateEnd: '',
     currentPage: 1,
     pageSize: 20,
   }
@@ -130,6 +136,9 @@ export default function Quotes() {
   const [statusFilter, setStatusFilter] = useState<string>(initialFilters.statusFilter)
   const [customerFilter, setCustomerFilter] = useState(initialFilters.customerFilter)
   const [styleFilter, setStyleFilter] = useState(initialFilters.styleFilter)
+  // 做货日期范围筛选：值为 'YYYY-MM-DD' 字符串，空串表示未选
+  const [productionDateStart, setProductionDateStart] = useState(initialFilters.productionDateStart)
+  const [productionDateEnd, setProductionDateEnd] = useState(initialFilters.productionDateEnd)
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [printTarget, setPrintTarget] = useState<Quote | null>(null)
@@ -187,13 +196,15 @@ export default function Quotes() {
         statusFilter,
         customerFilter,
         styleFilter,
+        productionDateStart,
+        productionDateEnd,
         currentPage,
         pageSize,
       }))
     } catch {
       // sessionStorage 不可用，忽略
     }
-  }, [searchTerm, statusFilter, customerFilter, styleFilter, currentPage, pageSize])
+  }, [searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd, currentPage, pageSize])
 
   // 从 URL 读取业绩明细筛选条件（仪表盘双击业绩卡片跳转携带）
   useEffect(() => {
@@ -215,11 +226,11 @@ export default function Quotes() {
       return
     }
     setCurrentPage(1)
-  }, [searchTerm, statusFilter, customerFilter, styleFilter])
+  }, [searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd])
 
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, products, currentPage, pageSize, productionTimeFilter])
+  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd, products, currentPage, pageSize, productionTimeFilter])
 
   // 组件卸载时保存滚动位置（用户导航到详情/编辑页时触发）
   useEffect(() => {
@@ -303,7 +314,29 @@ export default function Quotes() {
         }
       })()
 
-      return matchesSearch && matchesStatus && matchesCustomer && matchesStyle && matchesProductionTime
+      // 做货日期范围筛选：基于做货开始时间(productionStartTime || productionTimeStart)
+      // 仅设置开始日期 -> 筛选该日期及之后的订单；仅设置结束日期 -> 筛选该日期及之前的订单；
+      // 同时设置 -> 筛选区间内的订单（区间两端包含当天）；均未设置 -> 不筛选
+      const matchesProductionDateRange = (() => {
+        if (!productionDateStart && !productionDateEnd) return true
+        const productionDateStr = quote.productionStartTime || quote.productionTimeStart
+        if (!productionDateStr) return false
+        const productionDate = new Date(productionDateStr)
+        if (isNaN(productionDate.getTime())) return false
+        if (productionDateStart) {
+          const start = new Date(productionDateStart)
+          start.setHours(0, 0, 0, 0)
+          if (productionDate < start) return false
+        }
+        if (productionDateEnd) {
+          const end = new Date(productionDateEnd)
+          end.setHours(23, 59, 59, 999)
+          if (productionDate > end) return false
+        }
+        return true
+      })()
+
+      return matchesSearch && matchesStatus && matchesCustomer && matchesStyle && matchesProductionTime && matchesProductionDateRange
     })
   }
 
@@ -555,7 +588,7 @@ export default function Quotes() {
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-[60vh] flex-none sm:flex-1 sm:min-h-0">
         <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 flex-shrink-0">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <input
@@ -605,6 +638,36 @@ export default function Quotes() {
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
+            </div>
+            {/* 做货日期范围筛选：基于做货开始时间，支持单日期或日期范围 */}
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <div className="w-full pl-9 pr-1 py-1 border border-gray-200 rounded-lg flex items-center gap-1 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
+                <input
+                  type="date"
+                  value={productionDateStart}
+                  onChange={(e) => setProductionDateStart(e.target.value)}
+                  title="做货开始日期（起）"
+                  className="flex-1 min-w-0 px-1 py-1 text-sm text-gray-700 outline-none bg-transparent"
+                />
+                <span className="text-gray-400 text-xs">至</span>
+                <input
+                  type="date"
+                  value={productionDateEnd}
+                  onChange={(e) => setProductionDateEnd(e.target.value)}
+                  title="做货开始日期（止）"
+                  className="flex-1 min-w-0 px-1 py-1 text-sm text-gray-700 outline-none bg-transparent"
+                />
+                {(productionDateStart || productionDateEnd) && (
+                  <button
+                    onClick={() => { setProductionDateStart(''); setProductionDateEnd('') }}
+                    className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
+                    title="清除做货日期筛选"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -926,7 +989,11 @@ export default function Quotes() {
 
               {groupedQuotes.length === 0 && (
                 <div className="p-8 text-center">
-                  <p className="text-gray-500">暂无订单记录</p>
+                  <p className="text-gray-500">
+                    {(searchTerm || statusFilter !== 'all' || customerFilter || styleFilter || productionDateStart || productionDateEnd || productionTimeFilter)
+                      ? '没有符合当前查询条件的订单，请调整筛选条件后重试'
+                      : '暂无订单记录'}
+                  </p>
                 </div>
               )}
             </div>
