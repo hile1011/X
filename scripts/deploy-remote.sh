@@ -14,6 +14,7 @@
 # 选项:
 #   --skip-build      跳过本地构建（使用已有 dist/ 和 api/dist/）
 #   --skip-push       跳过 git commit & push
+#   --skip-tag        跳过版本号递增与打标签（版本/tag 已手动完成时使用）
 #   --rollback        回滚到上一版本
 #   --version <ver>   指定版本号（如 v1.1.2）
 #   --dry-run         仅打印命令，不实际执行
@@ -458,14 +459,15 @@ show_help() {
 选项:
   --skip-build       跳过本地构建（使用已有 dist/ 和 api/dist/）
   --skip-push        跳过 git commit & push
+  --skip-tag         跳过版本号递增与打标签（版本/tag 已手动完成时使用）
   --version <ver>    指定版本号（如 1.1.2）
   --rollback         回滚到上一版本
   --dry-run          仅打印命令，不实际执行
-  --help             显示此帮助信息
+  --help             显示此帮助
 
 部署流程:
   1. Git 提交与推送（--skip-push 跳过）
-  2. 版本标签管理（自动递增版本号）
+  2. 版本标签管理（自动递增版本号；--skip-tag 跳过）
   3. 本地构建（前端 Vite + 后端 TypeScript）
   4. 打包与上传（源码 + 构建产物分开打包）
   5. 安装依赖（仅生产环境）
@@ -494,6 +496,7 @@ main() {
     # 解析参数
     SKIP_BUILD=false
     SKIP_PUSH=false
+    SKIP_TAG=false
     DO_ROLLBACK=false
     DRY_RUN=false
     TARGET_VERSION=""
@@ -503,6 +506,7 @@ main() {
         case "$1" in
             --skip-build)   SKIP_BUILD=true; shift ;;
             --skip-push)    SKIP_PUSH=true; shift ;;
+            --skip-tag)     SKIP_TAG=true; shift ;;
             --rollback)     DO_ROLLBACK=true; shift ;;
             --dry-run)      DRY_RUN=true; shift ;;
             --version)      TARGET_VERSION="$2"; shift 2 ;;
@@ -535,7 +539,10 @@ main() {
         step_git_commit
     fi
 
-    step_version_tag
+    if [[ "$SKIP_TAG" != "true" ]]; then
+        step_version_tag
+    fi
+
     step_local_build
     step_package_upload
     step_install_deps
