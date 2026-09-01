@@ -55,10 +55,11 @@ export default function CustomerSelect({ value, onChange, onAddressChange, place
 
   const handleSelect = useCallback((customer: Customer) => {
     onChange(customer.name)
+    onAddressChange?.(customer.address || '')
     // 关闭下拉框并清空搜索词（不调用 handleClose，避免搜索词覆盖已选客户名称）
     setIsOpen(false)
     setSearchTerm('')
-  }, [onChange])
+  }, [onChange, onAddressChange])
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
