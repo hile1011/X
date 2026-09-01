@@ -32,24 +32,13 @@ function splitHandleField(value: string): { material: string; spec: string } {
 }
 
 /**
- * 订单号生成（与 api/db.ts 同逻辑）
- * 格式：客户名称-时间戳-款式标签
+ * 订单号生成（与 api/db.ts generateUniqueQuoteNumber 同逻辑）
+ * 格式：16位随机数字（防重复校验由数据库查询保证，此处测试本地生成逻辑）
  */
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
-
-function getStyleLabel(value: string): string {
-  return PRODUCT_STYLE_OPTIONS.find((o) => o.value === value)?.label || value
-}
-
-function generateQuoteNumber(customerName: string, timestamp: string, productStyle: string): string {
-  return `${customerName}-${getStyleLabel(productStyle)}-${timestamp}`
+function generateQuoteNumberDigits(): string {
+  let digits = ''
+  for (let i = 0; i < 16; i++) digits += Math.floor(Math.random() * 10)
+  return digits
 }
 
 // ============================ 测试 ============================
@@ -155,36 +144,15 @@ describe('splitHandleField - 手提字段拆分', () => {
 })
 
 describe('generateQuoteNumber - 订单号生成', () => {
-  it('格式正确：客户-款式-时间戳（时间戳在末尾）', () => {
-    const number = generateQuoteNumber('测试客户', '20260731143000', '1')
-    expect(number).toBe('测试客户-无底无侧普通袋-20260731143000')
+  it('格式正确：16位纯数字', () => {
+    const number = generateQuoteNumberDigits()
+    expect(number).toMatch(/^\d{16}$/)
   })
 
-  it('款式1 → 无底无侧普通袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '1')).toContain('无底无侧普通袋')
-  })
-
-  it('款式2 → 有底无侧普通袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '2')).toContain('有底无侧普通袋')
-  })
-
-  it('款式3 → 有底有侧普通袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '3')).toContain('有底有侧普通袋')
-  })
-
-  it('款式4 → 手提连底普通拼接袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '4')).toContain('手提连底普通拼接袋')
-  })
-
-  it('款式5 → 手提连底高级拼接袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '5')).toContain('手提连底高级拼接袋')
-  })
-
-  it('款式6 → 手提无连底拼接袋', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '6')).toContain('手提无连底拼接袋')
-  })
-
-  it('无效款式值时使用原值', () => {
-    expect(generateQuoteNumber('客户', '20260731143000', '99')).toContain('99')
+  it('多次生成的订单号极大概率互不相同（随机性）', () => {
+    const numbers = new Set<string>()
+    for (let i = 0; i < 100; i++) numbers.add(generateQuoteNumberDigits())
+    // 10^16 空间下 100 次生成应全部不同
+    expect(numbers.size).toBe(100)
   })
 })

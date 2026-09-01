@@ -32,6 +32,7 @@ export interface PaymentColumn {
 }
 
 export const PAYMENT_COLUMNS: PaymentColumn[] = [
+  { header: '订单号', key: 'quote_number', width: 20, type: 'text' },
   { header: '客户名称', key: 'customerName', width: 18, type: 'text' },
   { header: '数量', key: 'quantity', width: 10, type: 'number' },
   { header: '产品图片', key: 'thumbnail', width: 12, type: 'image' },
@@ -276,6 +277,10 @@ export async function generatePaymentReceiptExcel(
     PAYMENT_COLUMNS.forEach((col, colIdx) => {
       const cell = row.getCell(colIdx + 1)
       switch (col.key) {
+        case 'quote_number':
+          cell.value = order.quote_number || ''
+          cell.alignment = { horizontal: 'left', vertical: 'middle' }
+          break
         case 'customerName':
           cell.value = order.customerName || ''
           cell.alignment = { horizontal: 'left', vertical: 'middle' }

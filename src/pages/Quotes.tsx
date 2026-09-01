@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Select as AntSelect } from 'antd'
 import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
@@ -88,13 +89,20 @@ const QUOTES_FILTERS_KEY = 'quotes_filters'
 
 interface SavedFilters {
   searchTerm: string
-  statusFilter: string
-  customerFilter: string
+  statusFilters: string[]
+  customerFilters: string[]
   styleFilter: string
   productionDateStart: string
   productionDateEnd: string
   currentPage: number
   pageSize: number
+}
+
+// 兼容旧版单选字符串（多选改造前 sessionStorage 中 statusFilter/customerFilter 为 string）
+const toStringArray = (value: unknown, fallback: string[]): string[] => {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string')
+  if (typeof value === 'string' && value) return [value]
+  return fallback
 }
 
 const getInitialFilters = (): SavedFilters => {
@@ -104,8 +112,8 @@ const getInitialFilters = (): SavedFilters => {
       const parsed = JSON.parse(saved)
       return {
         searchTerm: parsed.searchTerm ?? '',
-        statusFilter: parsed.statusFilter ?? 'active',
-        customerFilter: parsed.customerFilter ?? '',
+        statusFilters: toStringArray(parsed.statusFilters ?? parsed.statusFilter, ['active']),
+        customerFilters: toStringArray(parsed.customerFilters ?? parsed.customerFilter, []),
         styleFilter: parsed.styleFilter ?? '',
         productionDateStart: parsed.productionDateStart ?? '',
         productionDateEnd: parsed.productionDateEnd ?? '',
@@ -118,8 +126,8 @@ const getInitialFilters = (): SavedFilters => {
   }
   return {
     searchTerm: '',
-    statusFilter: 'active',
-    customerFilter: '',
+    statusFilters: ['active'],
+    customerFilters: [],
     styleFilter: '',
     productionDateStart: '',
     productionDateEnd: '',
@@ -133,8 +141,8 @@ export default function Quotes() {
   const [quotes, setQuotes] = useState<Quote[]>([])
   const [groupedQuotes, setGroupedQuotes] = useState<GroupedQuotes[]>([])
   const [searchTerm, setSearchTerm] = useState(initialFilters.searchTerm)
-  const [statusFilter, setStatusFilter] = useState<string>(initialFilters.statusFilter)
-  const [customerFilter, setCustomerFilter] = useState(initialFilters.customerFilter)
+  const [statusFilters, setStatusFilters] = useState<string[]>(initialFilters.statusFilters)
+  const [customerFilters, setCustomerFilters] = useState<string[]>(initialFilters.customerFilters)
   const [styleFilter, setStyleFilter] = useState(initialFilters.styleFilter)
   // 做货日期范围筛选：值为 'YYYY-MM-DD' 字符串，空串表示未选
   const [productionDateStart, setProductionDateStart] = useState(initialFilters.productionDateStart)
@@ -193,8 +201,8 @@ export default function Quotes() {
     try {
       sessionStorage.setItem(QUOTES_FILTERS_KEY, JSON.stringify({
         searchTerm,
-        statusFilter,
-        customerFilter,
+        statusFilters,
+        customerFilters,
         styleFilter,
         productionDateStart,
         productionDateEnd,
@@ -204,7 +212,7 @@ export default function Quotes() {
     } catch {
       // sessionStorage 不可用，忽略
     }
-  }, [searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd, currentPage, pageSize])
+  }, [searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd, currentPage, pageSize])
 
   // 从 URL 读取业绩明细筛选条件（仪表盘双击业绩卡片跳转携带）
   useEffect(() => {
@@ -226,11 +234,11 @@ export default function Quotes() {
       return
     }
     setCurrentPage(1)
-  }, [searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd])
+  }, [searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd])
 
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilter, customerFilter, styleFilter, productionDateStart, productionDateEnd, products, currentPage, pageSize, productionTimeFilter])
+  }, [quotes, searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd, products, currentPage, pageSize, productionTimeFilter])
 
   // 组件卸载时保存滚动位置（用户导航到详情/编辑页时触发）
   useEffect(() => {
@@ -280,13 +288,19 @@ export default function Quotes() {
         quote.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(searchTerm.toLowerCase())
 
+      // 多选状态筛选：空数组 = 全部状态；'active' = 进行中（除已取消外的全部）；其余为具体状态值，任一命中即匹配
       const matchesStatus =
-        statusFilter === 'all' ||
-        (statusFilter === 'active' && quote.status !== 6) ||
-        quote.status === parseInt(statusFilter)
+        statusFilters.length === 0 ||
+        statusFilters.some((filter) =>
+          filter === 'active' ? quote.status !== 6 : quote.status === parseInt(filter)
+        )
 
-      const matchesCustomer = !customerFilter ||
-        quote.customerName.toLowerCase().includes(customerFilter.toLowerCase())
+      // 多选客户筛选：空数组 = 不筛选；否则订单客户名需与任一选中客户名匹配（忽略大小写）
+      const matchesCustomer =
+        customerFilters.length === 0 ||
+        customerFilters.some((name) =>
+          quote.customerName.toLowerCase() === name.toLowerCase()
+        )
 
       const matchesStyle = !styleFilter ||
         quote.productStyle === styleFilter ||
@@ -489,7 +503,7 @@ export default function Quotes() {
     try {
       const { blob, filename } = await api.export.paymentReceipts(
         paymentOrders.map((q) => q.id),
-        customerFilter,
+        customerFilters.join(','),
       )
       downloadBlob(blob, filename)
     } catch (error) {
@@ -599,18 +613,24 @@ export default function Quotes() {
                 className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
               />
             </div>
-            <div className="relative">
-              <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <select
-                value={customerFilter}
-                onChange={(e) => setCustomerFilter(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none appearance-none cursor-pointer"
-              >
-                <option value="">客户名称</option>
-                {getCustomerNames().map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
+            {/* 客户名称多选筛选：支持输入关键字实时模糊检索 + 下拉多选 */}
+            <div className="relative quotes-filter-wrap">
+              <Building className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={18} />
+              <AntSelect
+                mode="multiple"
+                showSearch
+                allowClear
+                value={customerFilters}
+                onChange={(values: string[]) => setCustomerFilters(values)}
+                placeholder="客户名称（输入检索，可多选）"
+                optionFilterProp="label"
+                filterSort={(a, b) => String(a?.label ?? '').localeCompare(String(b?.label ?? ''), 'zh-Hans-CN')}
+                options={getCustomerNames().map((name) => ({ value: name, label: name }))}
+                maxTagCount="responsive"
+                popupClassName="quotes-multi-select-dropdown"
+                className="quotes-multi-select"
+                style={{ width: '100%' }}
+              />
             </div>
             <div className="relative">
               <Eye className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -625,19 +645,24 @@ export default function Quotes() {
                 ))}
               </select>
             </div>
-            <div className="relative">
-              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none appearance-none cursor-pointer"
-              >
-                <option value="all">全部状态</option>
-                <option value="active">进行中</option>
-                {STATUS_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+            {/* 订单状态多选筛选：'active' = 进行中（除已取消外全部），具体状态任选多个；空 = 全部状态 */}
+            <div className="relative quotes-filter-wrap">
+              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10 pointer-events-none" size={18} />
+              <AntSelect
+                mode="multiple"
+                allowClear
+                value={statusFilters}
+                onChange={(values: string[]) => setStatusFilters(values)}
+                placeholder="全部状态（可多选）"
+                options={[
+                  { value: 'active', label: '进行中' },
+                  ...STATUS_OPTIONS.map((option) => ({ value: String(option.value), label: option.label })),
+                ]}
+                maxTagCount="responsive"
+                popupClassName="quotes-multi-select-dropdown"
+                className="quotes-multi-select"
+                style={{ width: '100%' }}
+              />
             </div>
             {/* 做货日期范围筛选：基于做货开始时间，支持单日期或日期范围 */}
             <div className="relative">
@@ -698,11 +723,12 @@ export default function Quotes() {
             </div>
           )}
           <div ref={scrollContainerRef} className="flex-1 overflow-auto min-h-0">
-            <div className="min-w-[2036px]">
+            <div className="min-w-[2200px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                 <div className="flex">
                   <div className="w-16 px-4 py-3 flex-shrink-0"></div>
+                  <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单号</div>
                   <div className="w-40 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">款式</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">产品规格</div>
                   <div className="w-24 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">数量</div>
@@ -787,6 +813,14 @@ export default function Quotes() {
                                 <Image className="text-gray-400" size={18} />
                               </div>
                             </div>
+
+                            {/* 订单号（16位随机数字，创建后不变） */}
+                            <TooltipCell
+                              className="w-44 px-4 py-4 text-gray-600 text-sm font-mono"
+                              tooltip={quote.quote_number}
+                            >
+                              {quote.quote_number}
+                            </TooltipCell>
 
                             {/* 款式 */}
                             <TooltipCell
@@ -990,7 +1024,7 @@ export default function Quotes() {
               {groupedQuotes.length === 0 && (
                 <div className="p-8 text-center">
                   <p className="text-gray-500">
-                    {(searchTerm || statusFilter !== 'all' || customerFilter || styleFilter || productionDateStart || productionDateEnd || productionTimeFilter)
+                    {(searchTerm || statusFilters.length > 0 || customerFilters.length > 0 || styleFilter || productionDateStart || productionDateEnd || productionTimeFilter)
                       ? '没有符合当前查询条件的订单，请调整筛选条件后重试'
                       : '暂无订单记录'}
                   </p>

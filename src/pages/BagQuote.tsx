@@ -534,6 +534,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         // 新增保存后切换到编辑模式（替换 URL，不返回列表页），避免重复保存创建多个订单
         if (created?.id) {
           skipNextLoadRef.current = true
+          // 回填后端生成的16位随机订单号（切换编辑模式后不重新加载）
+          if (created.quote_number) setQuoteNumber(created.quote_number)
           navigate(`/quotes/${created.id}/edit`, { replace: true })
         }
       }
@@ -1733,8 +1735,20 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               {/* 表单字段 - 密集网格。LG:6列 MD:4列 SM:2列
               同行规则：客户+打样费+箱规 / 大货日期+天数 / 面料+工艺+手提 / 收货地址+备注 */}
               <div className={`grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5 ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
-                {/* 行1：客户名称 + 订单状态(只读) + 打样费/天 + 箱规 */}
-                <div className="col-span-2 md:col-span-2 lg:col-span-2">
+                {/* 行1：订单号(只读) + 客户名称 + 订单状态(只读) + 打样费/天 + 箱规 */}
+                {/* 订单号：16位随机数字（系统生成，全局唯一，只读），置于客户名称之前 */}
+                <div className="col-span-1 md:col-span-1 lg:col-span-1">
+                  <label className="block text-xs text-gray-400 mb-0.5">订单号</label>
+                  <input
+                    type="text"
+                    value={quoteNumber}
+                    readOnly
+                    placeholder="保存后自动生成"
+                    title="订单号由系统自动生成，创建后不可修改"
+                    className="w-full px-2 py-1 text-sm font-mono text-gray-600 bg-gray-50 border border-gray-200 rounded cursor-default truncate"
+                  />
+                </div>
+                <div className="col-span-1 md:col-span-1 lg:col-span-1">
                   <label className="block text-xs text-gray-400 mb-0.5">客户名称</label>
                   <CustomerSelect
                     value={orderInfo.customerName}

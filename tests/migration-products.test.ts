@@ -201,76 +201,31 @@ describe('默认款式删除保护（isDefaultStyleProduct）', () => {
 
 
 // ============================================================
-// getStyleLabel 动态查询 & quote_number 格式测试
+// quote_number 订单号测试
+// （订单号已改为16位随机数字，不再编入客户名称/款式信息；
+//   getStyleLabel 动态查询逻辑已随订单号格式调整移除）
 // ============================================================
-describe('getStyleLabel 动态查询产品表（通过 quote_number 验证）', () => {
+describe('quote_number 订单号（16位随机数字）', () => {
   beforeEach(async () => {
     await resetTestDatabase()
   })
 
-  it('按 code 查询：订单号中使用产品名称', async () => {
-    // 迁移后 products 表有 code='1' → 无底无侧普通袋
-    const quote = await db.quotes.create({ customerName: '动态查询客户', productStyle: '1' })
-    expect(quote.quote_number).toContain('无底无侧普通袋')
-  })
-
-  it('产品改名后新订单号使用新名称', async () => {
-    await db.products.update('style-3', { name: '改名后的款式3' })
-    const quote = await db.quotes.create({ customerName: '改名测试客户', productStyle: '3' })
-    expect(quote.quote_number).toContain('改名后的款式3')
-    expect(quote.quote_number).not.toContain('有底有侧普通袋')
-  })
-
-  it('硬编码兜底：code 不在 products 表时仍可生成订单号', async () => {
-    // code='99' 不在 products 表中，硬编码也没有 → quote_number 中包含 '99'
-    const quote = await db.quotes.create({ customerName: '兜底测试', productStyle: '99' })
-    expect(quote.quote_number).toContain('99')
-  })
-})
-
-
-describe('quote_number 格式（时间戳在末尾）', () => {
-  beforeEach(async () => {
-    await resetTestDatabase()
-  })
-
-  it('create：订单号格式为 客户名称-款式标签-时间戳', async () => {
+  it('create：订单号为16位随机数字', async () => {
     const quote = await db.quotes.create({
       customerName: '格式测试客户',
       productStyle: '1',
     })
-    // 格式：格式测试客户-无底无侧普通袋-14位时间戳
-    expect(quote.quote_number).toMatch(/^格式测试客户-无底无侧普通袋-\d{14}$/)
+    expect(quote.quote_number).toMatch(/^\d{16}$/)
   })
 
-  it('update：修改客户名称时保留原时间戳，格式正确', async () => {
+  it('update：修改客户名称/款式时订单号保持不变', async () => {
     const quote = await db.quotes.create({
       customerName: '原客户名',
       productStyle: '2',
     })
-    const originalTimestamp = quote.quote_number.match(/\d{14}/)?.[0]
 
-    const updated = await db.quotes.update(quote.id, { customerName: '新客户名' })
-    const newTimestamp = updated!.quote_number.match(/\d{14}/)?.[0]
-
-    expect(newTimestamp).toBe(originalTimestamp)
-    expect(updated!.quote_number).toMatch(/^新客户名-有底无侧普通袋-\d{14}$/)
-  })
-
-  it('update：修改款式时保留原时间戳，款式标签更新，时间戳在末尾', async () => {
-    const quote = await db.quotes.create({
-      customerName: '原客户名',
-      productStyle: '2',
-    })
-    const originalTimestamp = quote.quote_number.match(/\d{14}/)?.[0]
-
-    const updated = await db.quotes.update(quote.id, { productStyle: '4' })
-    const newTimestamp = updated!.quote_number.match(/\d{14}/)?.[0]
-
-    expect(newTimestamp).toBe(originalTimestamp)
-    expect(updated!.quote_number).toContain('手提连底普通拼接袋')
-    // 时间戳在末尾
-    expect(updated!.quote_number.endsWith(originalTimestamp!)).toBe(true)
+    const updated = await db.quotes.update(quote.id, { customerName: '新客户名', productStyle: '4' })
+    expect(updated!.quote_number).toBe(quote.quote_number)
   })
 })
 

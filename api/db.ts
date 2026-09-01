@@ -70,28 +70,12 @@ if (currentVersion < CURRENT_SCHEMA_VERSION) {
   console.log(`[DB] Schema at latest version v${currentVersion}`)
 }
 
-const PRODUCT_STYLE_OPTIONS = [
-  { value: '1', label: '无底无侧普通袋' },
-  { value: '2', label: '有底无侧普通袋' },
-  { value: '3', label: '有底有侧普通袋' },
-  { value: '4', label: '手提连底普通拼接袋' },
-  { value: '5', label: '手提连底高级拼接袋' },
-  { value: '6', label: '手提无连底拼接袋' },
-]
-
 // 6 个默认款式产品的 id（迁移脚本 v7 插入，不可删除）
 export const DEFAULT_STYLE_PRODUCT_IDS = ['style-1', 'style-2', 'style-3', 'style-4', 'style-5', 'style-6']
 
 /** 判断产品是否为默认款式（默认款式不可删除） */
 export function isDefaultStyleProduct(id: string): boolean {
   return DEFAULT_STYLE_PRODUCT_IDS.includes(id)
-}
-
-const getStyleLabel = async (value: string): Promise<string> => {
-  const row = await dbConn.prepare('SELECT name FROM products WHERE code = ? OR id = ?').get(value, value) as { name?: string } | undefined
-  if (row?.name) return row.name
-  const option = PRODUCT_STYLE_OPTIONS.find((opt) => opt.value === value)
-  return option ? option.label : value
 }
 
 const timeNow = () => {
@@ -174,6 +158,27 @@ function calcPendingAmount(q: { quantity?: string | number | null; sellPriceNoTa
   // 抵扣=是：只减已收打样费；抵扣=否：加应收打样费再减已收打样费
   const feePart = q.sampleFeeDeduct ? -actualFee : Math.round(((Number(q.receivableSampleFee) || 0) - actualFee) * 100) / 100
   return Math.round((total + feePart - (Number(q.deposit) || 0)) * 100) / 100
+}
+
+/**
+ * 生成 16 位随机数字订单号（quote_number，全局唯一）
+ * 防重复校验：生成后查询 quotes 表，若已存在则重新生成（重试上限内）
+ * 导出供单元测试覆盖碰撞重试与兜底路径
+ */
+export async function generateUniqueQuoteNumber(): Promise<string> {
+  const generate = (): string => {
+    let digits = ''
+    for (let i = 0; i < 16; i++) digits += Math.floor(Math.random() * 10)
+    return digits
+  }
+  // 随机重试（10^16 空间下碰撞概率极低，10 次重试已充分）
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const candidate = generate()
+    const existing = await dbConn.prepare('SELECT id FROM quotes WHERE quote_number = ?').get(candidate)
+    if (!existing) return candidate
+  }
+  // 兜底：时间戳(13位) + 3位随机数，仍保持 16 位且必不相同
+  return `${Date.now()}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
 }
 
 export const dbApi = {
@@ -339,11 +344,10 @@ export const dbApi = {
     create: async (data: Partial<Quote>) => {
       const now = new Date()
       const today = now.toISOString().split('T')[0]
-      const timestamp = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       const customerName = data.customerName || ''
       const productStyle = data.productStyle || '1'
-      const styleLabel = await getStyleLabel(productStyle)
-      const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
+      // 订单号：16位随机数字（全局唯一，含防重复校验；客户/款式信息不再编入订单号）
+      const quoteNumber = await generateUniqueQuoteNumber()
       const id = `quote-${Date.now()}`
 
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
@@ -423,14 +427,8 @@ export const dbApi = {
       ;(existingParsed as any).templateId = (existing as any).template_id ?? (existingParsed as any).templateId ?? ''
       let updatedQuote: Quote = { ...existingParsed, ...data, updated_at: timeNow() }
 
-      if (data.customerName !== undefined || data.productStyle !== undefined) {
-        const customerName = data.customerName !== undefined ? data.customerName : existing.customerName
-        const productStyle = data.productStyle !== undefined ? data.productStyle : existing.productStyle
-        const styleLabel = await getStyleLabel(productStyle)
-        const timestampMatch = existing.quote_number.match(/\d{14}/)
-        const timestamp = timestampMatch ? timestampMatch[0] : ''
-        updatedQuote.quote_number = `${customerName}-${styleLabel}-${timestamp}`
-      }
+      // 订单号为16位随机数字（全局唯一），创建后不再随客户名称/款式变化
+      updatedQuote.quote_number = existing.quote_number
 
       if (data.images !== undefined) {
         updatedQuote.images = data.images
@@ -567,11 +565,10 @@ export const dbApi = {
 
       const now = new Date()
       const today = now.toISOString().split('T')[0]
-      const timestamp = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       const customerName = existing.customerName || ''
       const productStyle = existing.productStyle || '1'
-      const styleLabel = await getStyleLabel(productStyle)
-      const quoteNumber = `${customerName}-${styleLabel}-${timestamp}`
+      // 复制订单：订单号不复用原订单，自动生成全新 16 位随机订单号
+      const quoteNumber = await generateUniqueQuoteNumber()
       const newId = `quote-${Date.now()}`
 
       await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,

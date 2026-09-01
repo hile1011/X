@@ -585,7 +585,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     expect(workbook.worksheets[0].name.length).toBeLessThanOrEqual(31)
   })
 
-  it('表头行（第 2 行）包含所有 13 列固定字段', async () => {
+  it('表头行（第 2 行）包含所有 14 列固定字段（订单号在第一列）', async () => {
     const orders = [createPaymentQuote()]
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '测试客户')
@@ -593,6 +593,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const headerRow = sheet.getRow(2)
     const headers = PAYMENT_COLUMNS.map((_, i) => headerRow.getCell(i + 1).value)
     expect(headers).toEqual([
+      '订单号',
       '客户名称',
       '数量',
       '产品图片',
@@ -619,7 +620,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     })
   })
 
-  it('数据行正确填充客户名称、数量、工艺', async () => {
+  it('数据行正确填充订单号、客户名称、数量、工艺', async () => {
     const orders = [
       createPaymentQuote({
         customerName: '客户A',
@@ -631,9 +632,10 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3) // 第 3 行起为数据行
-    expect(dataRow.getCell(1).value).toBe('客户A')
-    expect(dataRow.getCell(2).value).toBe(7200)
-    expect(dataRow.getCell(5).value).toBe('单面数码uv印刷+口头2.5cm')
+    expect(dataRow.getCell(1).value).toBe('测试客户-无底无侧普通袋-20240722100000')
+    expect(dataRow.getCell(2).value).toBe('客户A')
+    expect(dataRow.getCell(3).value).toBe(7200)
+    expect(dataRow.getCell(6).value).toBe('单面数码uv印刷+口头2.5cm')
   })
 
   it('数据行正确填充日期区间', async () => {
@@ -647,7 +649,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
-    expect(dataRow.getCell(4).value).toBe('2024-07-22 - 2024-08-06')
+    expect(dataRow.getCell(5).value).toBe('2024-07-22 - 2024-08-06')
   })
 
   it('空日期区间显示为 "-"', async () => {
@@ -660,7 +662,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
-    expect(sheet.getRow(3).getCell(4).value).toBe('-')
+    expect(sheet.getRow(3).getCell(5).value).toBe('-')
   })
 
   it('数据行正确填充单价和总额（含税与不含税）', async () => {
@@ -676,13 +678,13 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
     // 单个卖价(不含税) = round2(3.42) = 3.42
-    expect(dataRow.getCell(6).value).toBe(3.42)
+    expect(dataRow.getCell(7).value).toBe(3.42)
     // 单个卖价(含税) = round2(3.76) = 3.76
-    expect(dataRow.getCell(7).value).toBe(3.76)
+    expect(dataRow.getCell(8).value).toBe(3.76)
     // 销售总额(不含税) = round2(3.42 * 7200) = 24624
-    expect(dataRow.getCell(8).value).toBe(24624)
+    expect(dataRow.getCell(9).value).toBe(24624)
     // 销售总额(含税) = round2(3.76 * 7200) = 27072
-    expect(dataRow.getCell(9).value).toBe(27072)
+    expect(dataRow.getCell(10).value).toBe(27072)
   })
 
   it('货币单元格应用 ¥#,##0.00 数字格式', async () => {
@@ -691,10 +693,10 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
-    expect(dataRow.getCell(6).numFmt).toBe('¥#,##0.00')
     expect(dataRow.getCell(7).numFmt).toBe('¥#,##0.00')
     expect(dataRow.getCell(8).numFmt).toBe('¥#,##0.00')
     expect(dataRow.getCell(9).numFmt).toBe('¥#,##0.00')
+    expect(dataRow.getCell(10).numFmt).toBe('¥#,##0.00')
   })
 
   it('无图片时图片列显示 "-"', async () => {
@@ -702,7 +704,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
-    expect(sheet.getRow(3).getCell(3).value).toBe('-')
+    expect(sheet.getRow(3).getCell(4).value).toBe('-')
   })
 
   it('有图片时图片列占位为空字符串（图片浮于单元格之上）', async () => {
@@ -711,17 +713,18 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const thumbnails = new Map<string, Buffer | null>([['p1', thumb]])
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
-    expect(sheet.getRow(3).getCell(3).value).toBe('')
+    expect(sheet.getRow(3).getCell(4).value).toBe('')
   })
 
-  it('汇总行首列显示"合计"', async () => {
+  it('汇总行客户名称列显示"合计"（订单号列为空）', async () => {
     const orders = [createPaymentQuote({ quantity: '1000', sellPriceNoTax: 3.0, sellPriceWithTax: 3.3 })]
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     // 单订单时：第 3 行为数据，第 4 行为汇总
     const summaryRow = sheet.getRow(4)
-    expect(summaryRow.getCell(1).value).toBe('合计')
+    expect(summaryRow.getCell(1).value).toBe('')
+    expect(summaryRow.getCell(2).value).toBe('合计')
   })
 
   it('汇总行数量、金额与 calculatePaymentSummary 结果一致（不含实收打样费汇总）', async () => {
@@ -735,11 +738,11 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     // 2 个数据行后第 5 行为汇总
     const summaryRow = sheet.getRow(5)
     const expected = calculatePaymentSummary(orders)
-    expect(summaryRow.getCell(2).value).toBe(expected.totalQuantity)
-    expect(summaryRow.getCell(8).value).toBe(expected.totalSellNoTax)
-    expect(summaryRow.getCell(9).value).toBe(expected.totalSellWithTax)
-    expect(summaryRow.getCell(10).value).toBe('') // 实收打样费已从汇总中移除
-    expect(summaryRow.getCell(13).value).toBe(expected.totalPendingAmount)
+    expect(summaryRow.getCell(3).value).toBe(expected.totalQuantity)
+    expect(summaryRow.getCell(9).value).toBe(expected.totalSellNoTax)
+    expect(summaryRow.getCell(10).value).toBe(expected.totalSellWithTax)
+    expect(summaryRow.getCell(11).value).toBe('') // 实收打样费已从汇总中移除
+    expect(summaryRow.getCell(14).value).toBe(expected.totalPendingAmount)
   })
 
   it('数据行正确填充实收打样费、抵扣大货、待收总额', async () => {
@@ -756,9 +759,9 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
-    expect(dataRow.getCell(11).value).toBe(500)
-    expect(dataRow.getCell(12).value).toBe('是')
-    expect(dataRow.getCell(13).value).toBe(24000)
+    expect(dataRow.getCell(12).value).toBe(500)
+    expect(dataRow.getCell(13).value).toBe('是')
+    expect(dataRow.getCell(14).value).toBe(24000)
   })
 
   it('数据行正确填充应收打样费', async () => {
@@ -772,7 +775,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
-    expect(sheet.getRow(3).getCell(10).value).toBe(1500)
+    expect(sheet.getRow(3).getCell(11).value).toBe(1500)
   })
 
   it('抵扣大货为 false 时显示"否"', async () => {
@@ -780,7 +783,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const thumbnails = new Map<string, Buffer | null>()
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
-    expect(sheet.getRow(3).getCell(12).value).toBe('否')
+    expect(sheet.getRow(3).getCell(13).value).toBe('否')
   })
 
   it('应收打样费、实收打样费、待收总额为 undefined 时数据行显示 0', async () => {
@@ -795,9 +798,9 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
-    expect(dataRow.getCell(10).value).toBe(0)
     expect(dataRow.getCell(11).value).toBe(0)
-    expect(dataRow.getCell(13).value).toBe(0)
+    expect(dataRow.getCell(12).value).toBe(0)
+    expect(dataRow.getCell(14).value).toBe(0)
   })
 
   it('应收打样费、实收打样费、待收总额列应用货币格式', async () => {
@@ -806,9 +809,9 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     const dataRow = sheet.getRow(3)
-    expect(dataRow.getCell(10).numFmt).toBe('¥#,##0.00')
     expect(dataRow.getCell(11).numFmt).toBe('¥#,##0.00')
-    expect(dataRow.getCell(13).numFmt).toBe('¥#,##0.00')
+    expect(dataRow.getCell(12).numFmt).toBe('¥#,##0.00')
+    expect(dataRow.getCell(14).numFmt).toBe('¥#,##0.00')
   })
 
   it('汇总行应用加粗字体', async () => {
@@ -874,7 +877,7 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const sheet = workbook.worksheets[0]
     // 5 数据行 + 汇总行（实际行数包含标题和表头）
     // 标题(1) + 表头(2) + 数据(3-7) + 汇总(8)
-    expect(sheet.getRow(8).getCell(1).value).toBe('合计')
+    expect(sheet.getRow(8).getCell(2).value).toBe('合计')
     expect(sheet.getRow(9).getCell(1).value).toBeNull()
   })
 
@@ -884,8 +887,8 @@ describe('generatePaymentReceiptExcel - 收款单 Excel 生成', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     // 第 3 行即为汇总行
-    expect(sheet.getRow(3).getCell(1).value).toBe('合计')
-    expect(sheet.getRow(3).getCell(2).value).toBe(0)
+    expect(sheet.getRow(3).getCell(2).value).toBe('合计')
+    expect(sheet.getRow(3).getCell(3).value).toBe(0)
   })
 
   it('客户名包含特殊字符时工作表名被清洗', async () => {
@@ -973,13 +976,14 @@ describe('workbookToBuffer - Workbook 转 Buffer', () => {
 // ============================ 常量定义测试 ============================
 
 describe('PAYMENT_COLUMNS - 固定列定义', () => {
-  it('列数为 13（按需求规范）', () => {
-    expect(PAYMENT_COLUMNS.length).toBe(13)
+  it('列数为 14（按需求规范，订单号为第一列）', () => {
+    expect(PAYMENT_COLUMNS.length).toBe(14)
   })
 
   it('列顺序符合需求规范', () => {
     const keys = PAYMENT_COLUMNS.map((c) => c.key)
     expect(keys).toEqual([
+      'quote_number',
       'customerName',
       'quantity',
       'thumbnail',
@@ -999,6 +1003,7 @@ describe('PAYMENT_COLUMNS - 固定列定义', () => {
   it('列标题符合需求规范', () => {
     const headers = PAYMENT_COLUMNS.map((c) => c.header)
     expect(headers).toEqual([
+      '订单号',
       '客户名称',
       '数量',
       '产品图片',
@@ -1131,11 +1136,11 @@ describe('边界场景', () => {
     const workbook = await generatePaymentReceiptExcel(orders, thumbnails, '客户A')
     const sheet = workbook.worksheets[0]
     // p1（第 3 行）：有图 → 占位空字符串
-    expect(sheet.getRow(3).getCell(3).value).toBe('')
+    expect(sheet.getRow(3).getCell(4).value).toBe('')
     // p2（第 4 行）：无图 → "-"
-    expect(sheet.getRow(4).getCell(3).value).toBe('-')
+    expect(sheet.getRow(4).getCell(4).value).toBe('-')
     // p3（第 5 行）：有图 → 占位空字符串
-    expect(sheet.getRow(5).getCell(3).value).toBe('')
+    expect(sheet.getRow(5).getCell(4).value).toBe('')
   })
 
   it('浮点精度一致性：多订单汇总无累积误差', () => {

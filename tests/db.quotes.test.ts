@@ -163,40 +163,52 @@ describe('Quote 状态流转', () => {
 })
 
 describe('Quote 订单号生成', () => {
-  it('创建时生成订单号格式：客户名称-时间戳-款式', async () => {
+  it('创建时生成订单号格式：16位随机数字', async () => {
     const quote = await db.quotes.create({
       customerName: '深圳科技公司',
       productStyle: '3',
     })
-    expect(quote.quote_number).toMatch(/^深圳科技公司-有底有侧普通袋-\d{14}$/)
+    expect(quote.quote_number).toMatch(/^\d{16}$/)
   })
 
-  it('修改客户名称时保留原时间戳，更新订单号', async () => {
+  it('多个订单的订单号互不相同（全局唯一）', async () => {
+    const numbers = new Set<string>()
+    for (let i = 0; i < 5; i++) {
+      const quote = await db.quotes.create({ customerName: `唯一性测试客户${i}`, productStyle: '1' })
+      expect(numbers.has(quote.quote_number)).toBe(false)
+      numbers.add(quote.quote_number)
+    }
+  })
+
+  it('修改客户名称时订单号保持不变', async () => {
     const quote = await db.quotes.create({
       customerName: '原客户',
       productStyle: '1',
     })
-    const originalTimestamp = quote.quote_number.match(/\d{14}/)?.[0]
 
     const updated = await db.quotes.update(quote.id, { customerName: '新客户' })
-    const newTimestamp = updated!.quote_number.match(/\d{14}/)?.[0]
-
-    expect(updated!.quote_number).toContain('新客户')
-    expect(newTimestamp).toBe(originalTimestamp)
+    expect(updated!.quote_number).toBe(quote.quote_number)
   })
 
-  it('修改款式时保留原时间戳，更新款式标签', async () => {
+  it('修改款式时订单号保持不变', async () => {
     const quote = await db.quotes.create({
       customerName: '测试客户',
       productStyle: '1',
     })
-    const originalTimestamp = quote.quote_number.match(/\d{14}/)?.[0]
 
     const updated = await db.quotes.update(quote.id, { productStyle: '4' })
-    const newTimestamp = updated!.quote_number.match(/\d{14}/)?.[0]
+    expect(updated!.quote_number).toBe(quote.quote_number)
+  })
 
-    expect(updated!.quote_number).toContain('手提连底普通拼接袋')
-    expect(newTimestamp).toBe(originalTimestamp)
+  it('复制订单时生成全新订单号（不复用原订单号）', async () => {
+    const quote = await db.quotes.create({
+      customerName: '复制测试客户',
+      productStyle: '1',
+    })
+    const copied = await db.quotes.copy(quote.id, 'tester')
+    expect(copied).not.toBeNull()
+    expect(copied!.quote_number).toMatch(/^\d{16}$/)
+    expect(copied!.quote_number).not.toBe(quote.quote_number)
   })
 
   it('未传款式时 productStyle 默认为 1', async () => {
