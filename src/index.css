@@ -66,11 +66,13 @@ body {
   background: #94a3b8;
 }
 
-/* 款式/表格模板树形下拉（antd TreeSelect）：视觉与订单编辑页原生输入框一致
+/* 款式/表格模板树形下拉（antd v6 TreeSelect）：视觉与订单编辑页原生输入框一致
    Tailwind 任意变体类在字符串拼接场景下提取不稳定，改用全局 CSS + !important 兜底
    色值对应 Tailwind blue 色板：200=#bfdbfe 400=#60a5fa 500=#3b82f6 600=#2563eb
-   blue-50/40 = rgba(239,246,255,.4)，blue-100/60 = rgba(219,234,254,.6) */
-.style-template-select .ant-select-selector {
+   blue-50/40 = rgba(239,246,255,.4)，blue-100/60 = rgba(219,234,254,.6)
+   antd v6 注意：边框/背景/内边距在根元素 .ant-select 上（v5 在 .ant-select-selector），
+   箭头为 .ant-select-suffix（v5 为 .ant-select-arrow） */
+.style-template-select.ant-select {
   height: 30px !important;
   border-radius: 4px !important;
   border-color: #bfdbfe !important;
@@ -86,16 +88,16 @@ body {
   color: #2563eb !important;
 }
 
-.style-template-select .ant-select-arrow {
+.style-template-select .ant-select-suffix {
   color: #60a5fa !important;
 }
 
-.style-template-select:hover .ant-select-selector {
+.style-template-select.ant-select:hover {
   border-color: #60a5fa !important;
 }
 
 /* 聚焦态：用 :focus-within 标准伪类，不依赖 antd 内部 focused 类名 */
-.style-template-select:focus-within .ant-select-selector {
+.style-template-select.ant-select:focus-within {
   border-color: #3b82f6 !important;
   background-color: rgba(219, 234, 254, 0.6) !important;
   box-shadow: none !important;
@@ -106,6 +108,41 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 订单列表页多选筛选下拉（antd v6 Select multiple）：与列表页原生筛选输入框视觉一致
+   注意 antd v6 DOM 结构与 v5 不同：边框/背景/内边距在根元素 .ant-select 上（v5 在 .ant-select-selector），
+   占位符为 .ant-select-placeholder（v5 为 .ant-select-selection-placeholder），选中标签类名不变
+   对应 Tailwind：border-gray-200=#e5e7eb rounded-lg=8px ring-primary-500=#3b82f6
+   左侧 36px 内边距为叠加的 lucide 图标（Building/Filter）预留位置 */
+.quotes-multi-select.ant-select {
+  min-height: 38px !important;
+  padding: 1px 28px 1px 36px !important;
+  background: #fff !important;
+  border-color: #e5e7eb !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+}
+
+.quotes-multi-select .ant-select-selection-item {
+  font-size: 14px !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+.quotes-multi-select.ant-select:hover {
+  border-color: #d1d5db !important;
+}
+
+/* 聚焦态：与原生输入框 focus:ring-2 focus:ring-primary-500 一致 */
+.quotes-multi-select.ant-select:focus-within {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px #3b82f6 !important;
+}
+
+/* 下拉选项（portal 渲染到 body）：匹配项高亮 */
+.quotes-multi-select-dropdown .ant-select-item-option-selected {
+  font-weight: 500 !important;
 }
 
 /* 修复 VTable 右键菜单在页面滚动时错位的问题 */
