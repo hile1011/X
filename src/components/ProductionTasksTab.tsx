@@ -93,9 +93,28 @@ export default function ProductionTasksTab({
   }, [quoteId])
 
   // ─── 保存（整体替换） ─────────────────────────────────────
-  const saveTasks = useCallback(async () => {
-    const seq = ++saveSeqRef.current
+  /** 本地预校验：任务名/材料名非空（与后端 validateTasks 一致），返回首个错误信息，通过返回 null */
+  const validateLocal = (list: ProductionTask[]): string | null => {
+    for (const t of list) {
+      if (!t.name?.trim()) return '任务名称不能为空'
+      for (const m of t.materials) {
+        if (!m.name?.trim()) return '材料名称不能为空：请填写或删除未命名的材料行'
+      }
+    }
+    return null
+  }
+
+  const saveTasks = useCallback(async (manual = false) => {
     const current = tasksRef.current
+    // 预校验：新增材料行默认名称为空、任务名可被清空，此时跳过保存（保持"待保存"状态），
+    // 避免自动保存被后端 400 拒绝后进入"保存失败"状态
+    const localError = validateLocal(current)
+    if (localError) {
+      setSyncStatus('dirty')
+      if (manual) setErrorMsg(localError)
+      return
+    }
+    const seq = ++saveSeqRef.current
     setSyncStatus('saving')
     try {
       const saved = await api.quotes.saveProductionTasks(quoteId, current) as ProductionTask[]
@@ -357,7 +376,7 @@ export default function ProductionTasksTab({
       clearTimeout(saveTimerRef.current)
       saveTimerRef.current = null
     }
-    saveTasks()
+    saveTasks(true)
   }
 
   // ─── 材料清单操作 ─────────────────────────────────────────
