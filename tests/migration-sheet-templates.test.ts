@@ -235,10 +235,9 @@ describe('迁移 v19+v23：sheet_templates 一对多 + quotes.template_id', () =
       expect(await indexExists('sheet_templates', 'uk_style_code')).toBe(false)
     })
 
-    it('版本号为 CURRENT_SCHEMA_VERSION（23）', async () => {
+    it('版本号为 CURRENT_SCHEMA_VERSION', async () => {
       const version = await db.getSchemaVersion()
       expect(version).toBe(CURRENT_SCHEMA_VERSION)
-      expect(version).toBe(23)
     })
 
     it('schema_migrations 包含 v23 记录', async () => {

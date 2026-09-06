@@ -125,6 +125,68 @@ function parseSheetTemplateRow(row: Record<string, any>): SheetTemplateRecord {
   }
 }
 
+/** 做货流程材料准备项（v24，存 quote_production_tasks.materials JSON） */
+export interface ProductionTaskMaterial {
+  name: string
+  spec: string
+  quantity: number
+  unit: string
+  ready: boolean
+}
+
+/** 做货流程任务记录（v24 甘特图数据） */
+export interface ProductionTaskRecord {
+  id: string
+  quoteId: string
+  stepOrder: number
+  name: string
+  planStart: string | null
+  planEnd: string | null
+  actualStart: string | null
+  actualEnd: string | null
+  status: number
+  remark: string
+  materials: ProductionTaskMaterial[]
+  createdAt: string
+  updatedAt: string
+}
+
+/** 解析 quote_production_tasks 行：DATE 转 YYYY-MM-DD、materials JSON 反序列化 */
+function parseProductionTaskRow(row: Record<string, any>): ProductionTaskRecord {
+  const toDateStr = (v: any): string | null => {
+    if (v == null) return null
+    if (v instanceof Date) {
+      // mysql2 按 timezone('+08:00') 构造 Date：取本地日期部分，避免 toISOString 的 UTC 偏移导致日期前移一天
+      const y = v.getFullYear()
+      const m = String(v.getMonth() + 1).padStart(2, '0')
+      const d = String(v.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
+    }
+    return String(v).slice(0, 10)
+  }
+  let materials: ProductionTaskMaterial[] = []
+  try {
+    materials = typeof row.materials === 'string' ? JSON.parse(row.materials || '[]') : (row.materials || [])
+  } catch {
+    materials = []
+  }
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    stepOrder: Number(row.step_order ?? 0),
+    name: row.name || '',
+    planStart: toDateStr(row.plan_start),
+    planEnd: toDateStr(row.plan_end),
+    actualStart: toDateStr(row.actual_start),
+    actualEnd: toDateStr(row.actual_end),
+    status: Number(row.status ?? 0),
+    remark: row.remark || '',
+    materials: Array.isArray(materials) ? materials : [],
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
 /** 解析大字段的 JSON */
 function parseLargeFields(row: any) {
   const c = toCamelRow(row)
@@ -721,6 +783,60 @@ export const dbApi = {
     remove: async (id: string): Promise<boolean> => {
       const info = await dbConn.prepare('DELETE FROM sheet_templates WHERE id = ?').run(id)
       return info.changes > 0
+    },
+  },
+
+  /** 做货流程任务（材料准备项，v24） */
+  productionTasks: {
+    /** 获取订单的全部任务（按 step_order 升序） */
+    getByQuoteId: async (quoteId: string): Promise<ProductionTaskRecord[]> => {
+      const rows = await dbConn.prepare(
+        'SELECT * FROM quote_production_tasks WHERE quote_id = ? ORDER BY step_order ASC, created_at ASC'
+      ).all(quoteId)
+      return rows.map(parseProductionTaskRow)
+    },
+    /**
+     * 整体替换订单的任务列表（事务：删 + 批量插）
+     * 服务端重排 step_order 并生成新 id，返回落库后的记录
+     */
+    replaceForQuote: async (quoteId: string, tasks: Array<{
+      name: string
+      planStart?: string | null
+      planEnd?: string | null
+      actualStart?: string | null
+      actualEnd?: string | null
+      status?: number
+      remark?: string
+      materials?: ProductionTaskMaterial[]
+    }>): Promise<ProductionTaskRecord[]> => {
+      const run = dbConn.transaction(async () => {
+        await dbConn.prepare('DELETE FROM quote_production_tasks WHERE quote_id = ?').run(quoteId)
+        const inserted: ProductionTaskRecord[] = []
+        const now = timeNow()
+        for (let i = 0; i < tasks.length; i++) {
+          const t = tasks[i]
+          const id = `prod-task-${Date.now()}-${i}-${Math.floor(Math.random() * 1000)}`
+          await dbConn.prepare(
+            `INSERT INTO quote_production_tasks
+             (id, quote_id, step_order, name, plan_start, plan_end, actual_start, actual_end, status, remark, materials, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            id, quoteId, i + 1, t.name,
+            t.planStart || null, t.planEnd || null, t.actualStart || null, t.actualEnd || null,
+            Number(t.status ?? 0), t.remark || '',
+            JSON.stringify(t.materials || []), now, now,
+          )
+          inserted.push({
+            id, quoteId, stepOrder: i + 1, name: t.name,
+            planStart: t.planStart || null, planEnd: t.planEnd || null,
+            actualStart: t.actualStart || null, actualEnd: t.actualEnd || null,
+            status: Number(t.status ?? 0), remark: t.remark || '',
+            materials: t.materials || [], createdAt: now, updatedAt: now,
+          })
+        }
+        return inserted
+      })
+      return run()
     },
   },
 }

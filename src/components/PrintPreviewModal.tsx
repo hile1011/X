@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo } from 'react'
 import type { Quote } from '../pages/Quotes'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TableConstants } from '../constants/TableConstants'
+import { getPrintTableRows, isTableTitleRow } from '../utils/printTableRange'
 
 interface PrintPreviewModalProps {
   quote: Quote
@@ -60,6 +61,9 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
     printStyle.textContent = `
       @page { size: A4; margin: 0; }
       * { box-sizing: border-box; }
+      /* 跨浏览器打印兼容：强制保留背景色（标题行蓝底/状态徽章），确保打印预览与实际打印效果一致
+         （Chrome/Edge/Safari 支持 -webkit-print-color-adjust，Firefox/新版 Safari 支持 print-color-adjust） */
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       body { margin: 0; padding: 0; background: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .print-toolbar {
         position: fixed; top: 0; left: 0; right: 0;
@@ -131,14 +135,9 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
     return widths.map((w) => `${(w / total) * 100}%`)
   }, [])
   const colCount = TableConstants.getColumnCount()
-  // 过滤空行（所有单元格均为 null/undefined/空字符串的行）
-  const filteredTableData = useMemo(() => {
-    if (!quote.tableData) return []
-    return quote.tableData.filter((row) =>
-      row.some((cell) => cell !== null && cell !== undefined && String(cell).trim() !== '')
-    )
-  }, [quote.tableData])
-  const hasTableData = filteredTableData.length > 0
+  // 打印范围限制：仅保留第二个标题行之前的内容（过滤空行 + 截断，详见 printTableRange.ts）
+  const printTableRows = useMemo(() => getPrintTableRows(quote.tableData), [quote.tableData])
+  const hasTableData = printTableRows.length > 0
 
   // 隐藏渲染：内容会被提取到新标签页，用户不可见
   return (
@@ -149,24 +148,6 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
         style={{ width: '794px', minHeight: '1123px' }}
       >
         <div className="print-content" style={{ padding: '48px 56px' }}>
-          {/* 订单号 + 状态 */}
-          <div className="flex justify-between items-center mb-5 pb-3 border-b-2 border-gray-400">
-            <div>
-              <span style={{ fontSize: '12px' }} className="text-gray-500">订单号：</span>
-              <span style={{ fontSize: '14px', fontWeight: 600 }} className="text-gray-800">
-                {quote.quote_number}
-              </span>
-            </div>
-            <span
-              className="px-3 py-3.5 text-xs font-semibold rounded text-white"
-              style={{ backgroundColor: statusColor }}
-            >
-              <span style={{ fontSize: '12px', fontWeight: 600 }} >
-                 {statusLabel}
-              </span>
-            </span>
-          </div>
-
           {/* 客户信息 */}
           <div className="mb-5">
             <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
@@ -184,54 +165,7 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
             </div>
           </div>
 
-          {/* 产品信息 */}
-          <div className="mb-5">
-            <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
-              产品信息
-            </h2>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1" style={{ fontSize: '12px' }}>
-              <div>
-                <span className="text-gray-500">款式：</span>
-                <span className="text-gray-800">{styleLabel}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">产品规格：</span>
-                <span className="text-gray-800">
-                  {quote.productSpec ? `${quote.productSpec}CM` : '-'}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500">数量：</span>
-                <span className="text-gray-800">
-                  {quote.quantity ? `${quote.quantity}个` : '-'}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500">箱规：</span>
-                <span className="text-gray-800">{quote.boxSpec || '-'}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">面料材质：</span>
-                <span className="text-gray-800">{quote.fabricMaterial || '-'}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">工艺：</span>
-                <span className="text-gray-800">{quote.process || '-'}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">手提：</span>
-                <span className="text-gray-800">
-                  {[quote.handleMaterial, quote.handleSpec].filter(Boolean).join('：') || '-'}
-                </span>
-              </div>
-              <div>
-                <span className="text-gray-500">单价：</span>
-                <span className="text-gray-800">{quote.unitPrice || '-'}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 时间信息 */}
+          {/* 时间信息（位于产品信息之前） */}
           <div className="mb-5">
             <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
               时间信息
@@ -278,6 +212,68 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
             </div>
           </div>
 
+          {/* 产品信息 */}
+          <div className="mb-5">
+            <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
+              产品信息
+            </h2>
+            {/* 订单号 + 状态：产品信息框第一行（字号放大突出显示） */}
+            <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200" style={{ fontSize: '12px' }}>
+              <div>
+                <span style={{ fontSize: '16px' }} className="text-gray-500">订单号：</span>
+                <span style={{ fontSize: '18px', fontWeight: 700 }} className="text-gray-800">
+                  {quote.quote_number}
+                </span>
+              </div>
+              <span
+                className="px-3 py-1 rounded text-white"
+                style={{ backgroundColor: statusColor, fontSize: '16px', fontWeight: 700 }}
+              >
+                {statusLabel}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1" style={{ fontSize: '12px' }}>
+              <div>
+                <span className="text-gray-500">款式：</span>
+                <span className="text-gray-800">{styleLabel}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">产品规格：</span>
+                <span className="text-gray-800">
+                  {quote.productSpec ? `${quote.productSpec}CM` : '-'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">数量：</span>
+                <span className="text-gray-800">
+                  {quote.quantity ? `${quote.quantity}个` : '-'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">箱规：</span>
+                <span className="text-gray-800">{quote.boxSpec || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">面料材质：</span>
+                <span className="text-gray-800">{quote.fabricMaterial || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">工艺：</span>
+                <span className="text-gray-800">{quote.process || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">手提：</span>
+                <span className="text-gray-800">
+                  {[quote.handleMaterial, quote.handleSpec].filter(Boolean).join('：') || '-'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500">备注：</span>
+                <span className="text-gray-800 break-words">{quote.remark || '-'}</span>
+              </div>
+            </div>
+          </div>
+
           {/* 产品图片 */}
           {quote.images && quote.images.length > 0 && (
             <div className="mb-5">
@@ -298,17 +294,7 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
             </div>
           )}
 
-          {/* 备注 */}
-          {quote.remark && (
-            <div className="mb-5">
-              <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
-                备注
-              </h2>
-              <p style={{ fontSize: '12px' }} className="text-gray-800 whitespace-pre-wrap">{quote.remark}</p>
-            </div>
-          )}
-
-          {/* 在线表格 */}
+          {/* 在线表格（仅打印第二个标题行之前的内容） */}
           {hasTableData && (
             <div className="mb-5">
               <h2 style={{ fontSize: '13px', fontWeight: 600 }} className="text-gray-700 mb-2 pb-1.5 border-b border-gray-300">
@@ -324,19 +310,37 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
                   ))}
                 </colgroup>
                 <tbody>
-                  {filteredTableData.map((row, rowIdx) => (
-                    <tr key={rowIdx}>
-                      {Array.from({ length: colCount }).map((_, colIdx) => (
-                        <td
-                          key={colIdx}
-                          className="border border-gray-300 align-middle text-gray-800"
-                          style={{ padding: '2px 3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                        >
-                          {formatTableCell(row[colIdx])}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
+                  {printTableRows.map((row, rowIdx) => {
+                    // 标题行保留在线表格原有样式：蓝底白字加粗（#4472C4 / #FFFFFF）
+                    const isTitle = isTableTitleRow(row)
+                    return (
+                      <tr key={rowIdx}>
+                        {Array.from({ length: colCount }).map((_, colIdx) => (
+                          <td
+                            key={colIdx}
+                            className="border border-black align-middle text-gray-800"
+                            style={{
+                              padding: '2px 3px',
+                              // 所有单元格允许换行：内容显示不全时自动换行完整展示，不再省略截断
+                              whiteSpace: 'normal',
+                              overflowWrap: 'break-word',
+                              wordBreak: 'break-all',
+                              // 标题行蓝底白字居中（与在线表格样式一致）
+                              ...(isTitle ? {
+                                backgroundColor: '#4472C4',
+                                color: '#FFFFFF',
+                                fontWeight: 600,
+                                textAlign: 'center',
+                                lineHeight: 1.3,
+                              } : {}),
+                            }}
+                          >
+                            {formatTableCell(row[colIdx])}
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

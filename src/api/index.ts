@@ -197,6 +197,14 @@ export const api = {
       return qs ? `${url}?${qs}` : url
     },
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
+    /** 做货流程任务（v24 甘特图数据） */
+    getProductionTasks: (id: string) => authFetch(`${API_BASE}/quotes/${id}/production-tasks`).then(handleResponse),
+    /** 整体同步做货流程任务（全量替换，事务） */
+    saveProductionTasks: (id: string, tasks: unknown) => authFetch(`${API_BASE}/quotes/${id}/production-tasks`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ tasks }),
+    }).then(handleResponse),
     create: (data: unknown) => authFetch(`${API_BASE}/quotes`, {
       method: 'POST',
       headers: jsonHeaders,

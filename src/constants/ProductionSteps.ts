@@ -17,9 +17,9 @@ export class ProductionSteps {
   private static readonly STEPS: readonly ProductionStep[] = [
     { id: 1, name: '面料采购', description: '采购所需面料' },
     { id: 2, name: '裁剪', description: '根据规格裁剪面料' },
-    { id: 3, name: '印刷', description: '进行图案印刷' },
-    { id: 4, name: '缝纫', description: '缝制袋子' },
-    { id: 5, name: '质检', description: '质量检查' },
+    { id: 3, name: '手提', description: '手提处理' },
+    { id: 4, name: '印刷', description: '进行图案印刷' },
+    { id: 5, name: '缝纫', description: '缝制袋子' },
     { id: 6, name: '包装', description: '包装入库' },
   ]
 

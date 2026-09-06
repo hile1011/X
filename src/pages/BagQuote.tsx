@@ -10,11 +10,11 @@ import { useHasPermission } from '../hooks/usePermission'
 import CustomerSelect from '../components/CustomerSelect'
 import SelectionSummaryBar from '../components/SelectionSummaryBar'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
+import ProductionTasksTab from '../components/ProductionTasksTab'
 import type { Quote } from './Quotes'
 import { findTablePositions } from '../services/tableLocator'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
-import { ProductionSteps } from '../constants/ProductionSteps'
 import { StyleConstants } from '../constants/StyleConstants'
 import { TableConstants } from '../constants/TableConstants'
 import { ExcelUtils } from '../utils/ExcelUtils'
@@ -45,9 +45,8 @@ interface OrderInfo {
   massDays: string
 }
 
-// 订单状态选项和生产步骤统一使用枚举类，消除重复定义
+// 订单状态选项统一使用枚举类，消除重复定义
 const STATUS_OPTIONS = OrderStatus.getAll()
-const PRODUCTION_STEPS = ProductionSteps.getAll()
 
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
@@ -231,6 +230,14 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     endTime: '',
   })
   const [productionStepStatus, setProductionStepStatus] = useState<Record<number, 'pending' | 'in_progress' | 'completed'>>({})
+  // v24 标签页：'info' = 订单信息+在线表格；'production' = 订单做货流程（甘特图）
+  // Tab1 常驻仅做 CSS 显隐（保持 VTable 实例与 undo 栈）；Tab2 首次激活时挂载（避免甘特图 0 宽度初始化）
+  const [activeTab, setActiveTab] = useState<'info' | 'production'>('info')
+  const [productionTabMounted, setProductionTabMounted] = useState(false)
+  const switchTab = (tab: 'info' | 'production') => {
+    setActiveTab(tab)
+    if (tab === 'production') setProductionTabMounted(true)
+  }
 
   const sheetContainerRef = useRef<HTMLDivElement>(null)
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
@@ -1284,10 +1291,6 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     setLoading(false)
   }
 
-  const handleProductionStepChange = (stepId: number, newStatus: 'pending' | 'in_progress' | 'completed') => {
-    setProductionStepStatus(prev => ({ ...prev, [stepId]: newStatus }))
-  }
-
   const canGoNext = OrderStatus.getNext(status) !== null
   const canGoPrev = OrderStatus.getPrev(status) !== null
   const canEnd = OrderStatus.canEnterFinished(status)
@@ -1447,7 +1450,33 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
+          {/* v24 标签页切换栏：Tab1 订单信息 / Tab2 订单做货流程 */}
+          <div className="flex items-center gap-1 border-b border-gray-100 -mb-px">
+            <button
+              onClick={() => switchTab('info')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
+                activeTab === 'info'
+                  ? 'text-primary-600 border-primary-500 bg-primary-50/50'
+                  : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <ClipboardList size={13} />
+              订单信息
+            </button>
+            <button
+              onClick={() => switchTab('production')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
+                activeTab === 'production'
+                  ? 'text-primary-600 border-primary-500 bg-primary-50/50'
+                  : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Play size={13} />
+              订单做货流程
+            </button>
+          </div>
+
+          <div className={`overflow-x-auto ${activeTab === 'info' ? '' : 'hidden'}`}>
             <div className="flex items-center px-1 min-w-[480px] sm:min-w-0">
             {STATUS_OPTIONS.map((option, index) => {
               const isCurrent = option.value === status
@@ -1493,71 +1522,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           </div>
         </div>
 
-        {/* 做货流程（状态为做货中时显示） */}
-        {status === 3 && (
-          <div className={`bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2 ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
-            <div className="flex items-center gap-1.5 mb-2">
-              <Play className="text-gray-400" size={15} />
-              <h3 className="text-xs font-semibold text-gray-700">订单做货流程</h3>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {PRODUCTION_STEPS.map((step, index) => {
-                const stepStatus = productionStepStatus[step.id] || 'pending'
-                return (
-                  <div key={step.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                      stepStatus === 'completed' ? 'bg-green-500 text-white' :
-                      stepStatus === 'in_progress' ? 'bg-primary-500 text-white' : 'bg-gray-300 text-gray-500'
-                    }`}>
-                      {stepStatus === 'completed' ? (
-                        <CheckCircle size={13} />
-                      ) : stepStatus === 'in_progress' ? (
-                        <Play size={11} />
-                      ) : (
-                        <span className="text-[11px] font-medium">{index + 1}</span>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-medium ${
-                        stepStatus === 'completed' ? 'text-green-700' :
-                        stepStatus === 'in_progress' ? 'text-primary-700' : 'text-gray-700'
-                      }`}>{step.name}</p>
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'pending')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'pending' ? 'bg-gray-200 text-gray-700' : 'bg-white text-gray-500 hover:bg-gray-100'
-                        }`}
-                      >
-                        待处理
-                      </button>
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'in_progress')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'in_progress' ? 'bg-primary-200 text-primary-700' : 'bg-white text-gray-500 hover:bg-primary-50'
-                        }`}
-                      >
-                        进行中
-                      </button>
-                      <button
-                        onClick={() => handleProductionStepChange(step.id, 'completed')}
-                        className={`px-1.5 py-0.5 text-[11px] rounded ${
-                          stepStatus === 'completed' ? 'bg-green-200 text-green-700' : 'bg-white text-gray-500 hover:bg-green-50'
-                        }`}
-                      >
-                        已完成
-                      </button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* 主体：订单信息 + 在线表格 （合并标题节省一行空间） */}
-        <div className="mb-0">
+        {/* 主体：订单信息 + 在线表格 （合并标题节省一行空间；v24 做货流程已移至第二个标签页） */}
+        <div className={`mb-0 ${activeTab === 'info' ? '' : 'hidden'}`}>
           <div className="flex items-center gap-1.5 mb-1.5">
             <ClipboardList size={15} className="text-gray-400" />
             <h3 className="text-xs font-semibold text-gray-700">订单信息</h3>
@@ -2097,14 +2063,33 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
             </div>
         </div>
 
-        {/* 在线表格 — 全宽，填满 Layout main 容器 */}
+        {/* 在线表格 — 全宽，填满 Layout main 容器（Tab1 专属，CSS 隐藏保持 VTable 实例） */}
       </div>
-      <div className="flex-1 min-h-0 px-4 sm:px-6 pt-1 pb-4 w-full flex flex-col min-w-0">
+      <div className={`flex-1 min-h-0 px-4 sm:px-6 pt-1 pb-4 w-full flex flex-col min-w-0 ${activeTab === 'info' ? '' : 'hidden'}`}>
         <div className={`bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden flex-1 min-h-0 flex flex-col ${readOnly ? 'opacity-70' : ''}`}>
           <div ref={sheetContainerRef} className="flex-1 min-h-0 w-full" style={{ minHeight: 400 }} />
           <SelectionSummaryBar summary={selectionSummary} />
         </div>
       </div>
+
+      {/* Tab2 订单做货流程（甘特图）：首次激活时挂载，之后 CSS 显隐 */}
+      {productionTabMounted && (
+        <div className={`px-4 sm:px-6 pt-2 pb-4 w-full min-w-0 ${activeTab === 'production' ? '' : 'hidden'}`}>
+          {id ? (
+            <ProductionTasksTab
+              quoteId={id}
+              readOnly={readOnly}
+              orderStatus={status}
+              productionTimeStart={orderInfo.productionTimeStart}
+              productionTimeEnd={orderInfo.productionTimeEnd}
+            />
+          ) : (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center text-sm text-gray-400">
+              保存订单后即可编排做货流程
+            </div>
+          )}
+        </div>
+      )}
 
       {isPreviewOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center">

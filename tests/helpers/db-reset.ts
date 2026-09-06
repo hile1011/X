@@ -17,6 +17,7 @@ const TABLES_TO_RESET = [
   'orders',
   'tasks',
   'quotes',
+  'quote_production_tasks',
   'process_costs',
   'products',
   'customers',

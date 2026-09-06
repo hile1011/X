@@ -43,16 +43,16 @@ describe('ProductionSteps.getById - 按 id 查找', () => {
     expect(ProductionSteps.getById(2)).toEqual({ id: 2, name: '裁剪', description: '根据规格裁剪面料' })
   })
 
-  it('id=3 → 印刷', () => {
-    expect(ProductionSteps.getById(3)).toEqual({ id: 3, name: '印刷', description: '进行图案印刷' })
+  it('id=3 → 手提', () => {
+    expect(ProductionSteps.getById(3)).toEqual({ id: 3, name: '手提', description: '手提处理' })
   })
 
-  it('id=4 → 缝纫', () => {
-    expect(ProductionSteps.getById(4)).toEqual({ id: 4, name: '缝纫', description: '缝制袋子' })
+  it('id=4 → 印刷', () => {
+    expect(ProductionSteps.getById(4)).toEqual({ id: 4, name: '印刷', description: '进行图案印刷' })
   })
 
-  it('id=5 → 质检', () => {
-    expect(ProductionSteps.getById(5)).toEqual({ id: 5, name: '质检', description: '质量检查' })
+  it('id=5 → 缝纫', () => {
+    expect(ProductionSteps.getById(5)).toEqual({ id: 5, name: '缝纫', description: '缝制袋子' })
   })
 
   it('id=6 → 包装', () => {

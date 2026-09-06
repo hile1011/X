@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 23
+export const CURRENT_SCHEMA_VERSION = 24
 
 export interface Migration {
   version: number
@@ -1251,6 +1251,121 @@ const migrations: Migration[] = [
           AND (t1.updated_at < t2.updated_at OR (t1.updated_at = t2.updated_at AND t1.id < t2.id))`)
         await db.exec(`ALTER TABLE sheet_templates ADD UNIQUE KEY uk_style_code (style_code)`)
       }
+    },
+  },
+  {
+    version: 24,
+    name: 'production-task-gantt',
+    description: 'V0.16：新增quote_production_tasks表存储订单做货流程任务（甘特图数据：计划/实际起止时间、状态、材料清单），迁移存量productionStepStatus数据',
+    up: async (db: any) => {
+      const hasTable = async (table: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = ?`
+        ).get(table)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+
+      // 1. 创建任务表
+      if (!(await hasTable('quote_production_tasks'))) {
+        await db.exec(`CREATE TABLE quote_production_tasks (
+          id            VARCHAR(64)  NOT NULL COMMENT '任务id（prod-task-{ts}-{rand}）',
+          quote_id      VARCHAR(64)  NOT NULL COMMENT '所属订单（quotes.id）',
+          step_order    INT          NOT NULL DEFAULT 1 COMMENT '步骤顺序（甘特图行序，小在前）',
+          name          VARCHAR(64)  NOT NULL COMMENT '步骤名称',
+          plan_start    DATE         NULL COMMENT '计划开始',
+          plan_end      DATE         NULL COMMENT '计划结束',
+          actual_start  DATE         NULL COMMENT '实际开始',
+          actual_end    DATE         NULL COMMENT '实际结束',
+          status        TINYINT      NOT NULL DEFAULT 0 COMMENT '0未开始 1进行中 2已完成',
+          remark        VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
+          materials     LONGTEXT     NULL COMMENT '材料清单 JSON：[{name,spec,quantity,unit,ready}]',
+          created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_qpt_quote_id (quote_id),
+          KEY idx_qpt_plan_start (plan_start)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单做货流程任务（甘特图数据，V24）'`)
+      }
+
+      // 2. 存量数据迁移：productionStepStatus 非空的订单按 6 个标准步骤生成任务行（分批 ≤1000 单）
+      //    状态映射：pending→0, in_progress→1, completed→2；旧数据无时间信息，日期全部 NULL
+      const DEFAULT_STEPS = ['面料采购', '裁剪', '印刷', '缝纫', '质检', '包装']
+      const STATUS_MAP: Record<string, number> = { pending: 0, in_progress: 1, completed: 2 }
+      let lastQuoteId = ''
+      for (;;) {
+        const rows = await db.prepare(
+          `SELECT id, productionStepStatus FROM quotes
+           WHERE productionStepStatus IS NOT NULL AND productionStepStatus != '' AND productionStepStatus != '{}'
+             AND id > ? ORDER BY id ASC LIMIT 1000`
+        ).all(lastQuoteId)
+        if (rows.length === 0) break
+        for (const row of rows as Array<{ id: string; productionStepStatus: string }>) {
+          lastQuoteId = row.id
+          // 已迁移过（幂等）：跳过
+          const existed = await db.prepare(
+            'SELECT COUNT(*) AS cnt FROM quote_production_tasks WHERE quote_id = ?'
+          ).get(row.id) as { cnt: number }
+          if (Number(existed.cnt) > 0) continue
+          let stepStatus: Record<string, string>
+          try {
+            stepStatus = JSON.parse(row.productionStepStatus) || {}
+          } catch {
+            continue // JSON 损坏跳过，保持可重跑
+          }
+          const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
+          for (let i = 0; i < DEFAULT_STEPS.length; i++) {
+            const stepId = String(i + 1)
+            const status = STATUS_MAP[stepStatus[stepId] || 'pending'] ?? 0
+            const taskId = `prod-task-${row.id}-${stepId}`
+            await db.prepare(
+              `INSERT IGNORE INTO quote_production_tasks
+               (id, quote_id, step_order, name, plan_start, plan_end, actual_start, actual_end, status, remark, materials, created_at, updated_at)
+               VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?, '[]', ?, ?)`
+            ).run(taskId, row.id, i + 1, DEFAULT_STEPS[i], status, '', now, now)
+          }
+        }
+        if ((rows as unknown[]).length < 1000) break
+      }
+    },
+    down: async (db: any) => {
+      const hasTable = async (table: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = ?`
+        ).get(table)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (!(await hasTable('quote_production_tasks'))) return
+
+      // 1. 任务数据聚合回 quotes.productionStepStatus（completed > in_progress > pending 取每单最高进度映射）
+      const STATUS_TO_OLD: Record<number, string> = { 2: 'completed', 1: 'in_progress', 0: 'pending' }
+      let lastQuoteId = ''
+      for (;;) {
+        const rows = await db.prepare(
+          `SELECT quote_id, step_order, status FROM quote_production_tasks
+           WHERE quote_id > ? ORDER BY quote_id ASC, step_order ASC LIMIT 5000`
+        ).all(lastQuoteId)
+        if (rows.length === 0) break
+        const byQuote = new Map<string, Array<{ step_order: number; status: number }>>()
+        for (const r of rows as Array<{ quote_id: string; step_order: number; status: number }>) {
+          lastQuoteId = r.quote_id
+          const list = byQuote.get(r.quote_id) || []
+          list.push({ step_order: r.step_order, status: r.status })
+          byQuote.set(r.quote_id, list)
+        }
+        for (const [quoteId, tasks] of byQuote) {
+          const stepStatus: Record<string, string> = {}
+          for (const t of tasks) {
+            stepStatus[String(t.step_order)] = STATUS_TO_OLD[t.status] ?? 'pending'
+          }
+          await db.prepare('UPDATE quotes SET productionStepStatus = ? WHERE id = ?')
+            .run(JSON.stringify(stepStatus), quoteId)
+        }
+        if ((rows as unknown[]).length < 5000) break
+      }
+      // 2. 删除任务表
+      await db.exec(`DROP TABLE IF EXISTS quote_production_tasks`)
     },
   },
 ]

@@ -140,3 +140,57 @@ quotesRouter.post('/:id/end', requirePermission('quotes:status-transition'), asy
   }
   res.json(data)
 }))
+
+// ─── 做货流程任务（v24 甘特图数据） ─────────────────────────────
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** 校验任务列表 payload；通过返回 null，否则返回错误信息 */
+function validateTasks(body: any): string | null {
+  const tasks = body?.tasks
+  if (!Array.isArray(tasks)) return 'tasks 必须为数组'
+  if (tasks.length > 50) return '任务数量不能超过 50'
+  for (const t of tasks) {
+    if (!t || typeof t.name !== 'string' || !t.name.trim()) return '任务名称不能为空'
+    if (t.name.trim().length > 64) return '任务名称不能超过 64 字符'
+    for (const key of ['planStart', 'planEnd', 'actualStart', 'actualEnd'] as const) {
+      const v = t[key]
+      if (v != null && v !== '' && !DATE_RE.test(String(v))) return `日期字段 ${key} 格式必须为 YYYY-MM-DD`
+    }
+    if (t.remark && String(t.remark).length > 255) return '备注不能超过 255 字符'
+    if (t.materials != null) {
+      if (!Array.isArray(t.materials)) return 'materials 必须为数组'
+      if (t.materials.length > 50) return '材料数量不能超过 50'
+      for (const m of t.materials) {
+        if (!m || typeof m.name !== 'string' || !m.name.trim()) return '材料名称不能为空'
+      }
+    }
+  }
+  return null
+}
+
+// 获取订单的做货流程任务列表
+quotesRouter.get('/:id/production-tasks', requirePermission('quotes:view'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const quote = await db.quotes.getById(id)
+  if (!quote) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  const tasks = await db.productionTasks.getByQuoteId(id)
+  res.json(tasks)
+}))
+
+// 整体同步订单的做货流程任务（全量替换，事务）
+quotesRouter.put('/:id/production-tasks', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const quote = await db.quotes.getById(id)
+  if (!quote) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  const error = validateTasks(req.body)
+  if (error) {
+    return res.status(400).json({ error })
+  }
+  const tasks = await db.productionTasks.replaceForQuote(id, req.body.tasks)
+  res.json(tasks)
+}))
