@@ -98,8 +98,16 @@ export default function SheetTemplates() {
       // 强制刷新内存缓存：其他用户可能修改过模板
       SheetTemplateManager.loadOverrides(true),
     ])
-    setStyleOptions(options.filter((o) => o.value in BUILTIN_STYLE_NAMES))
+    // 款式来源：产品管理全部产品（与订单页款式下拉同源），
+    // 新增产品（自定义编码或无编码产品）的款式同步出现在模板管理中
+    setStyleOptions(options)
     setTemplates((records as SheetTemplateRecordFE[]).filter((r) => r?.id))
+    // 默认展开全部款式分组（含新增产品款式），便于直接查看
+    setExpandedStyles((prev) => {
+      const next = { ...prev }
+      for (const o of options) next[o.value] = true
+      return next
+    })
     setLoading(false)
   }, [])
 
@@ -110,11 +118,20 @@ export default function SheetTemplates() {
   const getStyleName = (code: string): string =>
     styleOptions.find((s) => s.value === code)?.label || BUILTIN_STYLE_NAMES[code] || `款式${code}`
 
+  // 全部款式分组：产品款式（与订单页同源）+ 模板中存在但产品已删除的编码（防御展示）
+  const allStyleCodes = useMemo(() => {
+    const codes = styleOptions.map((o) => o.value)
+    for (const t of templates) {
+      if (t.styleCode && !codes.includes(t.styleCode)) codes.push(t.styleCode)
+    }
+    return codes
+  }, [styleOptions, templates])
+
   // 树形列表过滤：搜索词匹配模板名/款式名/更新人；款式筛选仅显示选中款式
   // 款式名命中时展示该款式全部模板；否则仅展示模板名/更新人命中的模板
   const visibleGroups = useMemo(() => {
     const term = searchTerm.trim().toLowerCase()
-    return Object.keys(BUILTIN_STYLE_NAMES)
+    return allStyleCodes
       .filter((code) => !styleFilter || styleFilter === code)
       .map((code) => {
         const styleName = getStyleName(code)
@@ -125,7 +142,7 @@ export default function SheetTemplates() {
         return { code, styleName, styleHit, templates: matched }
       })
       .filter((g) => g.styleHit || g.templates.length > 0)
-  }, [templates, searchTerm, styleFilter, styleOptions])
+  }, [allStyleCodes, templates, searchTerm, styleFilter, styleOptions])
 
   // 有搜索词或款式筛选时自动展开全部组，便于浏览命中结果
   const hasFilter = !!searchTerm.trim() || !!styleFilter

@@ -16,7 +16,7 @@ import type { Product } from '../types'
  */
 
 // 硬编码兜底款式（与迁移脚本插入的 6 条默认款式一致）
-const FALLBACK_STYLE_OPTIONS: StyleOption[] = [
+export const BUILTIN_STYLE_OPTIONS: readonly StyleOption[] = [
   { value: '1', label: '无底无侧普通袋' },
   { value: '2', label: '有底无侧普通袋' },
   { value: '3', label: '有底有侧普通袋' },
@@ -47,13 +47,13 @@ export interface StyleOption {
 export async function fetchStyleOptions(): Promise<StyleOption[]> {
   try {
     const products = (await api.products.getAll()) as Product[]
-    if (products.length === 0) return FALLBACK_STYLE_OPTIONS
+    if (products.length === 0) return [...BUILTIN_STYLE_OPTIONS]
     return products.map((p) => ({
       value: p.code && p.code.trim() !== '' ? p.code : p.id,
       label: p.name,
     }))
   } catch {
-    return FALLBACK_STYLE_OPTIONS
+    return [...BUILTIN_STYLE_OPTIONS]
   }
 }
 
@@ -64,6 +64,6 @@ export async function fetchStyleOptions(): Promise<StyleOption[]> {
 export function getStyleLabelFromProducts(products: Product[], value: string): string {
   const product = products.find((p) => p.code === value || p.id === value)
   if (product) return product.name
-  const fallback = FALLBACK_STYLE_OPTIONS.find((o) => o.value === value)
+  const fallback = BUILTIN_STYLE_OPTIONS.find((o) => o.value === value)
   return fallback ? fallback.label : value
 }

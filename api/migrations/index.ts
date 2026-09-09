@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 24
+export const CURRENT_SCHEMA_VERSION = 25
 
 export interface Migration {
   version: number
@@ -1366,6 +1366,34 @@ const migrations: Migration[] = [
       }
       // 2. 删除任务表
       await db.exec(`DROP TABLE IF EXISTS quote_production_tasks`)
+    },
+  },
+  {
+    version: 25,
+    name: 'sheet-templates-style-code-widen',
+    description: 'V0.17：sheet_templates.style_code 扩容至 VARCHAR(64)，支持新增产品款式编码与无编码产品 id 绑定模板（款式模板与产品管理联动）',
+    up: async (db: any) => {
+      // 幂等：列长度不足 64 时才扩容（纯扩容操作，无数据变更，不影响既有 1-6 编码模板）
+      const row = await db.prepare(
+        `SELECT CHARACTER_MAXIMUM_LENGTH AS len FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'sheet_templates' AND column_name = 'style_code'`
+      ).get()
+      if (Number((row as any)?.len ?? 0) >= 64) return
+      await db.exec(
+        `ALTER TABLE sheet_templates MODIFY COLUMN style_code VARCHAR(64) NOT NULL COMMENT '款式编码（内置1-6/产品自定义编码/无编码产品id）'`
+      )
+    },
+    down: async (db: any) => {
+      // 回滚：仅当不存在超长值时缩回 VARCHAR(8)；有产品 id 绑定的模板时拒绝（防截断丢数据）
+      const row = await db.prepare(
+        `SELECT COUNT(*) AS cnt FROM sheet_templates WHERE CHAR_LENGTH(style_code) > 8`
+      ).get()
+      if (Number((row as any)?.cnt ?? 0) > 0) {
+        throw new Error('存在长度超过 8 的款式编码模板（产品 id 绑定），无法回滚缩容；请先删除对应模板')
+      }
+      await db.exec(
+        `ALTER TABLE sheet_templates MODIFY COLUMN style_code VARCHAR(8) NOT NULL COMMENT '款式 code（1-6）'`
+      )
     },
   },
 ]

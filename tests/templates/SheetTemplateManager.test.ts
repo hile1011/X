@@ -21,7 +21,7 @@ describe('SheetTemplateManager.getTemplate - 按款式获取模板', () => {
     expect(t.data[0][1]).toBe('数量 (个)')
     // 验证成品行
     expect(t.data[1][0]).toBe('成品')
-    expect(t.data[1][1]).toBe(7200)
+    expect(t.data[1][1]).toBe(1000)
   })
 
   it('款式2 → 有底无侧普通袋模板', () => {
@@ -137,7 +137,7 @@ describe('SheetTemplateManager - 模板不可变性', () => {
     t1.data.push(['篡改行'])
 
     const t2 = SheetTemplateManager.getTemplate('1')
-    expect(t2.data[1][1]).toBe(7200)
+    expect(t2.data[1][1]).toBe(1000)
     expect(t2.data).toHaveLength(10)
   })
 

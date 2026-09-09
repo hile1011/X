@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import { ArrowLeft, Save, Package, Hash, FileText, DollarSign, Tag, Box } from 'lucide-react'
+import { BUILTIN_STYLE_OPTIONS } from '../services/productStyles'
+import { SheetTemplateManager } from '../templates/SheetTemplateManager'
 
 export default function CreateProduct() {
   const { id } = useParams<{ id: string }>()
@@ -15,7 +17,15 @@ export default function CreateProduct() {
   const [stock, setStock] = useState('')
   const [loading, setLoading] = useState(false)
   const [fetching, setFetching] = useState(isEditMode)
+  // 数据库模板是否已加载（款式模板关联提示需要在模板列表就绪后展示数据库名）
+  const [templatesReady, setTemplatesReady] = useState(false)
   const navigate = useNavigate()
+
+  // 同步款式模板逻辑：加载数据库模板（v23 sheet_templates，款式一对多），
+  // 与订单页 BagQuote 的款式/模板联动保持一致；失败时静默回退内置模板提示
+  useEffect(() => {
+    SheetTemplateManager.loadOverrides().finally(() => setTemplatesReady(true))
+  }, [])
 
   // 编辑模式：加载已有产品数据填充表单
   useEffect(() => {
@@ -42,6 +52,15 @@ export default function CreateProduct() {
     fetchProduct()
     return () => { cancelled = true }
   }, [isEditMode, id])
+
+  // 款式模板关联信息（与订单页款式/模板联动逻辑同步）
+  const trimmedCode = code.trim()
+  const builtinStyle = BUILTIN_STYLE_OPTIONS.find((s) => s.value === trimmedCode)
+  // 数据库自定义模板名（templatesReady 后才有；展示顺序与订单页模板下拉一致，按 id 排序）
+  // 内置款式（1-6）与自定义编码款式的数据库模板均可关联
+  const styleTemplateNames = templatesReady && trimmedCode
+    ? SheetTemplateManager.listByStyle(trimmedCode).map((e) => e.name).join('、')
+    : ''
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -163,12 +182,42 @@ export default function CreateProduct() {
                     </span>
                   </label>
                   <input
+                    list="builtin-style-codes"
                     type="text"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none min-h-[44px]"
-                    placeholder="款式编码(如1-6)，可关联报价模板"
+                    placeholder="输入或选择款式编码（1-6 为内置款式，可自定义）"
                   />
+                  {/* 内置款式快捷选项（datalist）：与订单页款式/模板联动逻辑一致，code 1-6 对应在线表格模板 */}
+                  <datalist id="builtin-style-codes">
+                    {BUILTIN_STYLE_OPTIONS.map((s) => (
+                      <option key={s.value} value={s.value}>{s.label}</option>
+                    ))}
+                  </datalist>
+                  {/* 款式模板关联提示（与订单页联动逻辑同步）：
+                      code 1-6 → 内置款式：内置默认模板 + 数据库自定义模板；
+                      自定义编码 → 已有数据库模板时列出，否则引导到模板管理创建；
+                      未选模板时订单回退「无底无侧普通袋」内置模板 */}
+                  {builtinStyle ? (
+                    <p className="text-xs text-green-600 mt-1.5">
+                      已关联款式「{builtinStyle.label}」模板：内置默认模板{styleTemplateNames ? `、${styleTemplateNames}` : ''}
+                    </p>
+                  ) : trimmedCode ? (
+                    styleTemplateNames ? (
+                      <p className="text-xs text-green-600 mt-1.5">
+                        已关联自定义编码「{trimmedCode}」模板：{styleTemplateNames}；订单未选模板时默认使用「无底无侧普通袋」
+                      </p>
+                    ) : (
+                      <p className="text-xs text-amber-600 mt-1.5">
+                        自定义编码 {trimmedCode}：可在「款式模板管理」中为该款式创建模板；订单未选模板时默认使用「无底无侧普通袋」
+                      </p>
+                    )
+                  ) : (
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      未填写编码时，订单中该产品默认使用「无底无侧普通袋」模板
+                    </p>
+                  )}
                 </div>
 
                 <div>

@@ -50,6 +50,8 @@ vi.mock('../src/services/productStyles', () => ({
     { value: '4', label: '手提连底普通拼接袋' },
     { value: '5', label: '手提连底高级拼接袋' },
     { value: '6', label: '手提无连底拼接袋' },
+    // 新增产品的自定义款式（编码 7）：与订单页款式下拉同源，模板管理同步展示
+    { value: '7', label: '背心袋' },
   ]),
 }))
 vi.mock('../src/templates/SheetTemplateManager', () => ({
@@ -83,11 +85,12 @@ const tpl = (id: string, styleCode: string, name: string, updatedBy = 'admin') =
   updatedAt: '2026-08-21 10:00:00',
 })
 
-/** 两条款式2模板 + 一条款式3模板 */
+/** 两条款式2模板 + 一条款式3模板 + 一款自定义编码款式7模板 */
 const TEMPLATES = [
   tpl('tpl-1', '2', '常规款'),
   tpl('tpl-2', '2', '加厚款', 'operator'),
   tpl('tpl-3', '3', '侧底款'),
+  tpl('tpl-7', '7', '背心袋常规'),
 ]
 
 function renderPage() {
@@ -124,12 +127,23 @@ describe('款式模板管理页', () => {
       expect(screen.getByText('手提连底普通拼接袋', { selector: 'span' })).toBeTruthy()
       expect(screen.getByText('手提连底高级拼接袋', { selector: 'span' })).toBeTruthy()
       expect(screen.getByText('手提无连底拼接袋', { selector: 'span' })).toBeTruthy()
+      // 新增产品自定义款式（编码 7）同步展示分组
+      expect(screen.getByText('背心袋', { selector: 'span' })).toBeTruthy()
 
       // 模板行：名称 + 更新人
       expect(screen.getByText('加厚款')).toBeTruthy()
       expect(screen.getByText(/operator/)).toBeTruthy()
       // 默认展开（树形二级可见）
       expect(screen.getByText('侧底款')).toBeTruthy()
+      expect(screen.getByText('背心袋常规')).toBeTruthy()
+    })
+
+    it('新增产品款式（自定义编码）分组完整展示：编码标识与模板数量', async () => {
+      renderPage()
+      await waitFor(() => expect(screen.getByText('背心袋常规')).toBeTruthy())
+
+      expect(screen.getByText('背心袋', { selector: 'span' })).toBeTruthy()
+      expect(screen.getByText('款式 code: 7')).toBeTruthy()
     })
 
     it('款式分组显示模板数量', async () => {
@@ -137,7 +151,7 @@ describe('款式模板管理页', () => {
       await waitFor(() => expect(screen.getByText('常规款')).toBeTruthy())
 
       expect(screen.getByText('2 个模板')).toBeTruthy() // 款式2
-      expect(screen.getByText('1 个模板')).toBeTruthy() // 款式3
+      expect(screen.getAllByText('1 个模板')).toHaveLength(2) // 款式3 + 自定义款式7
       expect(screen.getAllByText('0 个模板')).toHaveLength(4) // 款式1/4/5/6
     })
 

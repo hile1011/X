@@ -9,7 +9,7 @@
  *   3. CRUD：getByQuoteId（step_order 排序）/ replaceForQuote（整体替换、顺序重排、materials JSON 往返）
  *   4. 幂等性：直接重跑 v24.up 不产生重复任务行
  *   5. 回滚：rollback(23) 后表删除、productionStepStatus 恢复；重新迁移后数据恢复
- *   6. 版本号：CURRENT_SCHEMA_VERSION = 24，迁移记录存在
+ *   6. 版本号：CURRENT_SCHEMA_VERSION 为最新版本，v24 迁移记录存在
  *
  * 使用 MySQL 测试数据库（quote_system_test）。
  */
@@ -240,8 +240,9 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 24', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(24)
+    it('CURRENT_SCHEMA_VERSION 为最新版本', () => {
+      // v24 之后新增迁移（如 v25）时无需修改本文件
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(24)
     })
 
     it('schema_migrations 包含 v24 记录', async () => {
@@ -249,8 +250,8 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
       expect((rows as any[])[0].name).toBe('production-task-gantt')
     })
 
-    it('当前 schema 版本为 24', async () => {
-      expect(await db.getSchemaVersion()).toBe(24)
+    it('当前 schema 版本为 CURRENT_SCHEMA_VERSION', async () => {
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 })

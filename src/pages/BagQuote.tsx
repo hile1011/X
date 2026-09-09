@@ -300,7 +300,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         value: `style:${style.value}`,
         selectable: false,
         children: [
-          { title: '默认模板（内置）', label: style.label, value: `${style.value}|` },
+          // 内置款式（1-6）有专属内置模板；自定义款式（新增产品编码）无内置模板，
+          // 未选模板时回退「无底无侧」内置模板
+          { title: SheetTemplateManager.hasTemplate(style.value) ? '默认模板（内置）' : '默认模板（无底无侧）', label: style.label, value: `${style.value}|` },
           ...entries.map((entry) => ({
             title: entry.name,
             label: style.label,

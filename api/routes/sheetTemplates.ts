@@ -5,8 +5,14 @@ import { requirePermission } from '../middleware/auth.js'
 
 export const sheetTemplatesRouter = express.Router()
 
-/** 有效款式 code（1-6） */
-const VALID_STYLE_CODES = ['1', '2', '3', '4', '5', '6']
+/**
+ * 校验款式编码：产品管理中存在对应产品即合法（按 products.code 或 products.id 匹配）
+ * 订单页无 code 产品的款式值为产品 id；内置款式 1-6 对应默认款式产品 style-1~6
+ */
+async function isValidStyleCode(styleCode: string): Promise<boolean> {
+  const products = await db.products.getAll()
+  return products.some((p) => p.code === styleCode || p.id === styleCode)
+}
 
 /** 校验模板保存请求体：data 为二维数组、formulas 为字符串映射 */
 function validateTemplateBody(body: any): { ok: true; data: (string | number | null)[][]; formulas: Record<string, string> } | { ok: false; error: string } {
@@ -32,7 +38,8 @@ function validateTemplateBody(body: any): { ok: true; data: (string | number | n
 sheetTemplatesRouter.get('/', asyncHandler(async (req, res) => {
   const { styleCode } = req.query
   if (styleCode !== undefined) {
-    if (typeof styleCode !== 'string' || !VALID_STYLE_CODES.includes(styleCode)) {
+    // 过滤查询仅做基本格式校验（历史款式即使产品已删除仍可查询其模板）
+    if (typeof styleCode !== 'string' || styleCode.trim() === '') {
       return res.status(400).json({ error: '无效的款式 code' })
     }
     res.json(await db.sheetTemplates.getByStyleCode(styleCode))
@@ -52,10 +59,11 @@ sheetTemplatesRouter.get('/:id', asyncHandler(async (req, res) => {
 
 // 新增模板（一对多：同款式可有多个，名称款式内唯一）
 // data/formulas 可选：为空时创建空白模板（前端新增时通常传入内置模板作为初始内容）
+// 款式编码动态校验：新增产品即成为可选款式（自定义编码或产品 id 均可绑定模板）
 sheetTemplatesRouter.post('/', requirePermission('sheet-templates:edit'), asyncHandler(async (req, res) => {
   const { styleCode, name } = req.body || {}
-  if (!VALID_STYLE_CODES.includes(styleCode)) {
-    return res.status(400).json({ error: '无效的款式 code（仅支持 1-6）' })
+  if (typeof styleCode !== 'string' || !(await isValidStyleCode(styleCode))) {
+    return res.status(400).json({ error: '无效的款式编码：请先在产品管理中新增对应产品' })
   }
   if (typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: '模板名称不能为空' })
