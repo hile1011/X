@@ -114,7 +114,7 @@ export interface Quote {
   deposit: number
   /** 待收总金额 = 销售总额(不含税) - (抵扣时的打样费) - 定金 */
   pendingAmount: number
-  status: 1 | 2 | 3 | 4 | 5 | 6 | 7
+  status: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
   // 状态流转时间节点
   quoteTime: string
   sampleTime: string
@@ -122,6 +122,8 @@ export interface Quote {
   productionStartTime: string
   shippingTime: string
   paymentTime: string
+  /** 对账时间（V28 新增，状态8已对账） */
+  reconciledTime?: string
   endTime: string
   images: string[]
   // 在线表格二维数据（用户编辑后的值），JSON 字符串存储。仅新增时从模板加载，后续以数据库为准

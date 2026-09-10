@@ -8,14 +8,13 @@
  *   2. 到期日期升序（越早越往上排，无到期日期的排后面）
  *
  * 使用场景：
- *   - 仪表盘交期预警列表（status asc + dueDate asc）
- *   - 仪表盘订单状态跟踪列表（status asc/desc 可切换 + dueDate asc）
+ *   - 工作台订单状态跟踪列表（status asc/desc 可切换 + dueDate asc）
  */
 import { OrderStatus } from '../constants/OrderStatus'
 
 /** 可排序的订单最小结构 */
 export interface SortableQuote {
-  /** 订单状态值（1-7） */
+  /** 订单状态值（1-8） */
   status: number
   /** 到期/交货日期（ISO 字符串，可为空） */
   productionTimeEnd: string

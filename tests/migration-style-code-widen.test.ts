@@ -123,20 +123,25 @@ describe('迁移 v25：sheet_templates.style_code 扩容至 VARCHAR(64)', () => 
       await db.sheetTemplates.create(productId, '回滚保护模板', TEST_DATA, TEST_FORMULAS, 'x')
 
       await expect(db.runner.rollback(24)).rejects.toThrow(/无法回滚缩容/)
-      // 回滚失败后 schema 版本不变，长度仍为 64
+      // 回滚失败后长度仍为 64（v25.down 在 ALTER 前即抛出，列结构未变）
       expect(await styleCodeLength()).toBe(64)
 
+      // 注意：rollback(24) 逆序先执行 v26.down（ALTER 统一排序规则 → DDL 隐式提交），
+      // 其后的 DELETE v26 记录因 autocommit 恢复而自动提交，v25.down 虽被拒绝但版本已降至 25。
+      // 这是 MySQL DDL 无法参与事务的固有行为，此处恢复到最新版本以保证后续用例。
       // 清理：删除超长模板，便于后续测试/重置
       const list = await db.sheetTemplates.getByStyleCode(productId)
       for (const t of list) {
         await db.sheetTemplates.remove(t.id)
       }
+      await db.runner.migrate()
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 25', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(25)
+    it('CURRENT_SCHEMA_VERSION 为 28', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBe(28)
     })
 
     it('schema_migrations 包含 v25 记录', async () => {
@@ -144,8 +149,8 @@ describe('迁移 v25：sheet_templates.style_code 扩容至 VARCHAR(64)', () => 
       expect((rows as any[])[0].name).toBe('sheet-templates-style-code-widen')
     })
 
-    it('当前 schema 版本为 25', async () => {
-      expect(await db.getSchemaVersion()).toBe(25)
+    it('当前 schema 版本为 28（后续迁移全部应用后）', async () => {
+      expect(await db.getSchemaVersion()).toBe(28)
     })
   })
 })

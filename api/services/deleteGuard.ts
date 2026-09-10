@@ -336,7 +336,7 @@ export async function checkTaskDelete(id: string): Promise<DeleteCheckResult> {
  */
 export async function checkProcessCostDelete(id: string): Promise<DeleteCheckResult> {
   const [costRows] = await pool.execute(
-    'SELECT id, name, category FROM process_costs WHERE id = ?',
+    'SELECT id, name, cost, formula FROM process_costs WHERE id = ?',
     [id]
   )
   const cost = (costRows as any[])[0]
@@ -355,7 +355,7 @@ export async function checkProcessCostDelete(id: string): Promise<DeleteCheckRes
       id: cost.id,
       name: cost.name || cost.id,
       type: 'process_cost',
-      details: `分类: ${cost.category || '无'}`,
+      details: `费用: ${cost.cost} | 公式: ${cost.formula || '无'}`,
     },
     relationships: [],
   }

@@ -129,3 +129,33 @@ describe('calculateBagQuote - 边界情况', () => {
     expect(result.summary.unitCost).toBeCloseTo(frontBackTotal + result.costTable[result.costTable.length - 1].unitTotalPrice!, 4)
   })
 })
+
+// ============================================================
+// 边界回退（印刷手提行引用首行参数）
+// ============================================================
+describe('calculateBagQuote - 首行参数回退', () => {
+  it('首行 lossRate 为 0（falsy）：印刷手提行损耗率回退默认 1.03', () => {
+    const input: BagQuoteInput = {
+      ...defaultBagQuoteInput,
+      frontBackRows: [{ ...defaultBagQuoteInput.frontBackRows[0], lossRate: 0 }],
+    }
+    const result = calculateBagQuote(input)
+    const handleCost = result.costTable.find((r) => r.label === '印刷手提')
+    expect(handleCost?.lossRate).toBe(1.03)
+  })
+
+  it('无正反面行：印刷手提行回退默认幅宽/克重/损耗（154/280/1.03）', () => {
+    const result = calculateBagQuote({ ...defaultBagQuoteInput, frontBackRows: [] })
+    // 规格表 = 成品 + 印刷手提；成本表 = 仅印刷手提
+    expect(result.specTable).toHaveLength(2)
+    expect(result.costTable).toHaveLength(1)
+    const handleSpec = result.specTable.find((r) => r.label === '印刷手提')
+    expect(handleSpec?.fabricWidth).toBe(154)
+    expect(handleSpec?.gramWeight).toBe(280)
+    const handleCost = result.costTable.find((r) => r.label === '印刷手提')
+    expect(handleCost?.lossRate).toBe(1.03)
+    // 单价 = 印刷手提行单价（正反面贡献为 0）
+    expect(result.summary.unitCost).toBe(handleCost?.unitTotalPrice)
+    expect(result.summary.unitCost).toBeGreaterThan(0)
+  })
+})

@@ -1,35 +1,15 @@
-import { useState, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, downloadBlob } from '../api'
 import { usePermission } from '../hooks/usePermission'
-import { TrendingUp, AlertTriangle, AlertCircle, Calendar, ArrowRight, Plus, ChevronDown, Filter, HelpCircle, ArrowUpDown, ArrowUp, ArrowDown, DollarSign, ClipboardCheck, Eye, Receipt, Loader2, X, Copy } from 'lucide-react'
+import { AlertCircle, ArrowRight, Plus, ChevronDown, Filter, ArrowUpDown, ArrowUp, ArrowDown, DollarSign, ClipboardCheck, Eye, Receipt, Loader2, X, Copy } from 'lucide-react'
 import { getStyleLabelFromProducts } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import type { Product } from '../types'
 import { copyText } from '../utils/clipboard'
-import { sortByStatusAndDueDate } from '../utils/quoteSort'
-
-/**
- * 统计卡片问号说明：hover 显示计算逻辑
- * 桌面端 hover 显示，移动端点击/触摸也会触发（浏览器对 group-hover 的触摸处理）
- */
-function StatTooltip({ children }: { children: ReactNode }) {
-  return (
-    <div className="relative inline-flex group/tip align-middle ml-0.5">
-      <HelpCircle
-        size={14}
-        className="text-gray-400 hover:text-gray-600 cursor-help transition-colors"
-        aria-label="查看计算逻辑"
-      />
-      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/tip:block z-30 w-60 p-3 bg-gray-800 text-white text-xs rounded-lg shadow-lg leading-relaxed">
-        <div className="space-y-1">
-          {children}
-        </div>
-        <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-4 border-transparent border-t-gray-800"></div>
-      </div>
-    </div>
-  )
-}
+import { parseLocalDate, toLocalDateStr, formatQuoteDate, getGanttBarGeometry } from '../utils/dates'
+import StatTooltip from '../components/StatTooltip'
+import DailyTodos from '../components/DailyTodos'
 
 // 订单状态对应的 UI 颜色样式（Dashboard 专属，value/label 来自 OrderStatus 枚举类）
 const STATUS_COLORS: Record<number, { color: string; bgColor: string; bgLightColor: string }> = {
@@ -40,6 +20,7 @@ const STATUS_COLORS: Record<number, { color: string; bgColor: string; bgLightCol
   5: { color: 'bg-green-100 text-green-700', bgColor: 'bg-green-500', bgLightColor: 'bg-green-200' },
   6: { color: 'bg-gray-100 text-gray-700', bgColor: 'bg-gray-500', bgLightColor: 'bg-gray-200' },
   7: { color: 'bg-cyan-100 text-cyan-700', bgColor: 'bg-cyan-500', bgLightColor: 'bg-cyan-200' },
+  8: { color: 'bg-teal-100 text-teal-700', bgColor: 'bg-teal-500', bgLightColor: 'bg-teal-200' },
 }
 
 // 合并 OrderStatus 枚举数据与 UI 颜色样式，消除 value/label 重复定义
@@ -50,23 +31,9 @@ const STATUS_OPTIONS = OrderStatus.getAll().map((o) => ({
 
 // 默认选中的订单状态：打样中、做货中、已发货未收款
 const DEFAULT_SELECTED_STATUSES = [2, 3, 4]
-// 销售额/利润统计的订单状态范围：做货中(3)、已发货未收款(4)、已发货已收款(5)
-// 时间匹配统一用「做货开始时间」归属到对应月份/年份（按用户决策保持原逻辑）
-const STATS_STATUSES = [3, 4, 5]
 const STORAGE_KEY = 'dashboard_selected_statuses'
-const MONTH_STORAGE_KEY = 'dashboard_selected_month'
-const PROFIT_MODE_STORAGE_KEY = 'dashboard_profit_mode'
 const SORT_MODE_STORAGE_KEY = 'dashboard_sort_mode'
 
-// 解析 "YYYY-MM-DD" 为本地时区 0 点（避免 new Date(str) 解析为 UTC 导致与 today 时区不一致）
-// 注意：必须放在组件外部，否则在 monthlyStats/yearlyStats 等 useMemo 中使用时会触发 TDZ 错误
-// （Cannot access 'parseLocalDate' before initialization）
-const parseLocalDate = (str: string): Date => {
-  const [y, m, d] = str.split('T')[0].split('-').map(Number)
-  return new Date(y, m - 1, d)
-}
-
-type ProfitMode = 'noTax' | 'withTax'
 // 订单状态跟踪排序模式：按状态升序(1→6) / 降序(6→1)
 // 同状态内以交货日期升序作为稳定二级排序，使更紧急的订单排在前面
 type SortMode = 'statusAsc' | 'statusDesc'
@@ -82,29 +49,6 @@ const getInitialStatuses = (): number[] => {
     // localStorage 不可用或数据损坏，使用默认值
   }
   return DEFAULT_SELECTED_STATUSES
-}
-
-/** 获取初始月份（默认当前月，可从 localStorage 恢复） */
-const getInitialMonth = (): string => {
-  try {
-    const saved = localStorage.getItem(MONTH_STORAGE_KEY)
-    if (saved && /^\d{4}-\d{2}$/.test(saved)) return saved
-  } catch {
-    // ignore
-  }
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
-
-/** 获取初始利润模式（默认不含税，可从 localStorage 恢复） */
-const getInitialProfitMode = (): ProfitMode => {
-  try {
-    const saved = localStorage.getItem(PROFIT_MODE_STORAGE_KEY)
-    if (saved === 'noTax' || saved === 'withTax') return saved
-  } catch {
-    // ignore
-  }
-  return 'noTax'
 }
 
 /** 获取初始排序模式（默认按状态升序，可从 localStorage 恢复） */
@@ -145,15 +89,12 @@ interface Quote {
 
 export default function Dashboard() {
   const [quotes, setQuotes] = useState<Quote[]>([])
-  const [alertQuotes, setAlertQuotes] = useState<Quote[]>([])
   const [unpaidQuotes, setUnpaidQuotes] = useState<Quote[]>([])
   const [sampleCompletedQuotes, setSampleCompletedQuotes] = useState<Quote[]>([])
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const [selectedStatuses, setSelectedStatuses] = useState<number[]>(getInitialStatuses)
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
-  const [selectedMonth, setSelectedMonth] = useState<string>(getInitialMonth)
-  const [profitMode, setProfitMode] = useState<ProfitMode>(getInitialProfitMode)
   const [sortMode, setSortMode] = useState<SortMode>(getInitialSortMode)
   // 产品列表：从产品管理模块获取，用于款式标签显示
   const [products, setProducts] = useState<Product[]>([])
@@ -164,7 +105,7 @@ export default function Dashboard() {
   const [exportingPayment, setExportingPayment] = useState(false)
   const [paymentError, setPaymentError] = useState<{ type: string; message: string; detail?: string } | null>(null)
   const [paymentToast, setPaymentToast] = useState('')
-  // 仪表盘滚动位置记忆：离开时保存，返回时恢复
+  // 工作台滚动位置记忆：离开时保存，返回时恢复
   const scrollRestoreRef = useRef<number | null>(null)
 
   // 获取产品列表（款式标签数据源）
@@ -197,27 +138,6 @@ export default function Dashboard() {
     })
   }
 
-  const handleMonthChange = (month: string) => {
-    setSelectedMonth(month)
-    try {
-      localStorage.setItem(MONTH_STORAGE_KEY, month)
-    } catch {
-      // ignore
-    }
-  }
-
-  const handleProfitModeToggle = () => {
-    setProfitMode((prev) => {
-      const next = prev === 'noTax' ? 'withTax' : 'noTax'
-      try {
-        localStorage.setItem(PROFIT_MODE_STORAGE_KEY, next)
-      } catch {
-        // ignore
-      }
-      return next
-    })
-  }
-
   const handleSortToggle = () => {
     setSortMode((prev) => {
       const next = prev === 'statusAsc' ? 'statusDesc' : 'statusAsc'
@@ -231,7 +151,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    // 从 sessionStorage 读取上次离开仪表盘时的滚动位置
+    // 从 sessionStorage 读取上次离开工作台时的滚动位置
     try {
       const saved = sessionStorage.getItem('dashboard_scroll')
       if (saved) {
@@ -269,28 +189,6 @@ export default function Dashboard() {
         })
       })
     }
-
-    // 交期预警（3天内 或 已逾期）
-    // 做货中(3)/打样中(2)的订单：交期在3天内或已逾期 → 一直预警直到状态变为已发货未收款(4)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const alertDate = new Date(today)
-    alertDate.setDate(today.getDate() + 3)
-
-    const alerts = sortByStatusAndDueDate(
-      quotesData.filter((quote) => {
-        // 排除报价中(1)、打样完成(7)、已发货未收款(4)、已发货已收款(5)、结束(6)
-        if ([1, 4, 5, 6, 7].includes(quote.status)) return false
-        if (!quote.productionTimeEnd) return false
-        const endDate = new Date(quote.productionTimeEnd)
-        endDate.setHours(0, 0, 0, 0)
-        // 3天内到期 或 已逾期（endDate <= alertDate 包含过去日期）
-        return endDate <= alertDate
-      }),
-      'asc',
-    )
-
-    setAlertQuotes(alerts)
 
     // 收款提醒：已发货未收款(4)的订单
     const unpaid = quotesData.filter((quote) => quote.status === 4)
@@ -356,121 +254,6 @@ export default function Dashboard() {
     }
   }
 
-  // 可选月份列表：从订单的做货开始时间中提取所有月份，按降序排列，确保当前月份始终可选
-  const availableMonths = useMemo(() => {
-    const set = new Set<string>()
-    const now = new Date()
-    set.add(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
-    quotes.forEach((q) => {
-      const dateStr = q.productionStartTime || q.productionTimeStart
-      if (!dateStr) return
-      const d = new Date(dateStr)
-      if (!isNaN(d.getTime())) {
-        set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-      }
-    })
-    return Array.from(set).sort((a, b) => b.localeCompare(a))
-  }, [quotes])
-
-  // 月度统计：统计状态为做货中/已发货未收款/已发货已收款，且做货开始时间在所选月份的订单
-  // - monthlyRevenue: 总销售额（按含税卖价 × 数量）
-  // - monthlyProfitNoTax: 总利润(不含税) = Σ 数量 × (卖价不含税 - 成本价)
-  // - monthlyProfitWithTax: 总利润(含税) = Σ 数量 × (卖价含税 - 含税价)
-  const monthlyStats = useMemo(() => {
-    const [yearStr, monthStr] = selectedMonth.split('-')
-    const year = parseInt(yearStr)
-    const month = parseInt(monthStr) - 1
-    const monthStart = new Date(year, month, 1)
-    const monthEnd = new Date(year, month + 1, 0, 23, 59, 59, 999)
-
-    const productionQuotes = quotes.filter((quote) => {
-      if (!STATS_STATUSES.includes(quote.status)) return false
-      const dateStr = quote.productionStartTime || quote.productionTimeStart
-      if (!dateStr) return false
-      const productionDate = parseLocalDate(dateStr)
-      if (isNaN(productionDate.getTime())) return false
-      return productionDate >= monthStart && productionDate <= monthEnd
-    })
-
-    let monthlyRevenue = 0
-    let monthlyProfitNoTax = 0
-    let monthlyProfitWithTax = 0
-    let orderCount = 0
-    // 按状态分组计数：做货中(3) / 已发货未收款(4) / 已发货已收款(5)
-    const statusCounts: Record<number, number> = { 3: 0, 4: 0, 5: 0 }
-
-    productionQuotes.forEach((quote) => {
-      const quantity = parseFloat(quote.quantity) || 0
-      const cost = quote.costPrice || 0
-      const priceWithTax = quote.priceWithTax || 0
-      const sellNoTax = quote.sellPriceNoTax || 0
-      const sellWithTax = quote.sellPriceWithTax || 0
-      monthlyRevenue += quantity * sellWithTax
-      monthlyProfitNoTax += quantity * (sellNoTax - cost)
-      monthlyProfitWithTax += quantity * (sellWithTax - priceWithTax)
-      orderCount++
-      if (statusCounts[quote.status] !== undefined) statusCounts[quote.status]++
-    })
-
-    // 打样中订单数：按 sampleTime 在所选月份过滤（打样中订单无做货开始时间，单独口径统计）
-    const sampleQuotesInMonth = quotes.filter((quote) => {
-      if (quote.status !== 2) return false
-      const sampleDate = new Date(quote.sampleTime)
-      if (isNaN(sampleDate.getTime())) return false
-      return sampleDate >= monthStart && sampleDate <= monthEnd
-    })
-
-    return {
-      monthlyRevenue: Math.round(monthlyRevenue * 100) / 100,
-      monthlyProfitNoTax: Math.round(monthlyProfitNoTax * 100) / 100,
-      monthlyProfitWithTax: Math.round(monthlyProfitWithTax * 100) / 100,
-      // 总笔数包含打样中订单（做货中+已发货未收款+已发货已收款+打样中）
-      orderCount: orderCount + sampleQuotesInMonth.length,
-      statusCounts,
-      sampleCount: sampleQuotesInMonth.length,
-    }
-  }, [quotes, selectedMonth])
-
-  // 年度统计：与月度统计同规则（状态范围/时间字段一致），仅时间范围扩大到所选月份对应的整年
-  const yearlyStats = useMemo(() => {
-    const year = parseInt(selectedMonth.split('-')[0])
-    const yearStart = new Date(year, 0, 1)
-    const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999)
-
-    const productionQuotes = quotes.filter((quote) => {
-      if (!STATS_STATUSES.includes(quote.status)) return false
-      const dateStr = quote.productionStartTime || quote.productionTimeStart
-      if (!dateStr) return false
-      const productionDate = parseLocalDate(dateStr)
-      if (isNaN(productionDate.getTime())) return false
-      return productionDate >= yearStart && productionDate <= yearEnd
-    })
-
-    let yearlyRevenue = 0
-    let yearlyProfitNoTax = 0
-    let yearlyProfitWithTax = 0
-    let orderCount = 0
-
-    productionQuotes.forEach((quote) => {
-      const quantity = parseFloat(quote.quantity) || 0
-      const cost = quote.costPrice || 0
-      const priceWithTax = quote.priceWithTax || 0
-      const sellNoTax = quote.sellPriceNoTax || 0
-      const sellWithTax = quote.sellPriceWithTax || 0
-      yearlyRevenue += quantity * sellWithTax
-      yearlyProfitNoTax += quantity * (sellNoTax - cost)
-      yearlyProfitWithTax += quantity * (sellWithTax - priceWithTax)
-      orderCount++
-    })
-
-    return {
-      yearlyRevenue: Math.round(yearlyRevenue * 100) / 100,
-      yearlyProfitNoTax: Math.round(yearlyProfitNoTax * 100) / 100,
-      yearlyProfitWithTax: Math.round(yearlyProfitWithTax * 100) / 100,
-      orderCount,
-    }
-  }, [quotes, selectedMonth])
-
   // 今日新增报价数：按 created_at（订单创建日期）统计
   const todayNewCount = useMemo(() => {
     const now = new Date()
@@ -527,10 +310,6 @@ export default function Dashboard() {
   const currentSampleCount = useMemo(() => quotes.filter((q) => q.status === 2).length, [quotes])
   const currentSampleCompletedCount = useMemo(() => quotes.filter((q) => q.status === 7).length, [quotes])
 
-  // 当前利润模式对应的月度/年度利润值
-  const currentProfit = profitMode === 'noTax' ? monthlyStats.monthlyProfitNoTax : monthlyStats.monthlyProfitWithTax
-  const currentYearProfit = profitMode === 'noTax' ? yearlyStats.yearlyProfitNoTax : yearlyStats.yearlyProfitWithTax
-
   const getStatusLabel = (status: number) => {
     const option = STATUS_OPTIONS.find((o) => o.value === status)
     return option ? option.label : '未知'
@@ -551,9 +330,8 @@ export default function Dashboard() {
     return option ? option.bgLightColor : 'bg-gray-200'
   }
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('zh-CN')
-  }
+  /** 订单日期展示的格式化（跨时区一致，空值安全） */
+  const formatDate = (dateStr: string) => formatQuoteDate(dateStr)
 
   const getDaysUntilDue = (endDateStr: string) => {
     const today = new Date()
@@ -564,6 +342,13 @@ export default function Dashboard() {
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
     return diffDays
   }
+
+  /**
+   * 订单起始日期字符串：做货开始时间 → 做货时间（老字段）→ 打样开始时间
+   * 打样中订单无做货日期，回退到打样开始时间，避免日期显示为 Invalid Date
+   */
+  const getQuoteStartDateStr = (quote: Quote) =>
+    quote.productionStartTime || quote.productionTimeStart || quote.sampleTime
 
   // 根据选中的状态筛选订单并排序（useMemo 优化性能，避免每次渲染都重新筛选+排序）
   // 主排序：按订单状态在流转路径中的位置（升序或降序）
@@ -591,7 +376,9 @@ export default function Dashboard() {
   const getGanttRange = () => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    const todayStr = today.toISOString().split('T')[0]
+    // 修复：toISOString 取的是 UTC 日期，在 UTC+8 环境（本地 0~8 点间）会得到"昨天"，
+    // 导致无到期时间的订单日期行/进度条整体偏移一天。改为本地日期字符串。
+    const todayStr = toLocalDateStr(today)
 
     const filteredQuotes = activeQuotes
 
@@ -599,7 +386,7 @@ export default function Dashboard() {
     let maxDate = today
 
     filteredQuotes.forEach((quote) => {
-      const startStr = quote.productionStartTime || quote.productionTimeStart
+      const startStr = getQuoteStartDateStr(quote)
       const startDate = startStr ? parseLocalDate(startStr) : today
       const endDateStr = quote.productionTimeEnd || todayStr
       const endDate = parseLocalDate(endDateStr)
@@ -622,7 +409,10 @@ export default function Dashboard() {
   // 今天标记位置（本地 0 点，与进度条基准一致）
   const todayForMark = new Date()
   todayForMark.setHours(0, 0, 0, 0)
-  const todayMarkPercent = ((todayForMark.getTime() - minDate.getTime()) / (maxDate.getTime() - minDate.getTime())) * 100
+  // 与日期表头列对齐：范围 [min, max] 共 rangeDays+1 个日期列，今天线对齐"今天"列的左边缘
+  const rangeDayCount = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
+  const todayMarkPercent =
+    ((todayForMark.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24) / (rangeDayCount + 1)) * 100
 
   const generateGanttDays = () => {
     const days = []
@@ -640,9 +430,9 @@ export default function Dashboard() {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
-    const startStr = quote.productionStartTime || quote.productionTimeStart
+    const startStr = getQuoteStartDateStr(quote)
     const startDate = startStr ? parseLocalDate(startStr) : today
-    const endDateStr = quote.productionTimeEnd || today.toISOString().split('T')[0]
+    const endDateStr = quote.productionTimeEnd || toLocalDateStr(today)
     const endDate = parseLocalDate(endDateStr)
 
     const totalDays = Math.max(1, (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
@@ -651,192 +441,20 @@ export default function Dashboard() {
     return Math.min(100, (elapsedDays / totalDays) * 100)
   }
 
+  // 进度条几何：与日期表头列精确对齐（工具函数内含跨时区处理）
   const getGanttBarStyle = (quote: Quote) => {
-    const startStr = quote.productionStartTime || quote.productionTimeStart
-    const startDate = startStr ? parseLocalDate(startStr) : minDate
-    const endDateStr = quote.productionTimeEnd || new Date().toISOString().split('T')[0]
-    const endDate = parseLocalDate(endDateStr)
-
-    const totalDays = (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
-    const offsetDays = (startDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
-    const durationDays = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
-
-    const left = Math.max(0, (offsetDays / totalDays) * 100)
-    const width = Math.min(100 - left, (durationDays / totalDays) * 100)
-
-    return { left: `${left}%`, width: `${width}%` }
+    const geo = getGanttBarGeometry(getQuoteStartDateStr(quote), quote.productionTimeEnd, minDate, maxDate, todayForMark)
+    return { left: `${geo.left}%`, width: `${geo.width}%` }
   }
-
-  // 月份显示标签（YYYY-MM → YYYY年MM月）
-  const monthLabel = useMemo(() => {
-    const [y, m] = selectedMonth.split('-')
-    return `${y}年${parseInt(m)}月`
-  }, [selectedMonth])
-
-  // 年度标签（与所选月份对应的年份，年度统计随月份切换自动跟随）
-  const yearLabel = useMemo(() => {
-    return `${selectedMonth.split('-')[0]}年`
-  }, [selectedMonth])
 
   return (
       <div className="p-4 sm:p-6">
-        <div className="mb-6 sm:mb-8 flex items-start justify-between flex-wrap gap-4">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-gray-800">仪表盘</h1>
-            <p className="text-gray-500 mt-1">欢迎回来，查看今日业务概览</p>
-          </div>
-          {/* 月份筛选器 */}
-          <div className="flex items-center gap-2">
-            <Calendar className="text-gray-400" size={18} />
-            <div className="relative">
-              <select
-                value={selectedMonth}
-                onChange={(e) => handleMonthChange(e.target.value)}
-                className="appearance-none pl-3 pr-9 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none cursor-pointer"
-              >
-                {availableMonths.map((m) => {
-                  const [y, mo] = m.split('-')
-                  return (
-                    <option key={m} value={m}>{y}年{parseInt(mo)}月</option>
-                  )
-                })}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
+        <div className="mb-6 sm:mb-8">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">工作台</h1>
+          <p className="text-gray-500 mt-1">欢迎回来，查看今日业务概览</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {/* 当月业绩（销售额 + 利润合并） */}
-          <div
-            className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer"
-            onDoubleClick={() => navigate(`/quotes?month=${selectedMonth}`)}
-            title="双击查看当月业绩明细"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 bg-purple-50 rounded-lg flex items-center justify-center">
-                  <TrendingUp className="text-purple-600" size={18} />
-                </div>
-                <h3 className="text-base font-semibold text-gray-800">{monthLabel}业绩</h3>
-              </div>
-              {/* 利润模式切换（当月/全年联动） */}
-              <button
-                onClick={handleProfitModeToggle}
-                onDoubleClick={(e) => e.stopPropagation()}
-                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
-                  profitMode === 'noTax'
-                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                    : 'bg-green-100 text-green-600 hover:bg-green-200'
-                }`}
-                title="点击切换不含税 / 含税"
-              >
-                {profitMode === 'noTax' ? '不含税' : '含税'}
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {/* 销售额 */}
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500 flex items-center">
-                  销售额
-                  <StatTooltip>
-                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                    <p>• 时间范围：做货开始时间在所选月份</p>
-                    <p>• 计算公式：Σ（含税卖价 × 数量）</p>
-                    <p className="text-gray-300 pt-1 border-t border-gray-700 mt-1">下方明细为各状态订单数量</p>
-                  </StatTooltip>
-                </p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">¥{monthlyStats.monthlyRevenue.toLocaleString()}</p>
-                <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1.5">
-                  <span className="text-xs text-blue-600">做货中 {monthlyStats.statusCounts[3]}</span>
-                  <span className="text-xs text-amber-600">未收款 {monthlyStats.statusCounts[4]}</span>
-                  <span className="text-xs text-green-600">已收款 {monthlyStats.statusCounts[5]}</span>
-                  <span className="text-xs text-yellow-600">打样中 {monthlyStats.sampleCount}</span>
-                </div>
-              </div>
-              {/* 利润 */}
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500 flex items-center">
-                  利润
-                  <StatTooltip>
-                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                    <p>• 时间范围：做货开始时间在所选月份</p>
-                    <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
-                    <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
-                  </StatTooltip>
-                </p>
-                <p className={`text-2xl font-bold mt-1 ${profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'}`}>
-                  ¥{currentProfit.toLocaleString()}
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {profitMode === 'noTax' ? '卖价(不含税) - 成本价' : '卖价(含税) - 含税价'}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* 全年业绩（销售额 + 利润合并） */}
-          <div
-            className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow cursor-pointer"
-            onDoubleClick={() => navigate(`/quotes?year=${selectedMonth.split('-')[0]}`)}
-            title="双击查看全年业绩明细"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center">
-                  <TrendingUp className="text-blue-600" size={18} />
-                </div>
-                <h3 className="text-base font-semibold text-gray-800">{yearLabel}业绩</h3>
-              </div>
-              {/* 利润模式切换（与当月联动同一状态） */}
-              <button
-                onClick={handleProfitModeToggle}
-                onDoubleClick={(e) => e.stopPropagation()}
-                className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
-                  profitMode === 'noTax'
-                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                    : 'bg-green-100 text-green-600 hover:bg-green-200'
-                }`}
-                title="点击切换不含税 / 含税"
-              >
-                {profitMode === 'noTax' ? '不含税' : '含税'}
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              {/* 销售额 */}
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500 flex items-center">
-                  销售额
-                  <StatTooltip>
-                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                    <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
-                    <p>• 计算公式：Σ（含税卖价 × 数量）</p>
-                  </StatTooltip>
-                </p>
-                <p className="text-2xl font-bold text-gray-800 mt-1">¥{yearlyStats.yearlyRevenue.toLocaleString()}</p>
-                <p className="text-xs text-gray-400 mt-1">做货中/已发货订单 · {yearlyStats.orderCount} 笔</p>
-              </div>
-              {/* 利润 */}
-              <div className="min-w-0">
-                <p className="text-sm text-gray-500 flex items-center">
-                  利润
-                  <StatTooltip>
-                    <p>• 统计范围：状态为「做货中/已发货未收款/已发货已收款」的订单</p>
-                    <p>• 时间范围：做货开始时间在所选月份对应的整年</p>
-                    <p>• 不含税：Σ 数量 ×（卖价不含税 − 成本价）</p>
-                    <p>• 含税：Σ 数量 ×（卖价含税 − 含税价）</p>
-                  </StatTooltip>
-                </p>
-                <p className={`text-2xl font-bold mt-1 ${profitMode === 'noTax' ? 'text-red-600' : 'text-green-600'}`}>
-                  ¥{currentYearProfit.toLocaleString()}
-                </p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {profitMode === 'noTax' ? '卖价(不含税) - 成本价' : '卖价(含税) - 含税价'}
-                </p>
-              </div>
-            </div>
-          </div>
-
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {/* 今日新增报价数 */}
           <div className="bg-white rounded-xl p-4 sm:p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between mb-4">
@@ -919,6 +537,11 @@ export default function Dashboard() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* 每日待办（最右列；业绩数据已迁移至「报表统计-年度业务报表」） */}
+          <div className="lg:col-span-2 min-w-0">
+            <DailyTodos />
           </div>
         </div>
 
@@ -1003,53 +626,58 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* 当前筛选状态标签 */}
-            {selectedStatuses.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                {selectedStatuses
-                  .slice()
-                  .sort((a, b) => a - b)
-                  .map((s) => {
-                    const opt = STATUS_OPTIONS.find((o) => o.value === s)
-                    if (!opt) return null
-                    return (
-                      <span
-                        key={s}
-                        className={`px-2 py-0.5 text-xs rounded-full ${opt.color} cursor-pointer hover:opacity-70`}
-                        onClick={() => handleStatusToggle(s)}
-                        title="点击移除"
-                      >
-                        {opt.label} ✕
-                      </span>
-                    )
-                  })}
-              </div>
-            )}
-
             {activeQuotes.length === 0 ? (
               <p className="text-gray-500 text-center py-8">暂无订单记录</p>
             ) : (
               <div className="overflow-x-auto">
                 <div className="min-w-[800px]">
-                  {/* 日期表头 */}
+                  {/* 日期表头（含年/月标识：首列与每月 1 日标注年月，今天高亮）
+                      左侧 w-72 列复用为当前筛选状态标签区，与日期行平齐，省去独占行 */}
                   <div className="flex items-center gap-4 border-b border-gray-200 pb-2 mb-2">
-                    <div className="w-72 shrink-0"></div>
+                    <div className="w-72 shrink-0 flex flex-wrap items-center content-center gap-1.5 pr-2">
+                      {selectedStatuses
+                        .slice()
+                        .sort((a, b) => a - b)
+                        .map((s) => {
+                          const opt = STATUS_OPTIONS.find((o) => o.value === s)
+                          if (!opt) return null
+                          return (
+                            <span
+                              key={s}
+                              className={`px-2 py-0.5 text-xs rounded-full ${opt.color} cursor-pointer hover:opacity-70`}
+                              onClick={() => handleStatusToggle(s)}
+                              title="点击移除"
+                            >
+                              {opt.label} ✕
+                            </span>
+                          )
+                        })}
+                    </div>
                     <div className="flex-1 flex">
-                      {ganttDays.map((day, index) => (
-                        <div
-                          key={index}
-                          className="flex-1 text-center text-xs"
-                          style={{ minWidth: '35px' }}
-                        >
-                          <span className="block text-gray-500">{day.getMonth() + 1}/{day.getDate()}</span>
-                          {day.toDateString() === new Date().toDateString() && (
-                            <span className="block text-primary-600 font-bold">今天</span>
-                          )}
-                        </div>
-                      ))}
+                      {ganttDays.map((day, index) => {
+                        const isToday = day.toDateString() === new Date().toDateString()
+                        // 每月首日（及范围首列）标注年月，跨年区间也能读出所属年份
+                        const isMonthStart = index === 0 || day.getDate() === 1
+                        return (
+                          <div
+                            key={index}
+                            className="flex-1 text-center text-xs"
+                            style={{ minWidth: '35px' }}
+                          >
+                            <span className="block text-gray-500">{day.getMonth() + 1}/{day.getDate()}</span>
+                            {isToday ? (
+                              <span className="block text-primary-600 font-bold">今天</span>
+                            ) : isMonthStart ? (
+                              <span className="block text-[10px] text-gray-400 whitespace-nowrap">
+                                {day.getFullYear()}年{day.getMonth() + 1}月
+                              </span>
+                            ) : null}
+                          </div>
+                        )
+                      })}
                     </div>
                     <div className="w-28 shrink-0 text-right">
-                      <span className="text-xs text-gray-500">进度</span>
+                      <span className="text-xs text-gray-500">日期范围</span>
                     </div>
                   </div>
 
@@ -1057,6 +685,10 @@ export default function Dashboard() {
                   {activeQuotes.map((quote) => {
                     const barStyle = getGanttBarStyle(quote)
                     const progress = calculateProgress(quote)
+                    // 日期行：起始日期回退到打样开始时间（打样中订单无做货日期），
+                    // 到期日期缺失时显示 "—"，杜绝 Invalid Date
+                    const startDateStr = getQuoteStartDateStr(quote)
+                    const endDateStr = quote.productionTimeEnd
 
                     return (
                       <div
@@ -1121,7 +753,13 @@ export default function Dashboard() {
                           ></div>
                         </div>
                         <div className="w-28 shrink-0 text-right">
-                          <p className="text-xs text-gray-500">{formatDate(quote.productionTimeStart)} → {formatDate(quote.productionTimeEnd || new Date().toISOString().split('T')[0])}</p>
+                          {startDateStr || endDateStr ? (
+                            <p className="text-xs text-gray-500">
+                              {startDateStr ? formatDate(startDateStr) : '—'} → {endDateStr ? formatDate(endDateStr) : '—'}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-400">暂无日期</p>
+                          )}
                         </div>
                       </div>
                     )
@@ -1133,64 +771,6 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-          {/* 交期预警 — 无数据时隐藏 */}
-          {alertQuotes.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="text-red-500" size={20} />
-                <h2 className="text-lg font-semibold text-gray-800">交期预警</h2>
-              </div>
-              <button
-                onClick={() => navigate('/quotes')}
-                className="text-sm text-primary-600 hover:text-primary-700 font-medium py-1.5 sm:py-0 min-h-[40px] sm:min-h-0"
-              >
-                查看全部 <ArrowRight size={16} className="inline" />
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {alertQuotes.map((quote) => {
-                const daysLeft = getDaysUntilDue(quote.productionTimeEnd)
-                const isOverdue = daysLeft < 0
-                return (
-                  <div
-                    key={quote.id}
-                    className={`flex items-center justify-between gap-2 p-2 rounded-lg border-l-4 hover:bg-gray-50 transition-colors cursor-pointer ${
-                      isOverdue ? 'bg-red-50 border-red-600' :
-                      daysLeft === 0 ? 'bg-red-50 border-red-500' :
-                      daysLeft <= 1 ? 'bg-orange-50 border-orange-500' :
-                      'bg-yellow-50 border-yellow-500'
-                    }`}
-                    onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
-                    title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${getStatusColor(quote.status)}`}>
-                        {getStatusLabel(quote.status)}
-                      </span>
-                      <span className="text-sm text-gray-700">
-                        {quote.customerName}-{getStyleLabelFromProducts(products, quote.productStyle)}-{quote.quantity}个
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-xs text-gray-400">{formatDate(quote.productionTimeEnd)}</span>
-                      <span className={`text-xs font-semibold ${
-                        isOverdue ? 'text-red-600' :
-                        daysLeft === 0 ? 'text-red-600' :
-                        daysLeft <= 1 ? 'text-orange-600' :
-                        'text-yellow-600'
-                      }`}>
-                        {isOverdue ? `逾期${Math.abs(daysLeft)}天` : daysLeft === 0 ? '今日到期' : `剩${daysLeft}天`}
-                      </span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-          )}
-
           {/* 收款提醒 — 无数据时隐藏 */}
           {unpaidQuotes.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">

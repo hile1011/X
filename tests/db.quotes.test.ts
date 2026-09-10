@@ -70,17 +70,18 @@ describe('Quote 状态流转', () => {
       expect(updated!.paymentTime).toBeTruthy()
     })
 
-    it('已发货已收款(5) → 结束(6)，应记录 endTime', async () => {
+    it('已发货已收款(5) 不能经 nextStatus 流转到已对账(8)（V28：对账需走订单对账管理 reconcileQuote）', async () => {
       for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→5（1→2→7→3→4→5）
-      const updated = await db.quotes.nextStatus(quoteId) // 5→6
-      expect(updated!.status).toBe(6)
-      expect(updated!.endTime).toBeTruthy()
+      const updated = await db.quotes.nextStatus(quoteId) // 5 保持不变
+      expect(updated!.status).toBe(5)
+      expect((updated as any).reconciledTime).toBeFalsy()
     })
 
-    it('结束(6) 不能继续流转，应保持原状态', async () => {
-      for (let i = 0; i < 6; i++) await db.quotes.nextStatus(quoteId) // 1→6（1→2→7→3→4→5→6）
+    it('已对账(8) 为流转终态（经对账管理进入后），不能继续流转', async () => {
+      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→5
+      await db.reconciliation.reconcileQuote(quoteId) // 5→8（订单对账管理确认对账）
       const updated = await db.quotes.nextStatus(quoteId)
-      expect(updated!.status).toBe(6)
+      expect(updated!.status).toBe(8)
     })
   })
 
@@ -119,9 +120,18 @@ describe('Quote 状态流转', () => {
     })
 
     it('结束(6) → 已发货已收款(5)，结束状态可退回', async () => {
-      for (let i = 0; i < 6; i++) await db.quotes.nextStatus(quoteId) // 1→6
+      await db.quotes.nextStatus(quoteId) // 1→2
+      await db.quotes.nextStatus(quoteId) // 2→7
+      await db.quotes.endQuote(quoteId) // 7→6（结束仅可从 1/2/7 进入）
       const updated = await db.quotes.prevStatus(quoteId) // 6→5
       expect(updated!.status).toBe(5)
+    })
+
+    it('已对账(8) 不能经 prevStatus 退回（V28：退回需走订单对账管理 unreconcileQuote）', async () => {
+      for (let i = 0; i < 5; i++) await db.quotes.nextStatus(quoteId) // 1→5
+      await db.reconciliation.reconcileQuote(quoteId) // 5→8（订单对账管理确认对账）
+      const updated = await db.quotes.prevStatus(quoteId) // 8 保持不变
+      expect(updated!.status).toBe(8)
     })
 
     it('报价中(1) 不能退回，应保持原状态', async () => {
@@ -174,6 +184,8 @@ describe('Quote 订单号生成', () => {
   it('多个订单的订单号互不相同（全局唯一）', async () => {
     const numbers = new Set<string>()
     for (let i = 0; i < 5; i++) {
+      // 主键 id 为 quote-${Date.now()}，同毫秒连续创建会碰撞，需间隔 2ms
+      if (i > 0) await new Promise((r) => setTimeout(r, 2))
       const quote = await db.quotes.create({ customerName: `唯一性测试客户${i}`, productStyle: '1' })
       expect(numbers.has(quote.quote_number)).toBe(false)
       numbers.add(quote.quote_number)

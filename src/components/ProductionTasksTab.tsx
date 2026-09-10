@@ -2,7 +2,7 @@
  * 订单做货流程标签页（v24）
  *
  * 结构（设计文档 §2.3）：
- *   - 顶部工具栏：汇总信息 + 同步状态徽标 + 一键排期 / 添加步骤 / 保存
+ *   - 顶部工具栏：汇总信息 + 同步状态徽标 + 一键排期 / 撤销排期 / 添加步骤 / 保存
  *   - VTable-Gantt 甘特图：左侧任务列表 + 右侧时间轴
  *       主条（可拖拽移动/拉伸调整时长）= 计划排期 planStart/planEnd
  *       baseline 条（只读）= 实际执行 actualStart/actualEnd
@@ -15,7 +15,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Gantt, TYPES } from '@visactor/vtable-gantt'
 import type { GanttConstructorOptions } from '@visactor/vtable-gantt'
-import { Play, Plus, Save, Loader2, Zap, Trash2, ChevronUp, ChevronDown, Package, AlertCircle, CheckCircle2, CloudUpload } from 'lucide-react'
+import { Play, Plus, Save, Loader2, Zap, Trash2, ChevronUp, ChevronDown, Package, AlertCircle, CheckCircle2, CloudUpload, Undo2 } from 'lucide-react'
 import { api } from '../api'
 import {
   type ProductionTask, type ProductionTaskMaterial, type ProductionTaskSyncStatus,
@@ -59,6 +59,8 @@ export default function ProductionTasksTab({
   const [syncStatus, setSyncStatus] = useState<ProductionTaskSyncStatus>('idle')
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
+  // 一键排期撤回快照：排期前的任务数组；排期后发生其他编辑（改字段/增删移/拖拽）即失效清空
+  const [undoSnapshot, setUndoSnapshot] = useState<ProductionTask[] | null>(null)
 
   const ganttRef = useRef<HTMLDivElement>(null)
   const ganttInstanceRef = useRef<any>(null)
@@ -73,6 +75,7 @@ export default function ProductionTasksTab({
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setUndoSnapshot(null)
     api.quotes.getProductionTasks(quoteId)
       .then((data: unknown) => {
         if (cancelled) return
@@ -257,6 +260,7 @@ export default function ProductionTasksTab({
       if (!planStart || !planEnd || planStart > planEnd) return
       const next = [...tasksRef.current]
       next[idx] = { ...next[idx], planStart, planEnd }
+      setUndoSnapshot(null) // 排期后拖拽调整 → 排期快照失效
       updateTasks(next)
     })
     // 点击任务条：选中对应任务，滚动到详情编辑区
@@ -331,6 +335,7 @@ export default function ProductionTasksTab({
       const resolved = resolveStatusByActualTimes(next[idx])
       if (next[idx].status !== resolved) next[idx] = { ...next[idx], status: resolved }
     }
+    setUndoSnapshot(null)
     updateTasks(next)
   }
 
@@ -343,12 +348,14 @@ export default function ProductionTasksTab({
       status: 0 as const, remark: '', materials: [],
     }]
     setSelectedIdx(next.length - 1)
+    setUndoSnapshot(null)
     updateTasks(next)
   }
 
   const handleRemoveTask = (idx: number) => {
     const next = tasks.filter((_, i) => i !== idx)
     setSelectedIdx((prev) => (prev === null ? null : prev === idx ? null : prev > idx ? prev - 1 : prev))
+    setUndoSnapshot(null)
     updateTasks(next)
   }
 
@@ -358,6 +365,7 @@ export default function ProductionTasksTab({
     const next = [...tasks]
     ;[next[idx], next[target]] = [next[target], next[idx]]
     setSelectedIdx(target)
+    setUndoSnapshot(null)
     updateTasks(next)
   }
 
@@ -368,7 +376,16 @@ export default function ProductionTasksTab({
       return
     }
     setErrorMsg('')
+    setUndoSnapshot(tasks) // 排期前快照（内容不可变，引用安全）
     updateTasks(scheduled)
+  }
+
+  /** 撤销最近一次一键排期：恢复排期前的任务（含计划时间）并走同一保存通道 */
+  const handleUndoSchedule = () => {
+    if (!undoSnapshot) return
+    setErrorMsg('')
+    setUndoSnapshot(null)
+    updateTasks(undoSnapshot)
   }
 
   const handleManualSave = () => {
@@ -421,6 +438,14 @@ export default function ProductionTasksTab({
               className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50"
             >
               <Zap size={13} /> 一键排期
+            </button>
+            <button
+              onClick={handleUndoSchedule}
+              disabled={loading || !undoSnapshot}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              title={undoSnapshot ? '撤销最近一次一键排期，恢复排期前的计划时间' : '暂无可撤销的排期（排期后发生其他修改则不可撤销）'}
+            >
+              <Undo2 size={13} /> 撤销排期
             </button>
             <button
               onClick={handleAddTask}

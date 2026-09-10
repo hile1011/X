@@ -142,6 +142,10 @@ describe('findColByHeader - 按列标题关键字定位列', () => {
   it('找不到关键字时返回 -1', () => {
     expect(findColByHeader(STYLE1_DATA, headerRowIdx, ['不存在的列'])).toBe(-1)
   })
+  it('标题行为 null（空行占位）时返回 -1', () => {
+    const dataWithNull: any[][] = [[1, 2], null, ['加工费']]
+    expect(findColByHeader(dataWithNull, 1, ['加工费'])).toBe(-1)
+  })
 })
 
 describe('findHeaderRow - 定位列标题行', () => {
@@ -157,6 +161,14 @@ describe('findHeaderRow - 定位列标题行', () => {
   it('找不到列标题行时返回 -1', () => {
     const noHeader: any[][] = [[1, 2, 3], ['a', 'b', 'c']]
     expect(findHeaderRow(noHeader)).toBe(-1)
+  })
+  it('跳过 null 行（空行占位）继续查找', () => {
+    const dataWithNull: any[][] = [null, ['加工费', '印刷费'], ['x']]
+    expect(findHeaderRow(dataWithNull)).toBe(1)
+  })
+  it('全部为 null 行时返回 -1', () => {
+    const allNull: any[][] = [null, null]
+    expect(findHeaderRow(allNull)).toBe(-1)
   })
 })
 

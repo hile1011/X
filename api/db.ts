@@ -151,6 +151,50 @@ export interface ProductionTaskRecord {
   updatedAt: string
 }
 
+/** 做货流程跟踪表总览行（任务 + 订单摘要，做货跟踪页聚合数据） */
+export interface ProductionTaskOverviewRow extends ProductionTaskRecord {
+  quoteNumber: string
+  customerName: string
+  quantity: string
+  orderStatus: number
+  quoteUpdatedAt: string
+}
+
+/** 订单对账工艺成本明细记录（v28） */
+export interface ReconciliationCostRecord {
+  id: string
+  quoteId: string
+  /** 工艺名称（必填） */
+  name: string
+  /** 工艺单价 */
+  unitPrice: number
+  /** 工艺数量 */
+  quantity: number
+  /** 工艺成本（必填） */
+  cost: number
+  /** 工艺备注 */
+  remark: string
+  sortOrder: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 解析 quote_reconciliation_costs 行：DECIMAL 字符串转 number */
+function parseReconciliationCostRow(row: Record<string, any>): ReconciliationCostRecord {
+  return {
+    id: row.id,
+    quoteId: row.quote_id,
+    name: row.name || '',
+    unitPrice: Number(row.unit_price ?? 0),
+    quantity: Number(row.quantity ?? 0),
+    cost: Number(row.cost ?? 0),
+    remark: row.remark || '',
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  }
+}
+
 /** 解析 quote_production_tasks 行：DATE 转 YYYY-MM-DD、materials JSON 反序列化 */
 function parseProductionTaskRow(row: Record<string, any>): ProductionTaskRecord {
   const toDateStr = (v: any): string | null => {
@@ -394,7 +438,7 @@ export const dbApi = {
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax,
         receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime,
-        sampleCompletedTime, productionStartTime, shippingTime, paymentTime, endTime, created_at, updated_at
+        sampleCompletedTime, productionStartTime, shippingTime, paymentTime, reconciledTime, endTime, created_at, updated_at
         FROM quotes ORDER BY updated_at DESC`).all()
       return rows.map((r) => parseLargeFields(r)) as Quote[]
     },
@@ -506,7 +550,7 @@ export const dbApi = {
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
         receivableSampleFee=?, actualSampleFee=?, sampleFeeDeduct=?, deposit=?, pendingAmount=?,
-        status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?,
+        status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, reconciledTime=?, endTime=?,
         images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id, updatedQuote.updated_by,
         updatedQuote.shippingAddress, updatedQuote.productStyle, (updatedQuote as any).templateId || '', updatedQuote.productSpec,
@@ -517,7 +561,8 @@ export const dbApi = {
         updatedQuote.costPrice, updatedQuote.priceWithTax, updatedQuote.sellPriceNoTax, updatedQuote.sellPriceWithTax,
         updatedQuote.receivableSampleFee || 0, updatedQuote.actualSampleFee || 0, updatedQuote.sampleFeeDeduct ? 1 : 0, updatedQuote.deposit || 0, updatedQuote.pendingAmount || 0,
         updatedQuote.status, updatedQuote.sampleTime, updatedQuote.sampleCompletedTime, updatedQuote.productionStartTime,
-        updatedQuote.shippingTime, updatedQuote.paymentTime, updatedQuote.endTime,
+        updatedQuote.shippingTime, updatedQuote.paymentTime, (updatedQuote as any).reconciledTime || existing.reconciledTime || '',
+        updatedQuote.endTime,
         JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson, updatedQuote.updated_at, id
       )
       return updatedQuote
@@ -535,11 +580,14 @@ export const dbApi = {
         case 7: newStatus = 3; updates.productionStartTime = today; break
         case 3: newStatus = 4; updates.shippingTime = today; break
         case 4: newStatus = 5; updates.paymentTime = today; break
-        case 5: newStatus = 6; updates.endTime = today; break
+        // V28 对账管理：订单管理不允许手动流转到已对账(8)，5→8 仅可经订单对账管理 reconcileQuote（确认对账）进入
+        case 5: return toCamelRow(existing) as Quote
+        // 已对账(8)为流转终态；结束(6)为旁路状态（仅 1/2/7 可经 endQuote 进入）
+        case 8: return toCamelRow(existing) as Quote
         case 6: return toCamelRow(existing) as Quote
       }
 
-      const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, ...updates, updated_at: timeNow() }
+      const updated = { ...(toCamelRow(existing) as Quote), status: newStatus, ...updates, updated_at: timeNow() } as any
       // 待收总额状态联动：仅做货中(3)/已发货未收款(4)保留计算；从非计算态进入时重算，离开时清零
       const inCalcStates = (s: number) => s === 3 || s === 4
       if (inCalcStates(newStatus) && !inCalcStates(existing.status)) {
@@ -547,13 +595,14 @@ export const dbApi = {
       } else if (!inCalcStates(newStatus)) {
         updated.pendingAmount = 0
       }
-      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, endTime=?, pendingAmount=?, updated_at=? WHERE id=?`).run(
+      await dbConn.prepare(`UPDATE quotes SET status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, reconciledTime=?, endTime=?, pendingAmount=?, updated_at=? WHERE id=?`).run(
         newStatus,
         updates.sampleTime || existing.sampleTime,
         updates.sampleCompletedTime || (existing as any).sampleCompletedTime || '',
         updates.productionStartTime || existing.productionStartTime,
         updates.shippingTime || existing.shippingTime,
         updates.paymentTime || existing.paymentTime,
+        (updates as any).reconciledTime || (existing as any).reconciledTime || '',
         updates.endTime || existing.endTime,
         updated.pendingAmount ?? (existing as any).pendingAmount ?? 0,
         updated.updated_at, id
@@ -570,6 +619,9 @@ export const dbApi = {
         case 3: newStatus = 7; break
         case 4: newStatus = 3; break
         case 5: newStatus = 4; break
+        // V28 对账管理：订单管理不允许手动退出已对账(8)，8→5 仅可经订单对账管理 unreconcileQuote（退回对账）操作
+        case 8: return toCamelRow(existing) as Quote
+        // 历史"结束"订单可退回已发货已收款，重新走对账流程
         case 6: newStatus = 5; break
         case 1: return toCamelRow(existing) as Quote
       }
@@ -796,6 +848,25 @@ export const dbApi = {
       return rows.map(parseProductionTaskRow)
     },
     /**
+     * 获取全部订单的做货流程任务总览（JOIN quotes 摘要字段，做货跟踪页用）：
+     * 排序在服务层完成（订单按最早日期+订单号，订单内按步骤序），前端直接消费
+     */
+    getAllWithQuoteInfo: async (): Promise<ProductionTaskOverviewRow[]> => {
+      const rows = await dbConn.prepare(`
+        SELECT t.*, q.quote_number, q.customerName, q.quantity, q.status AS order_status, q.updated_at AS quote_updated_at
+        FROM quote_production_tasks t
+        JOIN quotes q ON q.id = t.quote_id
+      `).all()
+      return rows.map((row) => ({
+        ...parseProductionTaskRow(row),
+        quoteNumber: String(row.quote_number ?? ''),
+        customerName: String(row.customerName ?? ''),
+        quantity: String(row.quantity ?? ''),
+        orderStatus: Number(row.order_status ?? 0),
+        quoteUpdatedAt: String(row.quote_updated_at ?? ''),
+      }))
+    },
+    /**
      * 整体替换订单的任务列表（事务：删 + 批量插）
      * 服务端重排 step_order 并生成新 id，返回落库后的记录
      */
@@ -827,7 +898,7 @@ export const dbApi = {
             JSON.stringify(t.materials || []), now, now,
           )
           inserted.push({
-            id, quoteId, stepOrder: i + 1, name: t.name,
+            id, quoteId: quoteId, stepOrder: i + 1, name: t.name,
             planStart: t.planStart || null, planEnd: t.planEnd || null,
             actualStart: t.actualStart || null, actualEnd: t.actualEnd || null,
             status: Number(t.status ?? 0), remark: t.remark || '',
@@ -837,6 +908,93 @@ export const dbApi = {
         return inserted
       })
       return run()
+    },
+  },
+
+  /** 订单对账管理（v28）：工艺成本明细 + 确认/退回对账 */
+  reconciliation: {
+    /** 获取订单的对账工艺成本明细（按 sort_order 升序） */
+    getCosts: async (quoteId: string): Promise<ReconciliationCostRecord[]> => {
+      const rows = await dbConn.prepare(
+        'SELECT * FROM quote_reconciliation_costs WHERE quote_id = ? ORDER BY sort_order ASC, created_at ASC'
+      ).all(quoteId)
+      return rows.map(parseReconciliationCostRow)
+    },
+    /**
+     * 整体替换订单的对账工艺成本明细（事务：删 + 批量插）
+     * 服务端重排 sort_order 并生成新 id，返回落库后的记录
+     */
+    replaceCosts: async (quoteId: string, costs: Array<{
+      name: string
+      unitPrice?: number
+      quantity?: number
+      cost: number
+      remark?: string
+    }>): Promise<ReconciliationCostRecord[]> => {
+      const run = dbConn.transaction(async () => {
+        await dbConn.prepare('DELETE FROM quote_reconciliation_costs WHERE quote_id = ?').run(quoteId)
+        const inserted: ReconciliationCostRecord[] = []
+        const now = timeNow()
+        for (let i = 0; i < costs.length; i++) {
+          const c = costs[i]
+          const id = `recon-cost-${Date.now()}-${i}-${Math.floor(Math.random() * 1000)}`
+          await dbConn.prepare(
+            `INSERT INTO quote_reconciliation_costs
+             (id, quote_id, name, unit_price, quantity, cost, remark, sort_order, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            id, quoteId, c.name,
+            Math.round((Number(c.unitPrice) || 0) * 100) / 100,
+            Math.round((Number(c.quantity) || 0) * 100) / 100,
+            Math.round((Number(c.cost) || 0) * 100) / 100,
+            c.remark || '', i + 1, now, now,
+          )
+          inserted.push({
+            id, quoteId, name: c.name,
+            unitPrice: Math.round((Number(c.unitPrice) || 0) * 100) / 100,
+            quantity: Math.round((Number(c.quantity) || 0) * 100) / 100,
+            cost: Math.round((Number(c.cost) || 0) * 100) / 100,
+            remark: c.remark || '', sortOrder: i + 1, createdAt: now, updatedAt: now,
+          })
+        }
+        return inserted
+      })
+      return run()
+    },
+    /**
+     * 确认对账：已发货已收款(5) → 已对账(8)，记录对账时间
+     * 非 5 状态时原样返回（不流转）
+     */
+    reconcileQuote: async (id: string): Promise<Quote | null> => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      if (!existing) return null
+      if ((existing as any).status !== 5) return toCamelRow(existing) as Quote
+      const today = new Date().toISOString().split('T')[0]
+      await dbConn.prepare(
+        'UPDATE quotes SET status = 8, reconciledTime = ?, updated_at = ? WHERE id = ?'
+      ).run(today, timeNow(), id)
+      const updated = toCamelRow(existing) as any
+      updated.status = 8
+      updated.reconciledTime = today
+      updated.updated_at = timeNow()
+      return updated as Quote
+    },
+    /**
+     * 退回对账：已对账(8) → 已发货已收款(5)，清空对账时间（重新核对后可再次确认）
+     * 非 8 状态时原样返回（不流转）
+     */
+    unreconcileQuote: async (id: string): Promise<Quote | null> => {
+      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      if (!existing) return null
+      if ((existing as any).status !== 8) return toCamelRow(existing) as Quote
+      await dbConn.prepare(
+        'UPDATE quotes SET status = 5, reconciledTime = ?, updated_at = ? WHERE id = ?'
+      ).run('', timeNow(), id)
+      const updated = toCamelRow(existing) as any
+      updated.status = 5
+      updated.reconciledTime = ''
+      updated.updated_at = timeNow()
+      return updated as Quote
     },
   },
 }

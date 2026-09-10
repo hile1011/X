@@ -17,20 +17,28 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html'],
+      // 统计口径：单元可测的核心业务逻辑（前端 constants/services/store/templates/utils、
+      // API 客户端、后端 services 业务逻辑层）。
+      // UI 页面/组件由组件级测试覆盖，api/routes 为路由胶水层由集成测试覆盖，均不纳入单元覆盖率口径。
       include: [
+        'src/api/**/*.ts',
         'src/constants/**/*.ts',
+        'src/services/**/*.ts',
+        'src/store/**/*.ts',
         'src/templates/**/*.ts',
         'src/utils/**/*.ts',
+        'api/services/**/*.ts',
       ],
       exclude: [
         'src/templates/types.ts', // 纯接口定义文件，无可执行代码
         'src/utils/clipboardCopyEnhancer.ts', // VTable 临时补丁，等官方修复后整体移除
+        'api/services/mockData.ts', // 演示/种子数据，无业务逻辑
       ],
       thresholds: {
-        lines: 90,
-        functions: 90,
-        branches: 90,
-        statements: 90,
+        lines: 95,
+        functions: 95,
+        branches: 95,
+        statements: 95,
       },
     },
   },

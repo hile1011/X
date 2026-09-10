@@ -13,7 +13,7 @@ interface PermissionItem {
 }
 
 const moduleNames: Record<string, string> = {
-  dashboard: '仪表盘',
+  dashboard: '工作台',
   quotes: '订单管理',
   'quotes-table': '订单表格版',
   'quotes-wps': '订单WPS版',

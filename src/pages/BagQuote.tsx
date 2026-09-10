@@ -219,6 +219,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     productionStartTime: string
     shippingTime: string
     paymentTime: string
+    reconciledTime: string
     endTime: string
   }>({
     quoteTime: '',
@@ -227,6 +228,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     productionStartTime: '',
     shippingTime: '',
     paymentTime: '',
+    reconciledTime: '',
     endTime: '',
   })
   const [productionStepStatus, setProductionStepStatus] = useState<Record<number, 'pending' | 'in_progress' | 'completed'>>({})
@@ -402,6 +404,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
+          reconciledTime: data.reconciledTime || '',
           endTime: data.endTime || '',
         })
         setProductionStepStatus(data.productionStepStatus || {})
@@ -1232,6 +1235,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
+          reconciledTime: data.reconciledTime || '',
           endTime: data.endTime || '',
         })
         setShowSaveSuccess(true)
@@ -1257,6 +1261,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
+          reconciledTime: data.reconciledTime || '',
           endTime: data.endTime || '',
         })
         setShowSaveSuccess(true)
@@ -1282,6 +1287,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           productionStartTime: data.productionStartTime || '',
           shippingTime: data.shippingTime || '',
           paymentTime: data.paymentTime || '',
+          reconciledTime: data.reconciledTime || '',
           endTime: data.endTime || '',
         })
         setShowSaveSuccess(true)
@@ -1293,8 +1299,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     setLoading(false)
   }
 
-  const canGoNext = OrderStatus.getNext(status) !== null
-  const canGoPrev = OrderStatus.getPrev(status) !== null
+  // 订单管理不允许手动流转到已对账(8)：5→8 仅可经订单对账管理「确认对账」，8→5 仅可经其「退回对账」
+  const canGoNext = OrderStatus.getNext(status) !== null && status !== OrderStatus.SHIPPED_PAID
+  const canGoPrev = OrderStatus.getPrev(status) !== null && status !== OrderStatus.RECONCILED
   const canEnd = OrderStatus.canEnterFinished(status)
 
   // === 价格联动计算（实时联动：依赖 成本价/含税价/单个卖价/数量） ===
@@ -1489,7 +1496,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 option.value === 7 ? 'sampleCompletedTime' :
                 option.value === 3 ? 'productionStartTime' :
                 option.value === 4 ? 'shippingTime' :
-                option.value === 5 ? 'paymentTime' : 'endTime'
+                option.value === 5 ? 'paymentTime' :
+                option.value === 8 ? 'reconciledTime' : 'endTime'
               ] as string
 
               return (

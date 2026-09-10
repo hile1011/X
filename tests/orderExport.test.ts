@@ -12,7 +12,7 @@
  * 6. 公式保留：单订单导出时在线表格公式正确写入 Excel
  * 7. 错误处理：空数据、无效输入
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import ExcelJS from 'exceljs'
 import {
   generateOrdersExcel,
@@ -1125,5 +1125,387 @@ describe('产品图片等比缩放 - 导出集成测试', () => {
     expect(rowHeight).toBeCloseTo(140, 0)
     // 两张图片在同一行
     expect(infoSheet.getImages().length).toBe(2)
+  })
+})
+
+// ============================ 边界与异常分支补充测试 ============================
+
+describe('getStatusLabel - V27/V28 新增状态', () => {
+  it('状态 7 → 打样完成', () => {
+    expect(getStatusLabel(7)).toBe('打样完成')
+  })
+
+  it('状态 8 → 已对账', () => {
+    expect(getStatusLabel(8)).toBe('已对账')
+  })
+})
+
+describe('calculateSummary - 状态与价格边界', () => {
+  it('字符串状态 "3" 解析为做货中', () => {
+    const summary = calculateSummary([createTestQuote({ status: '3' as unknown as number })])
+    expect(summary.statusBreakdown[3]).toMatchObject({ label: '做货中', count: 1 })
+  })
+
+  it('非数字字符串状态归为未知(0)', () => {
+    const summary = calculateSummary([createTestQuote({ status: 'x' as unknown as number })])
+    expect(summary.statusBreakdown[0]).toMatchObject({ label: '未知', count: 1 })
+  })
+
+  it('价格为 undefined/0 时按 0 计算', () => {
+    const summary = calculateSummary([
+      createTestQuote({
+        costPrice: undefined as unknown as number,
+        priceWithTax: 0,
+        sellPriceNoTax: undefined as unknown as number,
+        sellPriceWithTax: 0,
+        quantity: '100',
+      }),
+    ])
+    expect(summary.totalCost).toBe(0)
+    expect(summary.totalSellNoTax).toBe(0)
+    expect(summary.totalProfitNoTax).toBe(0)
+    expect(summary.totalProfitWithTax).toBe(0)
+  })
+
+  it('状态分布按流转顺序输出（含 7/8）', () => {
+    const summary = calculateSummary([
+      createTestQuote({ status: 7 }),
+      createTestQuote({ status: 8 }),
+      createTestQuote({ status: 3 }),
+    ])
+    expect(summary.statusBreakdown[7]).toMatchObject({ label: '打样完成', count: 1 })
+    expect(summary.statusBreakdown[8]).toMatchObject({ label: '已对账', count: 1 })
+    expect(summary.statusBreakdown[3]).toMatchObject({ label: '做货中', count: 1 })
+  })
+})
+
+describe('generateOrdersExcel - convertFieldValue 边界', () => {
+  it('styleLabelResolver 返回标签时优先使用', async () => {
+    const workbook = await generateOrdersExcel([createTestQuote()], (code) => `自定义-${code}`)
+    const sheet = workbook.getWorksheet('订单明细')!
+    // 款式列是第 4 列（订单号/客户名称/订单状态之后），首个数据行是第 3 行
+    expect(sheet.getCell(3, 4).value).toBe('自定义-1')
+  })
+
+  it('styleLabelResolver 返回空串时回退默认款式标签', async () => {
+    const workbook = await generateOrdersExcel([createTestQuote()], () => '')
+    const sheet = workbook.getWorksheet('订单明细')!
+    expect(sheet.getCell(3, 4).value).toBe('无底无侧普通袋')
+  })
+
+  it('字符串状态 "3" 导出为做货中', async () => {
+    const workbook = await generateOrdersExcel([createTestQuote({ status: '3' as unknown as number })])
+    const sheet = workbook.getWorksheet('订单明细')!
+    // 订单状态列是第 3 列
+    expect(sheet.getCell(3, 3).value).toBe('做货中')
+  })
+
+  it('非法字符串状态导出为未知', async () => {
+    const workbook = await generateOrdersExcel([createTestQuote({ status: '??' as unknown as number })])
+    const sheet = workbook.getWorksheet('订单明细')!
+    expect(sheet.getCell(3, 3).value).toBe('未知')
+  })
+
+  it('未知款式导出原值编码', async () => {
+    const workbook = await generateOrdersExcel([createTestQuote({ productStyle: '99' })])
+    const sheet = workbook.getWorksheet('订单明细')!
+    expect(sheet.getCell(3, 4).value).toBe('99')
+  })
+
+  it('价格字段缺失时导出 0（货币列）', async () => {
+    const workbook = await generateOrdersExcel([
+      createTestQuote({
+        costPrice: undefined as unknown as number,
+        sellPriceNoTax: undefined as unknown as number,
+        sellPriceWithTax: undefined as unknown as number,
+        priceWithTax: undefined as unknown as number,
+      }),
+    ])
+    const sheet = workbook.getWorksheet('订单明细')!
+    // 成本价列是第 12 列（3 基本信息 + 9 产品信息之后）
+    expect(sheet.getCell(3, 12).value).toBe(0)
+  })
+
+  it('非法日期字符串导出为空串', async () => {
+    const workbook = await generateOrdersExcel([
+      createTestQuote({ quoteTime: 'not-a-date', sampleTime: '' }),
+    ])
+    const sheet = workbook.getWorksheet('订单明细')!
+    // 报价时间列：3+9+8+6 价格列之后为第 27 列附近，直接按列定义数核对
+    const headerLabels: string[] = []
+    sheet.getRow(2).eachCell({ includeEmpty: false }, (cell) => {
+      headerLabels.push(String(cell.value))
+    })
+    const quoteTimeCol = headerLabels.indexOf('报价时间') + 1
+    expect(quoteTimeCol).toBeGreaterThan(0)
+    expect(sheet.getCell(3, quoteTimeCol).value).toBe('')
+  })
+
+  it('images 非数组时导出「无」', async () => {
+    const workbook = await generateOrdersExcel([
+      createTestQuote({ images: 'not-array' as unknown as string[] }),
+    ])
+    const sheet = workbook.getWorksheet('订单明细')!
+    const headerLabels: string[] = []
+    sheet.getRow(2).eachCell({ includeEmpty: false }, (cell) => {
+      headerLabels.push(String(cell.value))
+    })
+    const imgCol = headerLabels.indexOf('产品图片') + 1
+    expect(imgCol).toBeGreaterThan(0)
+    expect(sheet.getCell(3, imgCol).value).toBe('无')
+  })
+
+  it('text 字段为 null 时导出空串（备注列）', async () => {
+    const workbook = await generateOrdersExcel([
+      createTestQuote({ remark: null as unknown as string }),
+    ])
+    const sheet = workbook.getWorksheet('订单明细')!
+    const headerLabels: string[] = []
+    sheet.getRow(2).eachCell({ includeEmpty: false }, (cell) => {
+      headerLabels.push(String(cell.value))
+    })
+    const remarkCol = headerLabels.indexOf('备注') + 1
+    expect(remarkCol).toBeGreaterThan(0)
+    expect(sheet.getCell(3, remarkCol).value).toBe('')
+  })
+})
+
+describe('generateOrderWithTableExcel - resolver 与公式边界', () => {
+  const tableExportData: TableExportData = {
+    data: TABLE_DATA,
+    formulas: TABLE_FORMULAS,
+  }
+
+  /** 在订单信息工作表 A 列查找标签，返回同行 B 列的值 */
+  function getValueByLabel(sheet: ExcelJS.Worksheet, label: string): unknown {
+    let result: unknown = undefined
+    sheet.getColumn(1).eachCell({ includeEmpty: false }, (cell, rowNumber) => {
+      if (String(cell.value) === label) result = sheet.getCell(`B${rowNumber}`).value
+    })
+    return result
+  }
+
+  it('styleLabelResolver 返回标签时优先使用', async () => {
+    const workbook = await generateOrderWithTableExcel(createTestQuote(), tableExportData, (code) => `自定义-${code}`)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(getValueByLabel(infoSheet, '款式')).toBe('自定义-1')
+  })
+
+  it('styleLabelResolver 返回空串时回退默认款式标签', async () => {
+    const workbook = await generateOrderWithTableExcel(createTestQuote(), tableExportData, () => '')
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(getValueByLabel(infoSheet, '款式')).toBe('无底无侧普通袋')
+  })
+
+  it('价格字段缺失时显示 0.00', async () => {
+    const order = createTestQuote({
+      costPrice: undefined as unknown as number,
+      sellPriceNoTax: undefined as unknown as number,
+    })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(getValueByLabel(infoSheet, '成本价')).toBe('0.00')
+    expect(getValueByLabel(infoSheet, '单个利润(不含税)')).toBe('0.00')
+    expect(getValueByLabel(infoSheet, '销售总额(不含税)')).toBe('0.00')
+  })
+
+  it('非法公式地址（小写/零行号）被跳过，不报错', async () => {
+    const workbook = await generateOrderWithTableExcel(createTestQuote(), {
+      data: TABLE_DATA,
+      formulas: { a1: '=B2', Z0: '=B2', B3: '=B2' },
+    })
+    const tableSheet = workbook.getWorksheet('在线表格')!
+    // 合法地址 B3 仍写入公式，非法地址被跳过
+    const b3 = tableSheet.getCell('B3').value as { formula: string }
+    expect(b3.formula).toBe('B2')
+  })
+
+  it('公式无 = 前缀时原样写入', async () => {
+    const workbook = await generateOrderWithTableExcel(createTestQuote(), {
+      data: TABLE_DATA,
+      formulas: { B3: 'B2' },
+    })
+    const tableSheet = workbook.getWorksheet('在线表格')!
+    const b3 = tableSheet.getCell('B3').value as { formula: string }
+    expect(b3.formula).toBe('B2')
+  })
+
+  it('images 非数组时不生成产品图片分组', async () => {
+    const order = createTestQuote({ images: 'not-array' as unknown as string[] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    let hasImageGroup = false
+    infoSheet.getColumn(1).eachCell({ includeEmpty: false }, (cell) => {
+      if (String(cell.value).includes('产品图片')) hasImageGroup = true
+    })
+    expect(hasImageGroup).toBe(false)
+  })
+})
+
+describe('getImageDimensions - 畸形数据边界', () => {
+  it('JPEG 数据段首字节非 0xFF → null', () => {
+    const buf = Buffer.from([0xff, 0xd8, 0x00, 0xc0])
+    expect(getImageDimensions(buf, 'jpeg')).toBeNull()
+  })
+
+  it('JPEG 含 D8/D9 零长标记段可跳过并继续解析 SOF', () => {
+    // SOI(FFD8) → EOI 标记(FFD9) → SOF0(FFC0)：段长8 + 精度1 + 高2 + 宽2
+    const buf = Buffer.from([
+      0xff, 0xd8, // SOI
+      0xff, 0xd9, // 零长标记段（跳过）
+      0xff, 0xc0, // SOF0 标记
+      0x00, 0x08, // 段长 8
+      0x03,       // 精度
+      0x00, 0x64, // 高度 100
+      0x00, 0xc8, // 宽度 200
+    ])
+    expect(getImageDimensions(buf, 'jpeg')).toEqual({ width: 200, height: 100 })
+  })
+
+  it('JPEG 遍历结束未找到 SOF → null', () => {
+    // APP0 段长度 5，跳过后越过缓冲区末尾
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x05])
+    expect(getImageDimensions(buf, 'jpeg')).toBeNull()
+  })
+
+  it('JPEG 段长度字段越界抛异常 → null', () => {
+    // APP0 标记后仅 1 字节，readUInt16BE 越界触发 catch
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00])
+    expect(getImageDimensions(buf, 'jpeg')).toBeNull()
+  })
+
+  it('JPEG SOF 段数据不足（offset+9 越界）→ null', () => {
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xc0])
+    expect(getImageDimensions(buf, 'jpeg')).toBeNull()
+  })
+
+  it('JPEG 非常短标记段（offset+3 越界）→ null', () => {
+    const buf = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
+    expect(getImageDimensions(buf, 'jpeg')).toBeNull()
+  })
+
+  it('JPEG SOF 变体标记（C1/C5/C9/CD）均可解析', () => {
+    const base = extractBuffer(TINY_JPEG)
+    // TINY_JPEG 的 SOF0(FFC0) 在偏移 173 处，将其替换为其他 SOF 变体标记
+    const sofOffset = base.indexOf(Buffer.from([0xff, 0xc0]))
+    expect(sofOffset).toBeGreaterThan(0)
+    for (const marker of [0xc1, 0xc5, 0xc9, 0xcd]) {
+      const buf = Buffer.from(base)
+      buf[sofOffset + 1] = marker
+      const dims = getImageDimensions(buf, 'jpeg')
+      expect(dims).not.toBeNull()
+      expect(dims!.width).toBe(1)
+      expect(dims!.height).toBe(1)
+    }
+  })
+
+  it('PNG 宽为 0 → null', () => {
+    expect(getImageDimensions(makeMinimalPngHeader(0, 100), 'png')).toBeNull()
+  })
+
+  it('PNG 高为 0 → null', () => {
+    expect(getImageDimensions(makeMinimalPngHeader(100, 0), 'png')).toBeNull()
+  })
+
+  it('GIF 宽为 0 → null', () => {
+    expect(getImageDimensions(makeMinimalGifHeader(0, 100), 'gif')).toBeNull()
+  })
+
+  it('GIF 高为 0 → null', () => {
+    expect(getImageDimensions(makeMinimalGifHeader(100, 0), 'gif')).toBeNull()
+  })
+})
+
+describe('图片定位回退 - 大量图片导出', () => {
+  it('图片数量超过列范围上限（200 列）时仍能正常导出', async () => {
+    // pixelToFractionalCol 私有函数在像素偏移超出 200 列累计宽度时返回最后一列，
+    // 需要 70+ 张图片触发（每张占 190px 槽位）
+    const order = createTestQuote({ images: Array.from({ length: 80 }, () => TINY_PNG) })
+    const tableExportData: TableExportData = { data: TABLE_DATA, formulas: TABLE_FORMULAS }
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(infoSheet.getImages().length).toBe(80)
+    // 图片行行高已设置
+    let titleRow = -1
+    infoSheet.getColumn(1).eachCell({ includeEmpty: false }, (cell, rowNumber) => {
+      if (String(cell.value).includes('产品图片')) titleRow = rowNumber
+    })
+    expect(titleRow).toBeGreaterThan(0)
+    expect(infoSheet.getRow(titleRow + 1).height).toBeGreaterThan(100)
+  })
+})
+
+describe('parseBase64Image - data URI 解析边界（经导出路径验证）', () => {
+  const tableExportData: TableExportData = { data: TABLE_DATA, formulas: TABLE_FORMULAS }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('data:image/jpg 扩展名映射为 jpeg 并正常嵌入', async () => {
+    // jpg MIME 类型应归一化为 jpeg 扩展名
+    const jpgUri = 'data:image/jpg;base64,' + extractBuffer(TINY_PNG).toString('base64')
+    const order = createTestQuote({ images: [jpgUri] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(infoSheet.getImages().length).toBe(1)
+    // 扩展名存储在 workbook 媒体对象上
+    expect((workbook.model.media as any[])[0].extension).toBe('jpeg')
+  })
+
+  it('大写 MIME 类型（data:image/PNG）也能解析嵌入', async () => {
+    // data URI 匹配不区分大小写
+    const upperUri = 'data:image/PNG;base64,' + extractBuffer(TINY_PNG).toString('base64')
+    const order = createTestQuote({ images: [upperUri] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(infoSheet.getImages().length).toBe(1)
+    expect((workbook.model.media as any[])[0].extension).toBe('png')
+  })
+
+  it('GIF 图片走完整导出路径（解析尺寸并等比缩放）', async () => {
+    // 300x150 GIF（2:1 宽图）→ 缩放为 180x90
+    const gifUri = 'data:image/gif;base64,' + makeMinimalGifHeader(300, 150).toString('base64')
+    const order = createTestQuote({ images: [gifUri] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(infoSheet.getImages().length).toBe(1)
+    expect((workbook.model.media as any[])[0].extension).toBe('gif')
+    const img = infoSheet.getImages()[0]
+    expect(img.range.ext.width).toBe(180)
+    expect(img.range.ext.height).toBe(90)
+  })
+
+  it('MIME 类型为非图片（data:image/webp）时不匹配正则 → 跳过', async () => {
+    const webpUri = 'data:image/webp;base64,' + extractBuffer(TINY_PNG).toString('base64')
+    const order = createTestQuote({ images: [webpUri] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    expect(infoSheet.getImages().length).toBe(0)
+    // 无有效图片 → 不含图片分组
+    let hasImageGroup = false
+    infoSheet.getColumn(1).eachCell({ includeEmpty: false }, (cell) => {
+      if (String(cell.value).includes('产品图片')) hasImageGroup = true
+    })
+    expect(hasImageGroup).toBe(false)
+  })
+
+  it('workbook.addImage 抛异常时写入红色错误提示单元格', async () => {
+    // mock addImage 抛异常 → catch 分支：错误信息写入图片行单元格
+    vi.spyOn(ExcelJS.Workbook.prototype, 'addImage').mockImplementation(() => {
+      throw new Error('模拟嵌入失败')
+    })
+    const order = createTestQuote({ images: [TINY_PNG] })
+    const workbook = await generateOrderWithTableExcel(order, tableExportData)
+    const infoSheet = workbook.getWorksheet('订单信息')!
+    // 图片未嵌入
+    expect(infoSheet.getImages().length).toBe(0)
+    // 错误信息写入了图片行的第 1 列（idx+1）
+    let errorCellText = ''
+    infoSheet.getColumn(1).eachCell({ includeEmpty: false }, (cell) => {
+      const v = String(cell.value)
+      if (v.includes('[图片无法嵌入')) errorCellText = v
+    })
+    expect(errorCellText).toBe('[图片无法嵌入: 模拟嵌入失败]')
   })
 })

@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 25
+export const CURRENT_SCHEMA_VERSION = 28
 
 export interface Migration {
   version: number
@@ -1394,6 +1394,119 @@ const migrations: Migration[] = [
       await db.exec(
         `ALTER TABLE sheet_templates MODIFY COLUMN style_code VARCHAR(8) NOT NULL COMMENT '款式 code（1-6）'`
       )
+    },
+  },
+  {
+    version: 26,
+    name: 'unify-table-collation',
+    description: 'V0.18：统一 quote_production_tasks / sheet_templates 表排序规则为 utf8mb4_unicode_ci（v23/v24 增量建表未显式指定 COLLATE 落到 MySQL 8 默认 utf8mb4_0900_ai_ci，与 quotes 等表 JOIN 时报 Illegal mix of collations，导致做货跟踪总览接口 500）',
+    up: async (db: any) => {
+      // 幂等：仅当表存在且排序规则不是 utf8mb4_unicode_ci 时才转换
+      //（全量脚本建表环境已带正确 COLLATE，直接跳过；纯元数据变更，无数据变更）
+      for (const table of ['quote_production_tasks', 'sheet_templates']) {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = ?
+             AND table_collation IS NOT NULL AND table_collation != 'utf8mb4_unicode_ci'`
+        ).get(table)
+        if (Number((row as any)?.cnt ?? 0) > 0) {
+          await db.exec(
+            `ALTER TABLE \`${table}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+          )
+        }
+      }
+    },
+    down: async (db: any) => {
+      // 回滚：还原为 MySQL 8 默认排序规则（utf8mb4 内互转无数据损失；
+      // 回滚后跨表 JOIN 会重新出现 collation 冲突，仅用于版本回退）
+      for (const table of ['quote_production_tasks', 'sheet_templates']) {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = ?
+             AND table_collation IS NOT NULL AND table_collation != 'utf8mb4_0900_ai_ci'`
+        ).get(table)
+        if (Number((row as any)?.cnt ?? 0) > 0) {
+          await db.exec(
+            `ALTER TABLE \`${table}\` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci`
+          )
+        }
+      }
+    },
+  },
+  {
+    version: 27,
+    name: 'rename-dashboard-to-workbench',
+    description: 'V0.19：仪表盘更名为工作台，更新 dashboard:view 菜单权限显示名',
+    up: async (db: any) => {
+      // 幂等：仅当当前名称为「仪表盘」时更新，重跑无副作用
+      await db.exec(
+        `UPDATE permissions SET name = '工作台' WHERE code = 'dashboard:view' AND name = '仪表盘'`
+      )
+    },
+    down: async (db: any) => {
+      await db.exec(
+        `UPDATE permissions SET name = '仪表盘' WHERE code = 'dashboard:view' AND name = '工作台'`
+      )
+    },
+  },
+  {
+    version: 28,
+    name: 'order-reconciliation',
+    description: 'V0.20：订单对账管理——quotes 新增 reconciledTime 对账时间字段，新建 quote_reconciliation_costs 表存储对账工艺成本明细（工艺名称/单价/数量/成本/备注）',
+    up: async (db: any) => {
+      const hasColumn = async (table: string, column: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+        ).get(table, column)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      const hasTable = async (table: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.tables
+           WHERE table_schema = DATABASE() AND table_name = ?`
+        ).get(table)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+
+      // 1. quotes 新增对账时间字段
+      if (!(await hasColumn('quotes', 'reconciledTime'))) {
+        await db.exec(
+          `ALTER TABLE quotes ADD COLUMN reconciledTime VARCHAR(64) DEFAULT '' COMMENT '对账时间（状态8已对账，V28）' AFTER paymentTime`
+        )
+      }
+
+      // 2. 对账工艺成本明细表（显式 COLLATE utf8mb4_unicode_ci，避免 MySQL 8 默认排序规则冲突）
+      if (!(await hasTable('quote_reconciliation_costs'))) {
+        await db.exec(`CREATE TABLE quote_reconciliation_costs (
+          id          VARCHAR(64)    NOT NULL COMMENT '明细id（recon-cost-{ts}-{rand}）',
+          quote_id    VARCHAR(64)    NOT NULL COMMENT '所属订单（quotes.id）',
+          name        VARCHAR(128)   NOT NULL COMMENT '工艺名称（必填）',
+          unit_price  DECIMAL(12,2)  NOT NULL DEFAULT 0 COMMENT '工艺单价',
+          quantity    DECIMAL(12,2)  NOT NULL DEFAULT 0 COMMENT '工艺数量',
+          cost        DECIMAL(12,2)  NOT NULL DEFAULT 0 COMMENT '工艺成本（必填）',
+          remark      VARCHAR(500)   NOT NULL DEFAULT '' COMMENT '工艺备注',
+          sort_order  INT            NOT NULL DEFAULT 1 COMMENT '明细顺序（小在前）',
+          created_at  DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at  DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_qrc_quote_id (quote_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单对账工艺成本明细（V28）'`)
+      }
+    },
+    down: async (db: any) => {
+      // 逆序撤销：先删明细表，再删 quotes 对账时间列
+      await db.exec(`DROP TABLE IF EXISTS quote_reconciliation_costs`)
+      const hasColumn = async (table: string, column: string): Promise<boolean> => {
+        const row = await db.prepare(
+          `SELECT COUNT(*) AS cnt FROM information_schema.columns
+           WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`
+        ).get(table, column)
+        return Number((row as any)?.cnt ?? 0) > 0
+      }
+      if (await hasColumn('quotes', 'reconciledTime')) {
+        await db.exec(`ALTER TABLE quotes DROP COLUMN reconciledTime`)
+      }
     },
   },
 ]

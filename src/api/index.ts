@@ -199,6 +199,8 @@ export const api = {
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
     /** 做货流程任务（v24 甘特图数据） */
     getProductionTasks: (id: string) => authFetch(`${API_BASE}/quotes/${id}/production-tasks`).then(handleResponse),
+    /** 做货流程跟踪表：全部订单的任务总览（含订单摘要，做货跟踪页用） */
+    getProductionTasksOverview: () => authFetch(`${API_BASE}/quotes/production-tasks/overview`).then(handleResponse),
     /** 整体同步做货流程任务（全量替换，事务） */
     saveProductionTasks: (id: string, tasks: unknown) => authFetch(`${API_BASE}/quotes/${id}/production-tasks`, {
       method: 'PUT',
@@ -230,6 +232,24 @@ export const api = {
       headers: jsonHeaders,
     }).then(handleResponse),
     copy: (id: string) => authFetch(`${API_BASE}/quotes/${id}/copy`, {
+      method: 'POST',
+      headers: jsonHeaders,
+    }).then(handleResponse),
+    /** 订单对账管理（v28）：获取订单的对账工艺成本明细 */
+    getReconciliationCosts: (id: string) => authFetch(`${API_BASE}/quotes/${id}/reconciliation-costs`).then(handleResponse),
+    /** 订单对账管理（v28）：保存对账工艺成本明细（全量替换） */
+    saveReconciliationCosts: (id: string, costs: unknown) => authFetch(`${API_BASE}/quotes/${id}/reconciliation-costs`, {
+      method: 'PUT',
+      headers: jsonHeaders,
+      body: JSON.stringify({ costs }),
+    }).then(handleResponse),
+    /** 订单对账管理（v28）：确认对账（已发货已收款→已对账） */
+    reconcileQuote: (id: string) => authFetch(`${API_BASE}/quotes/${id}/reconcile`, {
+      method: 'POST',
+      headers: jsonHeaders,
+    }).then(handleResponse),
+    /** 订单对账管理（v28）：退回对账（已对账→已发货已收款） */
+    unreconcileQuote: (id: string) => authFetch(`${API_BASE}/quotes/${id}/unreconcile`, {
       method: 'POST',
       headers: jsonHeaders,
     }).then(handleResponse),

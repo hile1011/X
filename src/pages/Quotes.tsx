@@ -38,13 +38,15 @@ export interface Quote {
   priceWithTax: number
   sellPriceNoTax: number
   sellPriceWithTax: number
-  status: 1 | 2 | 3 | 4 | 5 | 6 | 7
+  status: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
   quoteTime: string
   sampleTime: string
   sampleCompletedTime: string
   productionStartTime: string
   shippingTime: string
   paymentTime: string
+  /** 对账时间（V28 新增，状态8已对账） */
+  reconciledTime?: string
   endTime: string
   images: string[]
   // 在线表格二维数据（用户编辑后的值）
@@ -166,14 +168,14 @@ export default function Quotes() {
   const [filteredCount, setFilteredCount] = useState(0)
   // 筛选后的客户总数（以客户名称维度统计，一个客户下多条订单只算一个）
   const [filteredCustomerCount, setFilteredCustomerCount] = useState(0)
-  // 筛选后订单的销售总额与利润总额（底部汇总）
+  // 筛选后订单的销售总额(含税)与利润总额（底部汇总）
   const [filteredTotals, setFilteredTotals] = useState({ revenue: 0, profitNoTax: 0, profitWithTax: 0 })
   // 订单图片标识（id -> 是否有图片），通过轻量级 API 获取
   const [imageFlags, setImageFlags] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  // 业绩明细筛选：从仪表盘双击业绩卡片跳转携带（month=YYYY-MM 或 year=YYYY）
-  // 匹配仪表盘统计口径：状态为做货中/已发货未收款/已发货已收款，做货开始时间在对应月份/年度
+  // 业绩明细筛选：从工作台双击业绩卡片跳转携带（month=YYYY-MM 或 year=YYYY）
+  // 匹配工作台统计口径：状态为做货中/已发货未收款/已发货已收款，做货开始时间在对应月份/年度
   const [productionTimeFilter, setProductionTimeFilter] = useState<{ type: 'month' | 'year'; value: string } | null>(null)
   const { hasPermission } = usePermission()
   // 跳过首次挂载的筛选重置（从 sessionStorage 恢复时不重置页码）
@@ -214,7 +216,7 @@ export default function Quotes() {
     }
   }, [searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd, currentPage, pageSize])
 
-  // 从 URL 读取业绩明细筛选条件（仪表盘双击业绩卡片跳转携带）
+  // 从 URL 读取业绩明细筛选条件（工作台双击业绩卡片跳转携带）
   useEffect(() => {
     const month = searchParams.get('month')
     const year = searchParams.get('year')
@@ -306,11 +308,11 @@ export default function Quotes() {
         quote.productStyle === styleFilter ||
         getStyleLabelFromProducts(products, quote.productStyle) === getStyleLabelFromProducts(products, styleFilter)
 
-      // 业绩明细筛选（从仪表盘双击业绩卡片跳转）：状态为做货中/已发货未收款/已发货已收款，
-      // 做货开始时间在对应月份/年度，与仪表盘统计口径一致
+      // 业绩明细筛选（从工作台双击业绩卡片跳转）：状态为做货中/已发货未收款/已发货已收款/已对账，
+      // 做货开始时间在对应月份/年度，与工作台统计口径一致（已对账订单仍计入业绩）
       const matchesProductionTime = (() => {
         if (!productionTimeFilter) return true
-        if (![3, 4, 5].includes(quote.status)) return false
+        if (![3, 4, 5, 8].includes(quote.status)) return false
         const productionDate = new Date(quote.productionStartTime || quote.productionTimeStart)
         if (isNaN(productionDate.getTime())) return false
         if (productionTimeFilter.type === 'month') {
@@ -360,7 +362,7 @@ export default function Quotes() {
     // 记录筛选后订单总数（用于导出等场景）
     setFilteredCount(filtered.length)
 
-    // 计算当前筛选数据的销售总额与利润总额（与订单编辑页 BagQuote 口径一致，不含税）
+    // 计算当前筛选数据的销售总额与利润总额（销售额统一含税口径，与年度报表一致；利润保留不含税/含税双口径）
     let revenue = 0
     let profitNoTax = 0
     let profitWithTax = 0
@@ -370,8 +372,8 @@ export default function Quotes() {
       const cost = round2(quote.costPrice || 0)
       const sellWithTax = round2(quote.sellPriceWithTax || 0)
       const priceWithTax = round2(quote.priceWithTax || 0)
-      // 销售总额(不含税) = round2(round2(sellPriceNoTax) * qty)
-      revenue += round2(sellNoTax * qty)
+      // 销售总额(含税) = round2(round2(sellPriceWithTax) * qty)
+      revenue += round2(sellWithTax * qty)
       // 利润总额(不含税) = round2(round2(round2(sellNoTax) - round2(cost)) * qty)
       profitNoTax += round2(round2(sellNoTax - cost) * qty)
       // 利润(含税) = round2(round2(round2(sellWithTax) - round2(priceWithTax)) * qty)
@@ -535,6 +537,7 @@ export default function Quotes() {
       case 3: return 'bg-purple-100 text-purple-700'
       case 4: return 'bg-orange-100 text-orange-700'
       case 5: return 'bg-green-100 text-green-700'
+      case 8: return 'bg-teal-100 text-teal-700'
       case 6: return 'bg-gray-100 text-gray-700'
       default: return 'bg-gray-100 text-gray-700'
     }
@@ -741,8 +744,8 @@ export default function Quotes() {
                   <div className="w-28 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">含税价</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(不含税)</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润(含税)</div>
-                  <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">销售总额</div>
-                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">利润总额</div>
+                  <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0" title="数量 × 卖价(含税)">销售总额(含税)</div>
+                  <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0" title="数量 × 利润(不含税)">利润总额</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">做货到期时间</div>
                   <div className="w-32 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">创建日期</div>
                   <div className="w-56 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0 sticky right-0 bg-gray-50 z-20 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]">操作</div>
@@ -910,10 +913,10 @@ export default function Quotes() {
                               </span>
                             </div>
 
-                            {/* 销售总额 = 数量 × 卖价(不含税)，以保留2位小数的卖价为计算基础 */}
+                            {/* 销售总额 = 数量 × 卖价(含税)，以保留2位小数的卖价为计算基础（与年度报表销售额口径一致） */}
                             <div className="w-36 px-4 py-4 flex-shrink-0">
                               <span className="text-primary-600 font-semibold text-sm">
-                                ¥{round2(round2(quote.sellPriceNoTax || 0) * (parseFloat(quote.quantity) || 0)).toFixed(2)}
+                                ¥{round2(round2(quote.sellPriceWithTax || 0) * (parseFloat(quote.quantity) || 0)).toFixed(2)}
                               </span>
                             </div>
 
@@ -1078,7 +1081,7 @@ export default function Quotes() {
                     </div>
                     <span className="text-gray-300">·</span>
                     <span>
-                      销售总额(不含税) <span className="font-semibold text-gray-800">¥{filteredTotals.revenue.toLocaleString()}</span>
+                      销售总额(含税) <span className="font-semibold text-gray-800">¥{filteredTotals.revenue.toLocaleString()}</span>
                     </span>
                     <span className="text-gray-300">·</span>
                     <span>

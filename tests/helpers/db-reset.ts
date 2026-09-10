@@ -18,6 +18,7 @@ const TABLES_TO_RESET = [
   'tasks',
   'quotes',
   'quote_production_tasks',
+  'quote_reconciliation_costs',
   'process_costs',
   'products',
   'customers',
@@ -42,9 +43,9 @@ const DEFAULT_STYLES = [
   { id: 'style-6', name: '手提无连底拼接袋', code: '6' },
 ]
 
-/** RBAC 种子权限目录（与 v12 迁移保持一致） */
+/** RBAC 种子权限目录（v12 初始目录，名称经 v27 迁移更新为当前值） */
 const SEED_PERMISSIONS = [
-  { id: 'perm-dashboard-view', code: 'dashboard:view', name: '仪表盘', module: 'dashboard', action: 'view', type: 'menu', sort: 1 },
+  { id: 'perm-dashboard-view', code: 'dashboard:view', name: '工作台', module: 'dashboard', action: 'view', type: 'menu', sort: 1 },
   { id: 'perm-quotes-view', code: 'quotes:view', name: '订单-查看菜单', module: 'quotes', action: 'view', type: 'menu', sort: 10 },
   { id: 'perm-quotes-create', code: 'quotes:create', name: '订单-新增', module: 'quotes', action: 'create', type: 'button', sort: 11 },
   { id: 'perm-quotes-edit', code: 'quotes:edit', name: '订单-编辑', module: 'quotes', action: 'edit', type: 'button', sort: 12 },

@@ -12,7 +12,7 @@
  *
  * 使用 MySQL 测试数据库，每个测试前 resetTestDatabase() 保证隔离性。
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { db } from '../api/db'
 import { resetTestDatabase } from './helpers/db-reset'
 import { pool } from '../api/dbClient.js'
@@ -234,6 +234,44 @@ describe('内存缓存', () => {
     // 重新查询角色 → 应为空
     const roles2 = await getUserRoles('user-admin-default')
     expect(roles2).toHaveLength(0)
+  })
+
+  it('getUserRoles 第二次查询命中角色缓存（不查数据库）', async () => {
+    // 第一次查询：填充角色缓存
+    const roles1 = await getUserRoles('user-admin-default')
+    expect(roles1).toContain('admin')
+
+    // 数据库删除角色关联（模拟数据变更）
+    await pool.execute('DELETE FROM user_roles WHERE user_id = ?', ['user-admin-default'])
+
+    // 第二次查询：命中缓存，仍返回 admin
+    const roles2 = await getUserRoles('user-admin-default')
+    expect(roles2).toContain('admin')
+  })
+
+  it('缓存 TTL（30 秒）过期后重新查数据库', async () => {
+    // 第一次查询：填充权限与角色缓存
+    const perms1 = await getUserPermissions('user-admin-default')
+    expect(perms1.size).toBe(43)
+    const roles1 = await getUserRoles('user-admin-default')
+    expect(roles1).toContain('admin')
+
+    // 数据库删除角色关联（模拟数据变更）
+    await pool.execute('DELETE FROM user_roles WHERE user_id = ?', ['user-admin-default'])
+
+    // 时间前进 31 秒（超过 30 秒 TTL）
+    const realNow = Date.now
+    const offset = 31 * 1000
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+    try {
+      // TTL 过期 → 重新查数据库 → 数据已变更为空
+      const perms2 = await getUserPermissions('user-admin-default')
+      expect(perms2.size).toBe(0)
+      const roles2 = await getUserRoles('user-admin-default')
+      expect(roles2).toHaveLength(0)
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 })
 

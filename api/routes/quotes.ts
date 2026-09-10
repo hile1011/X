@@ -141,6 +141,71 @@ quotesRouter.post('/:id/end', requirePermission('quotes:status-transition'), asy
   res.json(data)
 }))
 
+// ─── 订单对账管理（v28） ─────────────────────────────────────
+
+/** 校验对账工艺成本明细 payload；通过返回 null，否则返回错误信息 */
+function validateReconciliationCosts(body: any): string | null {
+  const costs = body?.costs
+  if (!Array.isArray(costs)) return 'costs 必须为数组'
+  if (costs.length > 100) return '工艺成本明细不能超过 100 条'
+  for (const c of costs) {
+    if (!c || typeof c.name !== 'string' || !c.name.trim()) return '工艺名称不能为空'
+    if (c.name.trim().length > 128) return '工艺名称不能超过 128 字符'
+    if (c.unitPrice != null && isNaN(Number(c.unitPrice))) return '工艺单价必须为数字'
+    if (c.quantity != null && isNaN(Number(c.quantity))) return '工艺数量必须为数字'
+    if (c.cost == null || isNaN(Number(c.cost))) return '工艺成本必须为数字'
+    if (Number(c.cost) < 0) return '工艺成本不能为负数'
+    if (c.remark && String(c.remark).length > 500) return '工艺备注不能超过 500 字符'
+  }
+  return null
+}
+
+// 获取订单的对账工艺成本明细
+quotesRouter.get('/:id/reconciliation-costs', requirePermission('quotes:view'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const quote = await db.quotes.getById(id)
+  if (!quote) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  const costs = await db.reconciliation.getCosts(id)
+  res.json(costs)
+}))
+
+// 保存订单的对账工艺成本明细（全量替换，事务）
+quotesRouter.put('/:id/reconciliation-costs', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const quote = await db.quotes.getById(id)
+  if (!quote) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  const error = validateReconciliationCosts(req.body)
+  if (error) {
+    return res.status(400).json({ error })
+  }
+  const costs = await db.reconciliation.replaceCosts(id, req.body.costs)
+  res.json(costs)
+}))
+
+// 确认对账：已发货已收款(5) → 已对账(8)
+quotesRouter.post('/:id/reconcile', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const data = await db.reconciliation.reconcileQuote(id)
+  if (!data) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  res.json(data)
+}))
+
+// 退回对账：已对账(8) → 已发货已收款(5)
+quotesRouter.post('/:id/unreconcile', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
+  const { id } = req.params
+  const data = await db.reconciliation.unreconcileQuote(id)
+  if (!data) {
+    return res.status(404).json({ error: '报价不存在' })
+  }
+  res.json(data)
+}))
+
 // ─── 做货流程任务（v24 甘特图数据） ─────────────────────────────
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -168,6 +233,12 @@ function validateTasks(body: any): string | null {
   }
   return null
 }
+
+// 做货流程跟踪表：全部订单的任务总览（JOIN 订单摘要；两段式路径不与 /:id/:sub 冲突）
+quotesRouter.get('/production-tasks/overview', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
+  const rows = await db.productionTasks.getAllWithQuoteInfo()
+  res.json(rows)
+}))
 
 // 获取订单的做货流程任务列表
 quotesRouter.get('/:id/production-tasks', requirePermission('quotes:view'), asyncHandler(async (req, res) => {

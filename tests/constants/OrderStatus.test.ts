@@ -14,7 +14,8 @@
  *   - 返回数据不可变性（修改返回值不影响内部数据）
  *
  * 状态流转路径（基于指针流转模式，序号不再决定顺序）：
- *   报价中(1) → 打样中(2) → 打样完成(7) → 做货中(3) → 已发货未收款(4) → 已发货已收款(5) → 结束(6)
+ *   报价中(1) → 打样中(2) → 打样完成(7) → 做货中(3) → 已发货未收款(4) → 已发货已收款(5) → 已对账(8)
+ *   结束(6)为旁路终止状态：仅报价中(1)、打样中(2)、打样完成(7)可直接进入（V28 对账管理规则）
  */
 import { describe, it, expect } from 'vitest'
 import { OrderStatus } from '../../src/constants/OrderStatus'
@@ -47,12 +48,16 @@ describe('OrderStatus - 静态常量值', () => {
   it('SAMPLE_COMPLETED = 7（新增状态，序号7避免重编历史数据）', () => {
     expect(OrderStatus.SAMPLE_COMPLETED).toBe(7)
   })
+
+  it('RECONCILED = 8（V28 新增已对账终态）', () => {
+    expect(OrderStatus.RECONCILED).toBe(8)
+  })
 })
 
 describe('OrderStatus.getAll - 获取所有状态选项', () => {
-  it('返回 7 个状态选项', () => {
+  it('返回 8 个状态选项', () => {
     const all = OrderStatus.getAll()
-    expect(all).toHaveLength(7)
+    expect(all).toHaveLength(8)
   })
 
   it('第一个选项为报价中(1)', () => {
@@ -65,9 +70,14 @@ describe('OrderStatus.getAll - 获取所有状态选项', () => {
     expect(all[2]).toEqual({ value: 7, label: '打样完成' })
   })
 
+  it('倒数第二项为已对账(8)（V28 新增，插在已发货已收款之后）', () => {
+    const all = OrderStatus.getAll()
+    expect(all[6]).toEqual({ value: 8, label: '已对账' })
+  })
+
   it('最后一个选项为结束(6)', () => {
     const all = OrderStatus.getAll()
-    expect(all[6]).toEqual({ value: 6, label: '结束' })
+    expect(all[7]).toEqual({ value: 6, label: '结束' })
   })
 
   it('返回数据为浅拷贝（修改不影响内部数据）', () => {
@@ -107,9 +117,13 @@ describe('OrderStatus.getLabel - 状态值→标签映射', () => {
     expect(OrderStatus.getLabel(6)).toBe('结束')
   })
 
+  it('8 → 已对账（V28 新增）', () => {
+    expect(OrderStatus.getLabel(8)).toBe('已对账')
+  })
+
   it('无效值返回空字符串', () => {
     expect(OrderStatus.getLabel(0)).toBe('')
-    expect(OrderStatus.getLabel(8)).toBe('')
+    expect(OrderStatus.getLabel(9)).toBe('')
     expect(OrderStatus.getLabel(99)).toBe('')
     expect(OrderStatus.getLabel(-1)).toBe('')
   })
@@ -126,12 +140,17 @@ describe('OrderStatus.isValid - 状态值验证', () => {
     expect(OrderStatus.isValid(7)).toBe(true)
   })
 
+  it('8 有效（V28 已对账）', () => {
+    expect(OrderStatus.isValid(8)).toBe(true)
+  })
+
   it('0 无效', () => {
     expect(OrderStatus.isValid(0)).toBe(false)
   })
 
-  it('8 无效', () => {
-    expect(OrderStatus.isValid(8)).toBe(false)
+  it('9 及以上无效', () => {
+    expect(OrderStatus.isValid(9)).toBe(false)
+    expect(OrderStatus.isValid(99)).toBe(false)
   })
 
   it('负数无效', () => {
@@ -167,6 +186,10 @@ describe('OrderStatus.canEnterFinished - 可直接进入结束状态', () => {
   it('结束(6)不可直接进入结束（已在结束状态）', () => {
     expect(OrderStatus.canEnterFinished(6)).toBe(false)
   })
+
+  it('已对账(8)不可直接进入结束（V28 对账管理规则）', () => {
+    expect(OrderStatus.canEnterFinished(8)).toBe(false)
+  })
 })
 
 describe('OrderStatus.getNext - 正常流转下一状态（基于 FLOW 指针数组）', () => {
@@ -190,11 +213,15 @@ describe('OrderStatus.getNext - 正常流转下一状态（基于 FLOW 指针数
     expect(OrderStatus.getNext(4)).toBe(5)
   })
 
-  it('已发货已收款(5) → 结束(6)', () => {
-    expect(OrderStatus.getNext(5)).toBe(6)
+  it('已发货已收款(5) → 已对账(8)（V28 调整：5 的下一状态由结束改为已对账）', () => {
+    expect(OrderStatus.getNext(5)).toBe(8)
   })
 
-  it('结束(6) → null（无下一状态）', () => {
+  it('已对账(8) → null（流转终态）', () => {
+    expect(OrderStatus.getNext(8)).toBeNull()
+  })
+
+  it('结束(6) → null（旁路状态，不在 FLOW 中）', () => {
     expect(OrderStatus.getNext(6)).toBeNull()
   })
 
@@ -229,7 +256,11 @@ describe('OrderStatus.getPrev - 逆序流转上一状态（基于 FLOW 指针数
     expect(OrderStatus.getPrev(5)).toBe(4)
   })
 
-  it('结束(6) → 已发货已收款(5)', () => {
+  it('已对账(8) → 已发货已收款(5)', () => {
+    expect(OrderStatus.getPrev(8)).toBe(5)
+  })
+
+  it('结束(6) → 已发货已收款(5)（特判：历史结束订单退回重新对账）', () => {
     expect(OrderStatus.getPrev(6)).toBe(5)
   })
 
@@ -264,8 +295,12 @@ describe('OrderStatus.getFlowPosition - 状态在流转路径中的位置索引'
     expect(OrderStatus.getFlowPosition(5)).toBe(5)
   })
 
-  it('结束(6) 的位置索引为 6', () => {
-    expect(OrderStatus.getFlowPosition(6)).toBe(6)
+  it('已对账(8) 的位置索引为 6（V28 新增终态）', () => {
+    expect(OrderStatus.getFlowPosition(8)).toBe(6)
+  })
+
+  it('结束(6) 的位置索引为 7（特判排在 FLOW 末尾之后）', () => {
+    expect(OrderStatus.getFlowPosition(6)).toBe(7)
   })
 
   it('无效状态值返回 -1', () => {
@@ -285,8 +320,8 @@ describe('OrderStatus.getFlow - 完整流转路径', () => {
     expect(flow).toHaveLength(7)
   })
 
-  it('流转路径为 [1, 2, 7, 3, 4, 5, 6]', () => {
-    expect(OrderStatus.getFlow()).toEqual([1, 2, 7, 3, 4, 5, 6])
+  it('流转路径为 [1, 2, 7, 3, 4, 5, 8]（结束 6 为旁路状态不在数组中）', () => {
+    expect(OrderStatus.getFlow()).toEqual([1, 2, 7, 3, 4, 5, 8])
   })
 
   it('返回数据为浅拷贝（修改不影响内部数据）', () => {
@@ -323,7 +358,7 @@ describe('OrderStatus - 边界值与类型安全', () => {
 
   it('canEnterFinished 对无效状态返回 false', () => {
     expect(OrderStatus.canEnterFinished(0)).toBe(false)
-    expect(OrderStatus.canEnterFinished(8)).toBe(false)
+    expect(OrderStatus.canEnterFinished(9)).toBe(false)
     expect(OrderStatus.canEnterFinished(-1)).toBe(false)
     expect(OrderStatus.canEnterFinished(NaN)).toBe(false)
   })
@@ -333,7 +368,7 @@ describe('OrderStatus - 边界值与类型安全', () => {
 // 全路径遍历（从报价中到结束，再从结束退回报价中）
 // ============================================================
 describe('OrderStatus - 全路径遍历', () => {
-  it('正向遍历：从报价中(1) 经 getNext 逐级流转到结束(6)', () => {
+  it('正向遍历：从报价中(1) 经 getNext 逐级流转到已对账(8)终态', () => {
     let current: number | null = OrderStatus.QUOTING
     const visited: number[] = [current]
 
@@ -342,7 +377,7 @@ describe('OrderStatus - 全路径遍历', () => {
       if (current !== null) visited.push(current)
     }
 
-    expect(visited).toEqual([1, 2, 7, 3, 4, 5, 6])
+    expect(visited).toEqual([1, 2, 7, 3, 4, 5, 8])
   })
 
   it('逆向遍历：从结束(6) 经 getPrev 逐级退回到报价中(1)', () => {
@@ -374,10 +409,10 @@ describe('OrderStatus - 全路径遍历', () => {
 // 跨方法一致性（不变量验证）
 // ============================================================
 describe('OrderStatus - 跨方法一致性', () => {
-  it('getAll 的 value 列表与 getFlow 完全一致', () => {
+  it('getAll 的 value 列表 = getFlow + 结束(6)（结束为旁路状态追加在末尾）', () => {
     const allValues = OrderStatus.getAll().map((o) => o.value)
     const flowValues = OrderStatus.getFlow()
-    expect(allValues).toEqual(flowValues)
+    expect(allValues).toEqual([...flowValues, 6])
   })
 
   it('getAll 中每个选项的 label 与 getLabel 结果一致', () => {

@@ -12,7 +12,11 @@ import Products from './pages/Products'
 import ProductDetail from './pages/ProductDetail'
 import CreateProduct from './pages/CreateProduct'
 import Reports from './pages/Reports'
+import AnnualReport from './pages/AnnualReport'
+import ReconciliationAlerts from './pages/ReconciliationAlerts'
+import ReconciliationDetail from './pages/ReconciliationDetail'
 import Quotes from './pages/Quotes'
+import ProductionTracking from './pages/ProductionTracking'
 import BagQuote from './pages/BagQuote'
 import BagQuoteTable from './pages/BagQuoteTable'
 import BagQuoteWps from './pages/BagQuoteWps'
@@ -73,6 +77,17 @@ function App() {
               <Route path="/quotes" element={
                 <ProtectedRoute permission="quotes:view"><Quotes /></ProtectedRoute>
               } />
+              {/* 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移） */}
+              <Route path="/production-tracking" element={
+                <ProtectedRoute permission="quotes:view"><ProductionTracking /></ProtectedRoute>
+              } />
+              {/* 订单对账管理（v28）：双列表（待对账/已对账）+ 专属对账页 */}
+              <Route path="/reconciliation-alerts" element={
+                <ProtectedRoute permission="quotes:view"><ReconciliationAlerts /></ProtectedRoute>
+              } />
+              <Route path="/reconciliation-alerts/:id" element={
+                <ProtectedRoute permission="quotes:view"><ReconciliationDetail /></ProtectedRoute>
+              } />
               <Route path="/quotes/new" element={
                 <ProtectedRoute permission="quotes:create"><BagQuote /></ProtectedRoute>
               } />
@@ -129,6 +144,10 @@ function App() {
               } />
               <Route path="/reports" element={
                 <ProtectedRoute permission="reports:view"><Reports /></ProtectedRoute>
+              } />
+              {/* 年度业务报表（原仪表盘业绩模块迁移） */}
+              <Route path="/annual-report" element={
+                <ProtectedRoute permission="reports:view"><AnnualReport /></ProtectedRoute>
               } />
               <Route path="/users" element={
                 <ProtectedRoute permission="users:view"><Users /></ProtectedRoute>

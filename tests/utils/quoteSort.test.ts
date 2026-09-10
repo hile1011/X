@@ -388,17 +388,17 @@ describe('sortByStatusAndDueDate - 组合排序', () => {
     })
   })
 
-  describe('仪表盘交期预警场景', () => {
-    it('交期预警场景：状态2/3/7混合，按状态+到期日期排序', () => {
-      // 模拟仪表盘交期预警数据：仅包含 status=2/3/7，且到期日期在3天内或已逾期
-      const alertQuotes = [
+  describe('工作台订单状态跟踪场景（状态+到期日期混合排序）', () => {
+    it('状态2/3/7混合，按状态+到期日期排序', () => {
+      // 模拟工作台订单数据：包含 status=2/3/7，且到期日期在3天内或已逾期
+      const mixedQuotes = [
         makeQuote({ status: 3, productionTimeEnd: '2026-08-18' }), // 做货中，2天后
         makeQuote({ status: 2, productionTimeEnd: '2026-08-16' }), // 打样中，今天
         makeQuote({ status: 7, productionTimeEnd: '2026-08-17' }), // 打样完成，1天后
         makeQuote({ status: 2, productionTimeEnd: '2026-08-14' }), // 打样中，已逾期
         makeQuote({ status: 3, productionTimeEnd: '2026-08-15' }), // 做货中，已逾期
       ]
-      const sorted = sortByStatusAndDueDate(alertQuotes, 'asc')
+      const sorted = sortByStatusAndDueDate(mixedQuotes, 'asc')
       // 预期：状态2组(逾期14日在前, 16日在后) → 状态7 → 状态3组(逾期15日在前, 18日在后)
       expect(sorted.map((q) => `${q.status}|${q.productionTimeEnd}`)).toEqual([
         '2|2026-08-14',

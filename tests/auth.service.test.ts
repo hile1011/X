@@ -11,7 +11,8 @@
  *
  * 使用 MySQL 测试数据库，每个测试前 resetTestDatabase() 保证隔离性。
  */
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
+import jwt from 'jsonwebtoken'
 import { db } from '../api/db'
 import { resetTestDatabase } from './helpers/db-reset'
 import {
@@ -59,6 +60,17 @@ describe('JWT access token', () => {
     expect(verifyAccessToken('a.b.c')).toBeNull()
   })
 
+  it('同密钥但类型非 access 的 token：类型校验分支返回 null', () => {
+    // 用 access 密钥签发但 type 为 refresh（签名验证通过，走到类型判断分支）
+    const secret = process.env.JWT_SECRET || 'dev-secret-change-me-in-production'
+    const wrongType = jwt.sign({ sub: 'user-1', type: 'refresh' }, secret, { expiresIn: '1m' })
+    expect(verifyAccessToken(wrongType)).toBeNull()
+
+    // 无 type 字段的历史 token 同样被拒绝
+    const noType = jwt.sign({ sub: 'user-1' }, secret, { expiresIn: '1m' })
+    expect(verifyAccessToken(noType)).toBeNull()
+  })
+
   it('access token 不能当作 refresh token 使用', () => {
     const accessToken = signAccessToken({ id: 'user-1', email: 't@t.com', name: 'T' })
     expect(verifyRefreshToken(accessToken)).toBeNull()
@@ -91,6 +103,18 @@ describe('JWT refresh token', () => {
 
   it('无效 refresh token 返回 null', () => {
     expect(verifyRefreshToken('invalid')).toBeNull()
+  })
+
+  it('同密钥但类型非 refresh 的 token：类型校验分支返回 null', () => {
+    // 用 refresh 密钥签发但 type 为 access（签名验证通过，走到类型判断分支）
+    const accessSecret = process.env.JWT_SECRET || 'dev-secret-change-me-in-production'
+    const secret = process.env.JWT_REFRESH_SECRET || accessSecret + '-refresh'
+    const wrongType = jwt.sign({ sub: 'user-1', type: 'access' }, secret, { expiresIn: '1m' })
+    expect(verifyRefreshToken(wrongType)).toBeNull()
+
+    // 无 type 字段的历史 token 同样被拒绝
+    const noType = jwt.sign({ sub: 'user-1' }, secret, { expiresIn: '1m' })
+    expect(verifyRefreshToken(noType)).toBeNull()
   })
 })
 
@@ -185,5 +209,55 @@ describe('updateLastLogin / updateUserPassword', () => {
     expect(verifyPassword(newPassword, user!.password_hash)).toBe(true)
     // 旧密码不再有效
     expect(verifyPassword('123456', user!.password_hash)).toBe(false)
+  })
+})
+
+// ============================================================
+// 有效期字符串解析（expiresStrToSeconds，经 getAccessTokenExpiresIn 触发）
+// ============================================================
+describe('JWT_ACCESS_EXPIRES_IN 单位解析', () => {
+  const ORIGINAL = process.env.JWT_ACCESS_EXPIRES_IN
+
+  afterEach(() => {
+    // 恢复环境变量与模块缓存，避免污染其他测试
+    if (ORIGINAL === undefined) delete process.env.JWT_ACCESS_EXPIRES_IN
+    else process.env.JWT_ACCESS_EXPIRES_IN = ORIGINAL
+    vi.resetModules()
+  })
+
+  async function loadAndGetExpiresIn(): Promise<number> {
+    vi.resetModules()
+    const mod = await import('../api/services/auth')
+    return mod.getAccessTokenExpiresIn()
+  }
+
+  it('"45s" → 45 秒', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = '45s'
+    await expect(loadAndGetExpiresIn()).resolves.toBe(45)
+  })
+
+  it('"30m" → 1800 秒', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = '30m'
+    await expect(loadAndGetExpiresIn()).resolves.toBe(1800)
+  })
+
+  it('"3h" → 10800 秒', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = '3h'
+    await expect(loadAndGetExpiresIn()).resolves.toBe(10800)
+  })
+
+  it('"2d" → 172800 秒', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = '2d'
+    await expect(loadAndGetExpiresIn()).resolves.toBe(172800)
+  })
+
+  it('非法格式回退默认 900 秒（15 分钟）', async () => {
+    process.env.JWT_ACCESS_EXPIRES_IN = 'bogus'
+    await expect(loadAndGetExpiresIn()).resolves.toBe(900)
+  })
+
+  it('未设置时默认 900 秒（15m）', async () => {
+    delete process.env.JWT_ACCESS_EXPIRES_IN
+    await expect(loadAndGetExpiresIn()).resolves.toBe(900)
   })
 })

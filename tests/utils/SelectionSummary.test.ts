@@ -82,6 +82,11 @@ describe('toNumber - 值转数字', () => {
     expect(toNumber({} as unknown)).toBeNull()
     expect(toNumber([] as unknown)).toBeNull()
   })
+
+  it('非法百分比字符串返回 null', () => {
+    expect(toNumber('abc%')).toBeNull()
+    expect(toNumber('%')).toBeNull()
+  })
 })
 
 // ============================ computeSelectionSummary ============================
@@ -280,6 +285,12 @@ describe('METRIC_CONFIGS - 指标格式化', () => {
   it('整数不带小数', () => {
     const s = { ...withValues, sum: 1000 }
     expect(METRIC_CONFIGS.sum.format(s)).toBe('1,000')
+  })
+
+  it('非有限数值（Infinity/NaN）显示 -', () => {
+    expect(METRIC_CONFIGS.sum.format({ ...withValues, sum: Infinity })).toBe('-')
+    expect(METRIC_CONFIGS.average.format({ ...withValues, average: -Infinity })).toBe('-')
+    expect(METRIC_CONFIGS.max.format({ ...withValues, max: NaN })).toBe('-')
   })
 
   it('标签正确', () => {

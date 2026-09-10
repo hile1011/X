@@ -961,8 +961,9 @@ export default function BagQuoteTable() {
     setLoading(false)
   }
 
-  const canGoNext = OrderStatus.getNext(status) !== null
-  const canGoPrev = OrderStatus.getPrev(status) !== null
+  // 订单管理不允许手动流转到已对账(8)：5→8 仅可经订单对账管理「确认对账」，8→5 仅可经其「退回对账」
+  const canGoNext = OrderStatus.getNext(status) !== null && status !== OrderStatus.SHIPPED_PAID
+  const canGoPrev = OrderStatus.getPrev(status) !== null && status !== OrderStatus.RECONCILED
   const canEnd = OrderStatus.canEnterFinished(status)
 
   return (

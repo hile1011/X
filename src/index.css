@@ -145,6 +145,40 @@ body {
   font-weight: 500 !important;
 }
 
+/* 做货跟踪页客户名称多选下拉（antd v6 Select multiple）：与页面原生筛选输入框视觉一致
+   页面原生输入框：py-1.5 text-sm border-gray-300 rounded-lg → 高约 30px
+   左侧 30px 内边距为叠加的 lucide Search 图标预留位置 */
+.tracking-multi-select.ant-select {
+  min-height: 32px !important;
+  padding: 0 26px 0 30px !important;
+  background: #fff !important;
+  border-color: #d1d5db !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+}
+
+.tracking-multi-select .ant-select-selection-item {
+  font-size: 12px !important;
+  line-height: 18px !important;
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+.tracking-multi-select.ant-select:hover {
+  border-color: #9ca3af !important;
+}
+
+/* 聚焦态：与原生输入框 focus:border-blue-400 一致 */
+.tracking-multi-select.ant-select:focus-within {
+  border-color: #60a5fa !important;
+  box-shadow: 0 0 0 2px #60a5fa33 !important;
+}
+
+/* 下拉选项（portal 渲染到 body）：匹配项高亮 */
+.tracking-multi-select-dropdown .ant-select-item-option-selected {
+  font-weight: 500 !important;
+}
+
 /* 修复 VTable 右键菜单在页面滚动时错位的问题 */
 /* 主菜单：CSS 直接设为 fixed（left/top 使用 clientX/clientY 视口坐标，fixed 匹配） */
 .vtable-context-menu-container:not(.vtable-context-submenu-container) {

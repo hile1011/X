@@ -17,6 +17,8 @@ const STATUS_COLORS: Record<number, string> = {
   4: '#f97316',
   5: '#22c55e',
   6: '#6b7280',
+  7: '#06b6d4',
+  8: '#14b8a6',
 }
 
 /**

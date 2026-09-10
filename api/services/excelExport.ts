@@ -21,9 +21,11 @@ import type { Quote } from '../types/index.js'
 const STATUS_OPTIONS = [
   { value: 1, label: '报价中' },
   { value: 2, label: '打样中' },
+  { value: 7, label: '打样完成' },
   { value: 3, label: '做货中' },
   { value: 4, label: '已发货未收款' },
   { value: 5, label: '已发货已收款' },
+  { value: 8, label: '已对账' },
   { value: 6, label: '结束' },
 ]
 
@@ -503,7 +505,8 @@ export async function generateOrdersExcel(
   sHeader.getCell(1).fill = HEADER_FILL
   sHeader.getCell(2).fill = HEADER_FILL
   r++
-  for (const st of [1, 2, 3, 4, 5, 6]) {
+  // 状态分布按流转顺序展示（1→2→7→3→4→5→8，结束 6 最后）
+  for (const st of [1, 2, 7, 3, 4, 5, 8, 6]) {
     const info = summary.statusBreakdown[st]
     if (!info) continue
     const row = summarySheet.getRow(r)
