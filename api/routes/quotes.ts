@@ -3,7 +3,7 @@ import sharp from 'sharp'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
-import { requirePermission } from '../middleware/auth.js'
+import { requirePermission, requireAnyPermission } from '../middleware/auth.js'
 
 export const quotesRouter = express.Router()
 
@@ -160,8 +160,8 @@ function validateReconciliationCosts(body: any): string | null {
   return null
 }
 
-// 获取订单的对账工艺成本明细
-quotesRouter.get('/:id/reconciliation-costs', requirePermission('quotes:view'), asyncHandler(async (req, res) => {
+// 获取订单的对账工艺成本明细（订单对账模块权限，v30）
+quotesRouter.get('/:id/reconciliation-costs', requirePermission('reconciliation:view'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const quote = await db.quotes.getById(id)
   if (!quote) {
@@ -171,8 +171,8 @@ quotesRouter.get('/:id/reconciliation-costs', requirePermission('quotes:view'), 
   res.json(costs)
 }))
 
-// 保存订单的对账工艺成本明细（全量替换，事务）
-quotesRouter.put('/:id/reconciliation-costs', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
+// 保存订单的对账工艺成本明细（全量替换，事务；订单对账模块权限，v30）
+quotesRouter.put('/:id/reconciliation-costs', requirePermission('reconciliation:edit'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const quote = await db.quotes.getById(id)
   if (!quote) {
@@ -186,8 +186,8 @@ quotesRouter.put('/:id/reconciliation-costs', requirePermission('quotes:edit'), 
   res.json(costs)
 }))
 
-// 确认对账：已发货已收款(5) → 已对账(8)
-quotesRouter.post('/:id/reconcile', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
+// 确认对账：已发货已收款(5) → 已对账(8)（订单对账模块权限，v30）
+quotesRouter.post('/:id/reconcile', requirePermission('reconciliation:execute'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.reconciliation.reconcileQuote(id)
   if (!data) {
@@ -196,8 +196,8 @@ quotesRouter.post('/:id/reconcile', requirePermission('quotes:status-transition'
   res.json(data)
 }))
 
-// 退回对账：已对账(8) → 已发货已收款(5)
-quotesRouter.post('/:id/unreconcile', requirePermission('quotes:status-transition'), asyncHandler(async (req, res) => {
+// 退回对账：已对账(8) → 已发货已收款(5)（订单对账模块权限，v30）
+quotesRouter.post('/:id/unreconcile', requirePermission('reconciliation:execute'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const data = await db.reconciliation.unreconcileQuote(id)
   if (!data) {
@@ -234,14 +234,14 @@ function validateTasks(body: any): string | null {
   return null
 }
 
-// 做货流程跟踪表：全部订单的任务总览（JOIN 订单摘要；两段式路径不与 /:id/:sub 冲突）
-quotesRouter.get('/production-tasks/overview', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
+// 做货流程跟踪表：全部订单的任务总览（JOIN 订单摘要；两段式路径不与 /:id/:sub 冲突；做货跟踪模块权限，v30）
+quotesRouter.get('/production-tasks/overview', requirePermission('production-tracking:view'), asyncHandler(async (_req, res) => {
   const rows = await db.productionTasks.getAllWithQuoteInfo()
   res.json(rows)
 }))
 
-// 获取订单的做货流程任务列表
-quotesRouter.get('/:id/production-tasks', requirePermission('quotes:view'), asyncHandler(async (req, res) => {
+// 获取订单的做货流程任务列表（做货跟踪模块或订单查看权限任一即可：甘特图页与订单详情页做货流程 Tab 均使用，v30）
+quotesRouter.get('/:id/production-tasks', requireAnyPermission('production-tracking:view', 'quotes:view'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const quote = await db.quotes.getById(id)
   if (!quote) {
@@ -251,8 +251,8 @@ quotesRouter.get('/:id/production-tasks', requirePermission('quotes:view'), asyn
   res.json(tasks)
 }))
 
-// 整体同步订单的做货流程任务（全量替换，事务）
-quotesRouter.put('/:id/production-tasks', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
+// 整体同步订单的做货流程任务（全量替换，事务；做货跟踪模块或订单编辑权限任一即可，v30）
+quotesRouter.put('/:id/production-tasks', requireAnyPermission('production-tracking:edit', 'quotes:edit'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const quote = await db.quotes.getById(id)
   if (!quote) {

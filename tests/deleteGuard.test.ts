@@ -5,7 +5,8 @@
  *   - checkProductDelete：默认款式保护 + quotes（按 code/id）/ order_items 引用检测
  *   - checkQuoteDelete：报价单始终可删 + 状态名映射
  *   - checkOrderDelete：order_items 级联提示 + tasks 阻断
- *   - checkTaskDelete / checkProcessCostDelete：直接可删
+ *   - checkTaskDelete：直接可删
+ *   - checkProductCostItem/Process/FieldDelete（v31）：成本项级联提示 / 工艺直接可删 / 字段已录值提示
  *   - checkDelete：实体类型分发 + 未知类型
  *   - 实体不存在的统一处理
  *
@@ -21,7 +22,9 @@ import {
   checkQuoteDelete,
   checkOrderDelete,
   checkTaskDelete,
-  checkProcessCostDelete,
+  checkProductCostItemDelete,
+  checkProductCostProcessDelete,
+  checkProductCostFieldDelete,
   checkDelete,
 } from '../api/services/deleteGuard'
 
@@ -266,37 +269,95 @@ describe('checkTaskDelete - 任务删除检查', () => {
   })
 })
 
-describe('checkProcessCostDelete - 工艺成本删除检查', () => {
-  it('工艺成本可直接删除，详情含费用与公式', async () => {
+describe('checkProductCostItemDelete - 产品成本项删除检查（v31）', () => {
+  it('成本项可删除，详情与级联提示含工艺数与字段数', async () => {
+    await pool.execute("INSERT INTO product_cost_items (id, name) VALUES ('pci-1', '印刷成本')")
     await pool.execute(
-      "INSERT INTO process_costs (id, name, cost, formula) VALUES ('pc1', '印刷费', 0.5, '宽*高*0.1')"
+      "INSERT INTO product_cost_processes (id, cost_item_id, name, cost, formula) VALUES ('pcp-1', 'pci-1', 'UV印刷', 0.5, '宽*高*0.1')"
     )
-    const result = await checkProcessCostDelete('pc1')
+    await pool.execute(
+      "INSERT INTO product_cost_custom_fields (id, cost_item_id, name, field_type) VALUES ('pcf-1', 'pci-1', '适用数量', 'select')"
+    )
+    const result = await checkProductCostItemDelete('pci-1')
     expect(result.canDelete).toBe(true)
-    expect(result.entityInfo.name).toBe('印刷费')
-    expect(result.entityInfo.details).toContain('费用: 0.5')
+    expect(result.entityInfo.name).toBe('印刷成本')
+    expect(result.entityInfo.details).toContain('可选工艺: 1 个')
+    expect(result.entityInfo.details).toContain('自定义字段: 1 个')
+    // 级联删除提示（可删除但提示影响）
+    expect(result.relationships).toHaveLength(2)
+    expect(result.relationships[0].description).toContain('1 个可选工艺')
+    expect(result.relationships[1].description).toContain('1 个自定义字段')
+  })
+
+  it('成本项不存在：canDelete=false', async () => {
+    const result = await checkProductCostItemDelete('no-such-item')
+    expect(result.canDelete).toBe(false)
+    expect(result.entityInfo.name).toBe('(不存在)')
+  })
+})
+
+describe('checkProductCostProcessDelete - 可选工艺删除检查（v31）', () => {
+  it('工艺可直接删除，详情含成本金额与公式', async () => {
+    await pool.execute("INSERT INTO product_cost_items (id, name) VALUES ('pci-1', '印刷成本')")
+    await pool.execute(
+      "INSERT INTO product_cost_processes (id, cost_item_id, name, cost, formula) VALUES ('pcp-1', 'pci-1', 'UV印刷', 0.5, '宽*高*0.1')"
+    )
+    const result = await checkProductCostProcessDelete('pcp-1')
+    expect(result.canDelete).toBe(true)
+    expect(result.entityInfo.name).toBe('UV印刷')
+    expect(result.entityInfo.details).toContain('成本金额: 0.5')
     expect(result.entityInfo.details).toContain('公式: 宽*高*0.1')
   })
 
   it('公式为空时显示 无', async () => {
+    await pool.execute("INSERT INTO product_cost_items (id, name) VALUES ('pci-1', '印刷成本')")
     await pool.execute(
-      "INSERT INTO process_costs (id, name, cost, formula) VALUES ('pc2', '运费', 100, '')"
+      "INSERT INTO product_cost_processes (id, cost_item_id, name, cost, formula) VALUES ('pcp-2', 'pci-1', '覆膜', 100, '')"
     )
-    const result = await checkProcessCostDelete('pc2')
+    const result = await checkProductCostProcessDelete('pcp-2')
     expect(result.entityInfo.details).toContain('公式: 无')
   })
 
-  it('名称为空串时回退显示 id', async () => {
+  it('工艺不存在：canDelete=false', async () => {
+    const result = await checkProductCostProcessDelete('no-such-process')
+    expect(result.canDelete).toBe(false)
+    expect(result.entityInfo.name).toBe('(不存在)')
+  })
+})
+
+describe('checkProductCostFieldDelete - 自定义字段删除检查（v31）', () => {
+  it('字段可删除，已录值的工艺数作为级联提示', async () => {
+    await pool.execute("INSERT INTO product_cost_items (id, name) VALUES ('pci-1', '印刷成本')")
     await pool.execute(
-      "INSERT INTO process_costs (id, name, cost, formula) VALUES ('pc-empty-name', '', 2, NULL)"
+      "INSERT INTO product_cost_custom_fields (id, cost_item_id, name, field_type, options) VALUES ('pcf-1', 'pci-1', '适用数量', 'select', '[\"小批量\",\"大批量\"]')"
     )
-    const result = await checkProcessCostDelete('pc-empty-name')
-    expect(result.entityInfo.name).toBe('pc-empty-name')
-    expect(result.entityInfo.details).toContain('公式: 无')
+    await pool.execute(
+      "INSERT INTO product_cost_processes (id, cost_item_id, name, custom_values) VALUES ('pcp-1', 'pci-1', 'UV印刷', '{\"pcf-1\":\"小批量\"}')"
+    )
+    await pool.execute(
+      "INSERT INTO product_cost_processes (id, cost_item_id, name) VALUES ('pcp-2', 'pci-1', '丝网印刷')"
+    )
+    const result = await checkProductCostFieldDelete('pcf-1')
+    expect(result.canDelete).toBe(true)
+    expect(result.entityInfo.name).toBe('适用数量')
+    expect(result.entityInfo.details).toContain('类型: select')
+    // 仅 1 个工艺录入了该字段值
+    expect(result.relationships).toHaveLength(1)
+    expect(result.relationships[0].description).toContain('1 个可选工艺已录入该字段值')
   })
 
-  it('工艺成本不存在：canDelete=false', async () => {
-    const result = await checkProcessCostDelete('no-such-cost')
+  it('字段未录入任何值时无级联提示', async () => {
+    await pool.execute("INSERT INTO product_cost_items (id, name) VALUES ('pci-1', '印刷成本')")
+    await pool.execute(
+      "INSERT INTO product_cost_custom_fields (id, cost_item_id, name, field_type) VALUES ('pcf-2', 'pci-1', '最小起订量', 'number')"
+    )
+    const result = await checkProductCostFieldDelete('pcf-2')
+    expect(result.canDelete).toBe(true)
+    expect(result.relationships).toHaveLength(0)
+  })
+
+  it('字段不存在：canDelete=false', async () => {
+    const result = await checkProductCostFieldDelete('no-such-field')
     expect(result.canDelete).toBe(false)
     expect(result.entityInfo.name).toBe('(不存在)')
   })
@@ -352,7 +413,9 @@ describe('checkDelete - 统一入口分发', () => {
     ['quote', checkQuoteDelete],
     ['order', checkOrderDelete],
     ['task', checkTaskDelete],
-    ['process_cost', checkProcessCostDelete],
+    ['product_cost_item', checkProductCostItemDelete],
+    ['product_cost_process', checkProductCostProcessDelete],
+    ['product_cost_field', checkProductCostFieldDelete],
   ] as const)('实体类型 %s 分发到对应检查函数', async (type, fn) => {
     const viaEntry = await checkDelete(type, `probe-${type}`)
     const direct = await fn(`probe-${type}`)

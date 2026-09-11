@@ -331,20 +331,79 @@ export async function checkTaskDelete(id: string): Promise<DeleteCheckResult> {
 }
 
 /**
- * 检查工艺成本是否可删除
- * 工艺成本通常不被其他表引用，可以直接删除
+ * 检查产品成本项是否可删除（v31：替代原 process_cost 检查）
+ * 删除成本项将级联删除其下全部可选工艺与自定义字段（canDelete=true，但返回级联影响明细供前端二次确认）
  */
-export async function checkProcessCostDelete(id: string): Promise<DeleteCheckResult> {
-  const [costRows] = await pool.execute(
-    'SELECT id, name, cost, formula FROM process_costs WHERE id = ?',
+export async function checkProductCostItemDelete(id: string): Promise<DeleteCheckResult> {
+  const [itemRows] = await pool.execute(
+    'SELECT id, name FROM product_cost_items WHERE id = ?',
     [id]
   )
-  const cost = (costRows as any[])[0]
+  const item = (itemRows as any[])[0]
 
-  if (!cost) {
+  if (!item) {
     return {
       canDelete: false,
-      entityInfo: { id, name: '(不存在)', type: 'process_cost', details: '' },
+      entityInfo: { id, name: '(不存在)', type: 'product_cost_item', details: '' },
+      relationships: [],
+    }
+  }
+
+  const [processCount] = await pool.execute(
+    'SELECT COUNT(*) as cnt FROM product_cost_processes WHERE cost_item_id = ?',
+    [id]
+  )
+  const [fieldCount] = await pool.execute(
+    'SELECT COUNT(*) as cnt FROM product_cost_custom_fields WHERE cost_item_id = ?',
+    [id]
+  )
+  const processCnt = Number((processCount as any[])[0].cnt)
+  const fieldCnt = Number((fieldCount as any[])[0].cnt)
+
+  const relationships: RelationshipCheck[] = []
+  if (processCnt > 0) {
+    relationships.push({
+      table: 'product_cost_processes',
+      description: `将同时删除该成本项下的 ${processCnt} 个可选工艺`,
+      count: processCnt,
+      samples: [],
+    })
+  }
+  if (fieldCnt > 0) {
+    relationships.push({
+      table: 'product_cost_custom_fields',
+      description: `将同时删除该成本项下的 ${fieldCnt} 个自定义字段`,
+      count: fieldCnt,
+      samples: [],
+    })
+  }
+
+  return {
+    canDelete: true,
+    entityInfo: {
+      id: item.id,
+      name: item.name || item.id,
+      type: 'product_cost_item',
+      details: `可选工艺: ${processCnt} 个 | 自定义字段: ${fieldCnt} 个`,
+    },
+    relationships,
+  }
+}
+
+/**
+ * 检查可选工艺是否可删除（独立实体，无外部引用）
+ */
+export async function checkProductCostProcessDelete(id: string): Promise<DeleteCheckResult> {
+  const [processRows] = await pool.execute(
+    'SELECT id, name, cost, formula FROM product_cost_processes WHERE id = ?',
+    [id]
+  )
+  const process = (processRows as any[])[0]
+
+  if (!process) {
+    return {
+      canDelete: false,
+      entityInfo: { id, name: '(不存在)', type: 'product_cost_process', details: '' },
       relationships: [],
     }
   }
@@ -352,12 +411,60 @@ export async function checkProcessCostDelete(id: string): Promise<DeleteCheckRes
   return {
     canDelete: true,
     entityInfo: {
-      id: cost.id,
-      name: cost.name || cost.id,
-      type: 'process_cost',
-      details: `费用: ${cost.cost} | 公式: ${cost.formula || '无'}`,
+      id: process.id,
+      name: process.name || process.id,
+      type: 'product_cost_process',
+      details: `成本金额: ${process.cost} | 公式: ${process.formula || '无'}`,
     },
     relationships: [],
+  }
+}
+
+/**
+ * 检查自定义字段是否可删除（删除时将同步清理该成本项下所有工艺的对应字段值）
+ */
+export async function checkProductCostFieldDelete(id: string): Promise<DeleteCheckResult> {
+  const [fieldRows] = await pool.execute(
+    'SELECT id, name, field_type, cost_item_id FROM product_cost_custom_fields WHERE id = ?',
+    [id]
+  )
+  const field = (fieldRows as any[])[0]
+
+  if (!field) {
+    return {
+      canDelete: false,
+      entityInfo: { id, name: '(不存在)', type: 'product_cost_field', details: '' },
+      relationships: [],
+    }
+  }
+
+  const [valueCount] = await pool.execute(
+    `SELECT COUNT(*) as cnt FROM product_cost_processes
+     WHERE cost_item_id = ? AND custom_values IS NOT NULL
+       AND JSON_VALID(custom_values) AND JSON_CONTAINS(JSON_KEYS(custom_values), JSON_QUOTE(?))`,
+    [field.cost_item_id, id]
+  )
+  const valueCnt = Number((valueCount as any[])[0]?.cnt ?? 0)
+
+  const relationships: RelationshipCheck[] = []
+  if (valueCnt > 0) {
+    relationships.push({
+      table: 'product_cost_processes',
+      description: `${valueCnt} 个可选工艺已录入该字段值（删除字段将同时清除这些值）`,
+      count: valueCnt,
+      samples: [],
+    })
+  }
+
+  return {
+    canDelete: true,
+    entityInfo: {
+      id: field.id,
+      name: field.name || field.id,
+      type: 'product_cost_field',
+      details: `类型: ${field.field_type}`,
+    },
+    relationships,
   }
 }
 
@@ -379,8 +486,12 @@ export async function checkDelete(
       return checkOrderDelete(id)
     case 'task':
       return checkTaskDelete(id)
-    case 'process_cost':
-      return checkProcessCostDelete(id)
+    case 'product_cost_item':
+      return checkProductCostItemDelete(id)
+    case 'product_cost_process':
+      return checkProductCostProcessDelete(id)
+    case 'product_cost_field':
+      return checkProductCostFieldDelete(id)
     default:
       return {
         canDelete: false,

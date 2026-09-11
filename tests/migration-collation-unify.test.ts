@@ -153,8 +153,8 @@ describe('迁移 v26：统一表排序规则为 utf8mb4_unicode_ci', () => {
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 28', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(28)
+    it('CURRENT_SCHEMA_VERSION ≥ 26（v26 迁移已包含）', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(26)
     })
 
     it('schema_migrations 包含 v26 记录', async () => {
@@ -162,8 +162,8 @@ describe('迁移 v26：统一表排序规则为 utf8mb4_unicode_ci', () => {
       expect((rows as any[])[0].name).toBe('unify-table-collation')
     })
 
-    it('当前 schema 版本为 28', async () => {
-      expect(await db.getSchemaVersion()).toBe(28)
+    it('当前 schema 版本为最新', async () => {
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 })

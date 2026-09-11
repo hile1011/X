@@ -1119,6 +1119,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     ].filter(Boolean)
 
     const lines: string[] = [
+      `订单号：${quoteNumber}`,
       `数量：${orderInfo.quantity}`,
       `成品：${productParts.join('-')}`,
       `材质：${orderInfo.fabricMaterial}`,

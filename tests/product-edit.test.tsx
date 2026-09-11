@@ -35,6 +35,7 @@ const apiMock = vi.hoisted(() => ({
     getById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    getMedia: vi.fn(),
   },
 }))
 
@@ -62,6 +63,7 @@ describe('产品编辑功能', () => {
   beforeEach(() => {
     cleanup()
     vi.clearAllMocks()
+    apiMock.products.getMedia.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -107,12 +109,12 @@ describe('产品编辑功能', () => {
       expect(screen.queryByText('添加产品')).toBeNull()
     })
 
-    it('页面副标题应显示"修改产品基本信息"', async () => {
+    it('页面副标题应显示"修改产品基本信息与图册"', async () => {
       apiMock.products.getById.mockResolvedValue(mockProduct)
       renderWithRoute('/products/prod-test-001/edit')
 
       await waitFor(() => {
-        expect(screen.getByText('修改产品基本信息')).toBeTruthy()
+        expect(screen.getByText('修改产品基本信息与图册')).toBeTruthy()
       })
     })
   })
@@ -263,10 +265,11 @@ describe('产品编辑功能', () => {
         expect(screen.getByText('编辑产品')).toBeTruthy()
       })
 
-      // 返回箭头按钮：紧邻"编辑产品"标题前，包含 ArrowLeft SVG 图标
+      // 返回箭头按钮：位于"编辑产品"标题容器（div.min-w-0）之前的兄弟位置，
+      // 需上溯到包含两者的头部行（div.flex.items-center）内查找
       const title = screen.getByText('编辑产品')
       const titleContainer = title.closest('div')?.parentElement
-      const back = titleContainer?.querySelector('button') as HTMLElement
+      const back = titleContainer?.parentElement?.querySelector('button') as HTMLElement
       expect(back).toBeTruthy()
       fireEvent.click(back!)
 

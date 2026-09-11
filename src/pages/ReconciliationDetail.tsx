@@ -79,8 +79,9 @@ export default function ReconciliationDetail() {
   const [reconciling, setReconciling] = useState(false)
   const [unreconciling, setUnreconciling] = useState(false)
 
-  const canEdit = hasPermission('quotes:edit')
-  const canTransition = hasPermission('quotes:status-transition')
+  // 对账操作权限：订单对账模块权限（v30 独立）
+  const canEdit = hasPermission('reconciliation:edit')
+  const canTransition = hasPermission('reconciliation:execute')
 
   const isEditable = !!quote && quote.status === OrderStatus.SHIPPED_PAID
 

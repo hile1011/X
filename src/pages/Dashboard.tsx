@@ -101,6 +101,8 @@ export default function Dashboard() {
   const filterRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
   const { hasPermission } = usePermission()
+  // 双击快捷编辑：quick-edit 是 edit 的增强开关，需同时持有两权限才生效（不绕过编辑权限）
+  const canQuickEdit = hasPermission('quotes:quick-edit') && hasPermission('quotes:edit')
   // 收款单导出状态
   const [exportingPayment, setExportingPayment] = useState(false)
   const [paymentError, setPaymentError] = useState<{ type: string; message: string; detail?: string } | null>(null)
@@ -693,8 +695,8 @@ export default function Dashboard() {
                     return (
                       <div
                         key={quote.id}
-                        onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
-                        title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
+                        onDoubleClick={() => navigate(canQuickEdit ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                        title={canQuickEdit ? '双击进入编辑模式' : '双击查看订单详情'}
                         className="flex items-center gap-4 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
                       >
                         <div className="w-72 shrink-0 flex items-center gap-2">

@@ -169,7 +169,8 @@ describe('做货流程甘特图双维度展示', () => {
     )
     apiMock.products.getAll.mockReset().mockResolvedValue([])
     ganttState.instances.length = 0
-    useAuthStore.setState({ permissions: ['quotes:edit'] })
+    // v30：做货跟踪页面 canEdit 依赖 production-tracking:edit；双击订单编辑依赖 quotes:quick-edit
+    useAuthStore.setState({ permissions: ['production-tracking:edit', 'quotes:edit', 'quotes:quick-edit'] })
   })
 
   afterEach(() => {

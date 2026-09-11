@@ -178,6 +178,8 @@ export default function Quotes() {
   // 匹配工作台统计口径：状态为做货中/已发货未收款/已发货已收款，做货开始时间在对应月份/年度
   const [productionTimeFilter, setProductionTimeFilter] = useState<{ type: 'month' | 'year'; value: string } | null>(null)
   const { hasPermission } = usePermission()
+  // 双击快捷编辑：quick-edit 是 edit 的增强开关，需同时持有两权限才生效（不绕过编辑权限）
+  const canQuickEdit = hasPermission('quotes:quick-edit') && hasPermission('quotes:edit')
   // 跳过首次挂载的筛选重置（从 sessionStorage 恢复时不重置页码）
   const isInitialMount = useRef(true)
   // 列表滚动容器引用：保存/恢复滚动位置
@@ -787,8 +789,8 @@ export default function Quotes() {
                           <div
                             key={quote.id}
                             className="flex items-center hover:bg-gray-50 cursor-pointer transition-colors"
-                            onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
-                            title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
+                            onDoubleClick={() => navigate(canQuickEdit ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                            title={canQuickEdit ? '双击进入编辑模式' : '双击查看订单详情'}
                           >
                             {/* 产品图 */}
                             <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">

@@ -9,7 +9,6 @@ import Customers from './pages/Customers'
 import CustomerDetail from './pages/CustomerDetail'
 import CreateCustomer from './pages/CreateCustomer'
 import Products from './pages/Products'
-import ProductDetail from './pages/ProductDetail'
 import CreateProduct from './pages/CreateProduct'
 import Reports from './pages/Reports'
 import AnnualReport from './pages/AnnualReport'
@@ -20,7 +19,8 @@ import ProductionTracking from './pages/ProductionTracking'
 import BagQuote from './pages/BagQuote'
 import BagQuoteTable from './pages/BagQuoteTable'
 import BagQuoteWps from './pages/BagQuoteWps'
-import ProcessCost from './pages/ProcessCost'
+import ProductCostItemList from './pages/ProductCostItemList'
+import ProductCostItems from './pages/ProductCostItems'
 import SheetTemplates from './pages/SheetTemplates'
 import Users from './pages/Users'
 import Roles from './pages/Roles'
@@ -77,16 +77,16 @@ function App() {
               <Route path="/quotes" element={
                 <ProtectedRoute permission="quotes:view"><Quotes /></ProtectedRoute>
               } />
-              {/* 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移） */}
+              {/* 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移；v30 独立模块权限） */}
               <Route path="/production-tracking" element={
-                <ProtectedRoute permission="quotes:view"><ProductionTracking /></ProtectedRoute>
+                <ProtectedRoute permission="production-tracking:view"><ProductionTracking /></ProtectedRoute>
               } />
-              {/* 订单对账管理（v28）：双列表（待对账/已对账）+ 专属对账页 */}
+              {/* 订单对账管理（v28）：双列表（待对账/已对账）+ 专属对账页；v30 独立模块权限 */}
               <Route path="/reconciliation-alerts" element={
-                <ProtectedRoute permission="quotes:view"><ReconciliationAlerts /></ProtectedRoute>
+                <ProtectedRoute permission="reconciliation:view"><ReconciliationAlerts /></ProtectedRoute>
               } />
               <Route path="/reconciliation-alerts/:id" element={
-                <ProtectedRoute permission="quotes:view"><ReconciliationDetail /></ProtectedRoute>
+                <ProtectedRoute permission="reconciliation:view"><ReconciliationDetail /></ProtectedRoute>
               } />
               <Route path="/quotes/new" element={
                 <ProtectedRoute permission="quotes:create"><BagQuote /></ProtectedRoute>
@@ -111,9 +111,15 @@ function App() {
               <Route path="/quotes-wps" element={
                 <ProtectedRoute permission="quotes-wps:view"><BagQuoteWps /></ProtectedRoute>
               } />
-              <Route path="/process-costs" element={
-                <ProtectedRoute permission="process-costs:view"><ProcessCost /></ProtectedRoute>
+              <Route path="/product-cost-items" element={
+                <ProtectedRoute permission="process-costs:view"><ProductCostItemList /></ProtectedRoute>
               } />
+              {/* 编辑详情页：成本项工艺与自定义字段配置 */}
+              <Route path="/product-cost-items/:id" element={
+                <ProtectedRoute permission="process-costs:view"><ProductCostItems /></ProtectedRoute>
+              } />
+              {/* 旧路径兼容：工艺成本管理更名为产品成本项配置（v31） */}
+              <Route path="/process-costs" element={<Navigate to="/product-cost-items" replace />} />
               {/* 款式模板管理：在线可视化编辑试算表模板 */}
               <Route path="/sheet-templates" element={
                 <ProtectedRoute permission="sheet-templates:view"><SheetTemplates /></ProtectedRoute>
@@ -136,8 +142,9 @@ function App() {
               <Route path="/products/new" element={
                 <ProtectedRoute permission="products:create"><CreateProduct /></ProtectedRoute>
               } />
+              {/* 产品详情：与编辑页共用布局，查看模式（表单禁用 + 图册浏览/双击全屏预览） */}
               <Route path="/products/:id" element={
-                <ProtectedRoute permission="products:view"><ProductDetail /></ProtectedRoute>
+                <ProtectedRoute permission="products:view"><CreateProduct viewMode /></ProtectedRoute>
               } />
               <Route path="/products/:id/edit" element={
                 <ProtectedRoute permission="products:edit"><CreateProduct /></ProtectedRoute>
@@ -145,9 +152,9 @@ function App() {
               <Route path="/reports" element={
                 <ProtectedRoute permission="reports:view"><Reports /></ProtectedRoute>
               } />
-              {/* 年度业务报表（原仪表盘业绩模块迁移） */}
+              {/* 年度业务报表（原仪表盘业绩模块迁移；v30 独立模块权限） */}
               <Route path="/annual-report" element={
-                <ProtectedRoute permission="reports:view"><AnnualReport /></ProtectedRoute>
+                <ProtectedRoute permission="annual-report:view"><AnnualReport /></ProtectedRoute>
               } />
               <Route path="/users" element={
                 <ProtectedRoute permission="users:view"><Users /></ProtectedRoute>

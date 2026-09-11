@@ -23,6 +23,7 @@ const apiMock = vi.hoisted(() => ({
     getById: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+    getMedia: vi.fn(),
   },
   sheetTemplates: {
     getAll: vi.fn(),
@@ -77,6 +78,7 @@ describe('产品管理-款式模板逻辑同步', () => {
     cleanup()
     vi.clearAllMocks()
     apiMock.sheetTemplates.getAll.mockResolvedValue(DB_TEMPLATES)
+    apiMock.products.getMedia.mockResolvedValue([])
   })
 
   afterEach(() => {

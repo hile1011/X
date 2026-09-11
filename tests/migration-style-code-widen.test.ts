@@ -140,8 +140,8 @@ describe('迁移 v25：sheet_templates.style_code 扩容至 VARCHAR(64)', () => 
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 28', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(28)
+    it('CURRENT_SCHEMA_VERSION ≥ 25（v25 迁移已包含）', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(25)
     })
 
     it('schema_migrations 包含 v25 记录', async () => {
@@ -149,8 +149,8 @@ describe('迁移 v25：sheet_templates.style_code 扩容至 VARCHAR(64)', () => 
       expect((rows as any[])[0].name).toBe('sheet-templates-style-code-widen')
     })
 
-    it('当前 schema 版本为 28（后续迁移全部应用后）', async () => {
-      expect(await db.getSchemaVersion()).toBe(28)
+    it('当前 schema 版本为最新（后续迁移全部应用后）', async () => {
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 })

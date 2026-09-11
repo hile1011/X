@@ -6,6 +6,45 @@
 
 ---
 
+## [v1.4.0] - 2026-09-11
+
+### 🎯 核心主题：产品成本项配置 + 产品图册 + 权限体系精细化
+
+### ✨ 新增功能
+
+#### 产品成本项配置（DB v31，原「工艺成本管理」重构）
+- **三层结构**：产品成本项（父级）→ 可选工艺（多对一：名称/成本/公式/特点/备注）→ 自定义字段（文本/数字/日期/下拉，支持显隐与排序）
+- **列表页 + 详情页**：`/product-cost-items` 列表（排序/增删改），`/product-cost-items/:id` 详情配置工艺与自定义字段；旧路径 `/process-costs` 重定向兼容
+- **存量数据无损迁移**：旧 `process_costs` 一行 → 同名成本项 + 其下一条工艺；旧表保留，回滚零损失
+- **权限码不变**：`process-costs:*` 显示名更新为「产品成本项-*」
+
+#### 产品图册（DB v32）
+- **图片/视频上传**：原图存储不压缩，`product_media` 表记录元数据，文件存于 `api/uploads/products/`
+- **画廊组件**：ProductMediaGallery 支持排序（上传顺序 + 自定义重排）、删除
+- **接口**：`/api/products/:id/media` 系列管理接口
+
+#### 权限体系精细化（DB v29/v30）
+- **订单双击编辑开关**（v29）：新增 `quotes:quick-edit` 权限，双击订单行直接进入编辑（需同时持有 `quotes:edit`）
+- **三模块权限独立**（v30）：做货跟踪（view/edit）、订单对账（view/edit/execute）、年度业务报表（view）从订单/报表权限中独立，存量角色按原等效权限自动分配，升级后行为零变化
+
+### 🗄️ 数据库变更
+
+- **v29**：`quotes:quick-edit` 权限（自动分配给已拥有 `quotes:edit` 的角色）
+- **v30**：6 项模块权限（production-tracking / reconciliation / annual-report）
+- **v31**：产品成本项三层表（`product_cost_items` / `product_cost_processes` / `product_cost_custom_fields`）+ 存量迁移
+- **v32**：`product_media` 产品图册表
+
+### ♻️ 重构
+
+- 产品管理：ProductDetail 独立页移除，详情以视图模式集成到列表页；CreateProduct 页面重构
+- 删除保护（deleteGuard）：产品/成本项/媒体关联删除校验增强
+
+### 📚 文档
+
+- 新增：权限管理开发规范、权限配置文档、权限测试报告、产品成本项配置设计文档
+
+---
+
 ## [v1.3.0] - 2026-09-10
 
 ### 🎯 核心主题：做货跟踪 + 年度业务报表 + 订单对账管理 + 测试覆盖率 95%+ + 文档系统性更新

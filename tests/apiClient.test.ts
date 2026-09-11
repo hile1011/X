@@ -340,7 +340,7 @@ describe('端点 URL / method / body 组装', () => {
     expect(init.method).toBe('PUT')
   })
 
-  it('orders / products / processCosts：update 与 deleteCheck', async () => {
+  it('orders / products / productCostItems：update 与 deleteCheck', async () => {
     fetchMock.mockResolvedValue(mockResponse({ body: {} }))
     await api.orders.update('o1', { status: 3 })
     expect(lastCall()[0]).toBe('/api/orders/o1')
@@ -353,8 +353,8 @@ describe('端点 URL / method / body 组装', () => {
     expect(lastCall()[0]).toBe('/api/products/p1')
     expect(lastCall()[1]!.method).toBe('DELETE')
 
-    await api.processCosts.getAll()
-    expect(lastCall()[0]).toBe('/api/process-costs')
+    await api.productCostItems.getAll()
+    expect(lastCall()[0]).toBe('/api/product-cost-items')
   })
 })
 
@@ -484,30 +484,80 @@ describe('剩余端点 URL / method / body 组装（补全覆盖）', () => {
     expect(init.method).toBe('DELETE')
   })
 
-  it('processCosts：getById / create / update / delete / deleteCheck', async () => {
+  it('productCostItems：成本项/工艺/字段三组端点（v31）', async () => {
     fetchMock.mockResolvedValue(mockResponse({ body: {} }))
-    await api.processCosts.getById('pc1')
-    expect(lastCall()[0]).toBe('/api/process-costs/pc1')
+    await api.productCostItems.getAll()
+    expect(lastCall()[0]).toBe('/api/product-cost-items')
 
-    await api.processCosts.create({ name: '烫金' })
+    await api.productCostItems.getById('pci1')
+    expect(lastCall()[0]).toBe('/api/product-cost-items/pci1')
+
+    await api.productCostItems.createItem({ name: '印刷成本' })
     let [url, init] = lastCall()
-    expect(url).toBe('/api/process-costs')
+    expect(url).toBe('/api/product-cost-items')
     expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body)).toEqual({ name: '烫金' })
+    expect(JSON.parse(init.body)).toEqual({ name: '印刷成本' })
 
-    await api.processCosts.update('pc1', { name: '压花' })
+    await api.productCostItems.updateItem('pci1', { name: '布料成本' })
     ;[url, init] = lastCall()
-    expect(url).toBe('/api/process-costs/pc1')
+    expect(url).toBe('/api/product-cost-items/pci1')
     expect(init.method).toBe('PUT')
-    expect(JSON.parse(init.body)).toEqual({ name: '压花' })
+    expect(JSON.parse(init.body)).toEqual({ name: '布料成本' })
 
-    await api.processCosts.delete('pc1')
+    await api.productCostItems.deleteItem('pci1')
     ;[url, init] = lastCall()
-    expect(url).toBe('/api/process-costs/pc1')
+    expect(url).toBe('/api/product-cost-items/pci1')
     expect(init.method).toBe('DELETE')
 
-    await api.processCosts.deleteCheck('pc1')
-    expect(lastCall()[0]).toBe('/api/process-costs/pc1/delete-check')
+    await api.productCostItems.deleteItemCheck('pci1')
+    expect(lastCall()[0]).toBe('/api/product-cost-items/pci1/delete-check')
+
+    // 可选工艺（挂在成本项下）
+    await api.productCostItems.createProcess('pci1', { name: 'UV印刷', cost: 0.5 })
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/processes')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ name: 'UV印刷', cost: 0.5 })
+
+    await api.productCostItems.updateProcess('pci1', 'pcp1', { cost: 0.8 })
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/processes/pcp1')
+    expect(init.method).toBe('PUT')
+
+    await api.productCostItems.deleteProcess('pci1', 'pcp1')
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/processes/pcp1')
+    expect(init.method).toBe('DELETE')
+
+    await api.productCostItems.deleteProcessCheck('pci1', 'pcp1')
+    expect(lastCall()[0]).toBe('/api/product-cost-items/pci1/processes/pcp1/delete-check')
+
+    // 手动排序可选工艺（整表新顺序）
+    await api.productCostItems.reorderProcesses('pci1', ['pcp2', 'pcp1'])
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/processes/reorder')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(init.body)).toEqual({ processIds: ['pcp2', 'pcp1'] })
+
+    // 自定义字段
+    await api.productCostItems.createField('pci1', { name: '适用数量', fieldType: 'select' })
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/fields')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ name: '适用数量', fieldType: 'select' })
+
+    await api.productCostItems.updateField('pci1', 'pcf1', { visible: false })
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/fields/pcf1')
+    expect(init.method).toBe('PUT')
+
+    await api.productCostItems.deleteField('pci1', 'pcf1')
+    ;[url, init] = lastCall()
+    expect(url).toBe('/api/product-cost-items/pci1/fields/pcf1')
+    expect(init.method).toBe('DELETE')
+
+    await api.productCostItems.deleteFieldCheck('pci1', 'pcf1')
+    expect(lastCall()[0]).toBe('/api/product-cost-items/pci1/fields/pcf1/delete-check')
   })
 
   it('sheetTemplates：getById / delete', async () => {

@@ -67,7 +67,8 @@ export default function ReconciliationAlerts() {
   /** 款式下拉选项（产品管理模块动态获取） */
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
 
-  const canTransition = hasPermission('quotes:status-transition')
+  // 退回对账操作：订单对账模块权限（v30 独立）
+  const canTransition = hasPermission('reconciliation:execute')
 
   /** 同状态内排序：修改时间 DESC → 客户名称 ASC → 订单号 DESC */
   const sortQuotes = (list: Quote[]) =>

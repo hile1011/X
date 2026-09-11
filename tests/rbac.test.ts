@@ -77,14 +77,22 @@ async function createTestRole(roleCode: string, permCodes: string[]): Promise<vo
 // getUserPermissions / getUserRoles（默认管理员）
 // ============================================================
 describe('默认管理员 RBAC 查询', () => {
-  it('getUserPermissions 返回全部 43 项权限', async () => {
+  it('getUserPermissions 返回全部 50 项权限', async () => {
     const perms = await getUserPermissions('user-admin-default')
-    expect(perms.size).toBe(43)
+    expect(perms.size).toBe(50)
     expect(perms.has('dashboard:view')).toBe(true)
     expect(perms.has('quotes:view')).toBe(true)
     expect(perms.has('quotes:edit')).toBe(true)
+    expect(perms.has('quotes:quick-edit')).toBe(true)
     expect(perms.has('quotes:delete')).toBe(true)
     expect(perms.has('system:admin')).toBe(true)
+    // v30 模块权限
+    expect(perms.has('production-tracking:view')).toBe(true)
+    expect(perms.has('production-tracking:edit')).toBe(true)
+    expect(perms.has('reconciliation:view')).toBe(true)
+    expect(perms.has('reconciliation:edit')).toBe(true)
+    expect(perms.has('reconciliation:execute')).toBe(true)
+    expect(perms.has('annual-report:view')).toBe(true)
   })
 
   it('getUserRoles 返回 admin 角色', async () => {
@@ -161,8 +169,8 @@ describe('多角色权限并集', () => {
     await createTestUser('user-admin-plus', 'adminplus@test.com', ['admin', 'viewer'])
 
     const perms = await getUserPermissions('user-admin-plus')
-    // admin 有 43 项 + viewer 的 quotes:view 已在 admin 中，所以仍为 43
-    expect(perms.size).toBe(43)
+    // admin 有 50 项 + viewer 的 quotes:view 已在 admin 中，所以仍为 50
+    expect(perms.size).toBe(50)
 
     const roles = await getUserRoles('user-admin-plus')
     expect(roles).toHaveLength(2)
@@ -178,20 +186,20 @@ describe('内存缓存', () => {
   it('相同 userId 第二次查询命中缓存（不查数据库）', async () => {
     // 第一次查询：命中数据库
     const perms1 = await getUserPermissions('user-admin-default')
-    expect(perms1.size).toBe(43)
+    expect(perms1.size).toBe(50)
 
     // 在数据库中删除管理员的角色关联（模拟数据变更）
     await pool.execute('DELETE FROM user_roles WHERE user_id = ?', ['user-admin-default'])
 
     // 第二次查询：应返回缓存结果（仍有 43 项权限，因为缓存未失效）
     const perms2 = await getUserPermissions('user-admin-default')
-    expect(perms2.size).toBe(43)
+    expect(perms2.size).toBe(50)
   })
 
   it('invalidatePermissionCache(userId) 清除指定用户缓存后重新查询', async () => {
     // 第一次查询：填充缓存
     const perms1 = await getUserPermissions('user-admin-default')
-    expect(perms1.size).toBe(43)
+    expect(perms1.size).toBe(50)
 
     // 删除角色关联
     await pool.execute('DELETE FROM user_roles WHERE user_id = ?', ['user-admin-default'])
@@ -252,7 +260,7 @@ describe('内存缓存', () => {
   it('缓存 TTL（30 秒）过期后重新查数据库', async () => {
     // 第一次查询：填充权限与角色缓存
     const perms1 = await getUserPermissions('user-admin-default')
-    expect(perms1.size).toBe(43)
+    expect(perms1.size).toBe(50)
     const roles1 = await getUserRoles('user-admin-default')
     expect(roles1).toContain('admin')
 

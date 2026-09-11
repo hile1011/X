@@ -1,6 +1,6 @@
 import { pool, initDatabase, withTransaction, closePool, execMultiStatement } from './dbClient.js'
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from './migrations/index.js'
-import type { Customer, Product, Order, OrderItem, Task, Quote, ProcessCost } from './types/index.js'
+import type { Customer, Product, Order, OrderItem, Task, Quote, ProductCostItem, ProductCostProcess, ProductCostCustomField, ProductCostFieldType, ProductMedia } from './types/index.js'
 
 /**
  * 异步数据库包装器
@@ -195,6 +195,52 @@ function parseReconciliationCostRow(row: Record<string, any>): ReconciliationCos
   }
 }
 
+/** 解析 product_cost_custom_fields 行：options JSON 反序列化、visible 转布尔 */
+function parseCostFieldRow(row: Record<string, any>): ProductCostCustomField {
+  let options: string[] = []
+  try {
+    const parsed = typeof row.options === 'string' ? JSON.parse(row.options || '[]') : (row.options || [])
+    options = Array.isArray(parsed) ? parsed.map(String) : []
+  } catch {
+    options = []
+  }
+  return {
+    id: row.id,
+    costItemId: row.cost_item_id,
+    name: row.name || '',
+    fieldType: (row.field_type || 'text') as ProductCostFieldType,
+    options,
+    visible: Number(row.visible ?? 1) === 1,
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  }
+}
+
+/** 解析 product_cost_processes 行：custom_values JSON 反序列化 */
+function parseCostProcessRow(row: Record<string, any>): ProductCostProcess {
+  let customValues: Record<string, string> = {}
+  try {
+    const parsed = typeof row.custom_values === 'string' ? JSON.parse(row.custom_values || '{}') : (row.custom_values || {})
+    customValues = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {}
+  } catch {
+    customValues = {}
+  }
+  return {
+    id: row.id,
+    costItemId: row.cost_item_id,
+    name: row.name || '',
+    cost: Number(row.cost ?? 0),
+    formula: row.formula || '',
+    features: row.features || '',
+    remark: row.remark || '',
+    customValues,
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: String(row.created_at ?? ''),
+    updatedAt: String(row.updated_at ?? ''),
+  }
+}
+
 /** 解析 quote_production_tasks 行：DATE 转 YYYY-MM-DD、materials JSON 反序列化 */
 function parseProductionTaskRow(row: Record<string, any>): ProductionTaskRecord {
   const toDateStr = (v: any): string | null => {
@@ -363,6 +409,88 @@ export const dbApi = {
     delete: async (id: string) => {
       const info = await dbConn.prepare('DELETE FROM products WHERE id = ?').run(id)
       return info.changes > 0
+    },
+  },
+
+  // 产品图册媒体（v32：图片/视频，原图存储不压缩；文件系统清理由路由层负责）
+  productMedia: {
+    /** 产品全部媒体（按 sort_order 升序，同序按创建时间，即上传顺序/自定义排序） */
+    getByProduct: async (productId: string) => {
+      const rows = await dbConn.prepare(
+        'SELECT * FROM product_media WHERE product_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all(productId)
+      return rows as ProductMedia[]
+    },
+    /** 每个产品的第一张图片（media_type='image' 按图册排序取最前），供列表页缩略图展示 */
+    getFirstImages: async () => {
+      const rows = await dbConn.prepare(`
+        SELECT product_id, id, media_type, file_name
+        FROM (
+          SELECT pm.product_id, pm.id, pm.media_type, pm.file_name,
+                 ROW_NUMBER() OVER (PARTITION BY pm.product_id ORDER BY pm.sort_order ASC, pm.created_at ASC, pm.id ASC) AS rn
+          FROM product_media pm
+          WHERE pm.media_type = 'image'
+        ) t
+        WHERE rn = 1
+      `).all()
+      return rows as { product_id: string; id: string; media_type: string; file_name: string }[]
+    },
+    getById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM product_media WHERE id = ?').get(id)
+      return (row as ProductMedia) || null
+    },
+    /** 当前最大排序号 + 1（新上传的媒体追加到末尾，保持上传顺序） */
+    nextSortOrder: async (productId: string) => {
+      const row = await dbConn.prepare(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM product_media WHERE product_id = ?'
+      ).get(productId)
+      return Number((row as any)?.next ?? 0)
+    },
+    /** 新增媒体记录（文件已由路由层落盘，此处只记录元数据） */
+    create: async (data: {
+      productId: string
+      mediaType: 'image' | 'video'
+      fileName: string
+      filePath: string
+      fileSize: number
+      mimeType: string
+      sortOrder?: number
+    }) => {
+      const id = `pmedia-${Date.now()}-${Math.floor(Math.random() * 10000)}`
+      await dbConn.prepare(
+        `INSERT INTO product_media (id, product_id, media_type, file_name, file_path, file_size, mime_type, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(id, data.productId, data.mediaType, data.fileName, data.filePath, data.fileSize, data.mimeType, data.sortOrder ?? 0)
+      const row = await dbConn.prepare('SELECT * FROM product_media WHERE id = ?').get(id)
+      return row as ProductMedia
+    },
+    /** 删除单条媒体记录，返回被删记录（供路由层清理磁盘文件） */
+    deleteById: async (id: string) => {
+      const row = await dbConn.prepare('SELECT * FROM product_media WHERE id = ?').get(id)
+      if (!row) return null
+      await dbConn.prepare('DELETE FROM product_media WHERE id = ?').run(id)
+      return row as ProductMedia
+    },
+    /** 删除产品下全部媒体记录，返回被删记录列表（供路由层清理磁盘文件） */
+    deleteByProduct: async (productId: string) => {
+      const rows = await dbConn.prepare('SELECT * FROM product_media WHERE product_id = ?').all(productId)
+      await dbConn.prepare('DELETE FROM product_media WHERE product_id = ?').run(productId)
+      return rows as ProductMedia[]
+    },
+    /** 自定义重排：mediaIds 为该产品全部媒体 id 的新顺序，整体重写序号（0,1,2...） */
+    reorder: async (productId: string, mediaIds: string[]) => {
+      const existing = await dbConn.prepare(
+        'SELECT id FROM product_media WHERE product_id = ?'
+      ).all(productId) as { id: string }[]
+      const existingIds = new Set(existing.map((r) => r.id))
+      // 新顺序必须恰好覆盖该产品现有全部媒体（不增不减）
+      if (mediaIds.length !== existingIds.size || !mediaIds.every((mid) => existingIds.has(mid))) {
+        throw new Error('媒体排序列表必须与现有媒体完全一致')
+      }
+      for (let i = 0; i < mediaIds.length; i++) {
+        await dbConn.prepare('UPDATE product_media SET sort_order = ? WHERE id = ?').run(i, mediaIds[i])
+      }
+      return true
     },
   },
 
@@ -752,33 +880,275 @@ export const dbApi = {
     },
   },
 
-  processCosts: {
-    getAll: async () => {
-      const rows = await dbConn.prepare('SELECT * FROM process_costs ORDER BY updated_at DESC').all()
-      return rows.map(toCamelRow) as ProcessCost[]
+  /** 产品成本项配置（v31）：成本项 → 可选工艺（多对一） + 自定义字段定义 */
+  productCostItems: {
+    /** 获取全部成本项（组装树：含其下工艺列表与字段定义） */
+    getAll: async (): Promise<ProductCostItem[]> => {
+      const itemRows = await dbConn.prepare(
+        'SELECT * FROM product_cost_items ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all()
+      const processRows = await dbConn.prepare(
+        'SELECT * FROM product_cost_processes ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all()
+      const fieldRows = await dbConn.prepare(
+        'SELECT * FROM product_cost_custom_fields ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all()
+      const processesByItem = new Map<string, ProductCostProcess[]>()
+      for (const row of processRows) {
+        const p = parseCostProcessRow(row)
+        const list = processesByItem.get(p.costItemId) || []
+        list.push(p)
+        processesByItem.set(p.costItemId, list)
+      }
+      const fieldsByItem = new Map<string, ProductCostCustomField[]>()
+      for (const row of fieldRows) {
+        const f = parseCostFieldRow(row)
+        const list = fieldsByItem.get(f.costItemId) || []
+        list.push(f)
+        fieldsByItem.set(f.costItemId, list)
+      }
+      return itemRows.map((row) => ({
+        id: row.id,
+        name: row.name || '',
+        sortOrder: Number(row.sort_order ?? 0),
+        processes: processesByItem.get(row.id) || [],
+        fields: fieldsByItem.get(row.id) || [],
+        createdAt: String(row.created_at ?? ''),
+        updatedAt: String(row.updated_at ?? ''),
+      }))
     },
-    getById: async (id: string) => {
-      const row = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
-      return row ? (toCamelRow(row) as ProcessCost) : null
+
+    /** 按 id 获取单个成本项（含工艺与字段） */
+    getById: async (id: string): Promise<ProductCostItem | null> => {
+      const row = await dbConn.prepare('SELECT * FROM product_cost_items WHERE id = ?').get(id)
+      if (!row) return null
+      const processRows = await dbConn.prepare(
+        'SELECT * FROM product_cost_processes WHERE cost_item_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all(id)
+      const fieldRows = await dbConn.prepare(
+        'SELECT * FROM product_cost_custom_fields WHERE cost_item_id = ? ORDER BY sort_order ASC, created_at ASC, id ASC'
+      ).all(id)
+      return {
+        id: row.id,
+        name: row.name || '',
+        sortOrder: Number(row.sort_order ?? 0),
+        processes: processRows.map(parseCostProcessRow),
+        fields: fieldRows.map(parseCostFieldRow),
+        createdAt: String(row.created_at ?? ''),
+        updatedAt: String(row.updated_at ?? ''),
+      }
     },
-    create: async (data: Partial<ProcessCost>) => {
-      const id = `pc-${Date.now()}`
-      await dbConn.prepare('INSERT INTO process_costs (id, name, cost, formula) VALUES (?, ?, ?, ?)')
-        .run(id, data.name || '', data.cost || 0, data.formula || '')
-      const row = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
-      return row as ProcessCost
+
+    /** 新增成本项 */
+    createItem: async (name: string): Promise<ProductCostItem> => {
+      const id = `pci-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      // 排在已有成本项之后（小在前）
+      const maxRow = await dbConn.prepare(
+        'SELECT MAX(sort_order) AS maxSort FROM product_cost_items'
+      ).get() as { maxSort: number | null } | null
+      const sortOrder = Number(maxRow?.maxSort ?? 0) + 1
+      await dbConn.prepare('INSERT INTO product_cost_items (id, name, sort_order) VALUES (?, ?, ?)')
+        .run(id, name, sortOrder)
+      return (await db.productCostItems.getById(id))!
     },
-    update: async (id: string, data: Partial<ProcessCost>) => {
-      const existing = await dbConn.prepare('SELECT * FROM process_costs WHERE id = ?').get(id)
+
+    /** 更新成本项名称 */
+    updateItem: async (id: string, name: string): Promise<ProductCostItem | null> => {
+      const info = await dbConn.prepare('UPDATE product_cost_items SET name = ? WHERE id = ?').run(name, id)
+      if (info.changes === 0) return null
+      return db.productCostItems.getById(id)
+    },
+
+    /** 删除成本项（事务级联删除其下全部工艺与字段定义） */
+    deleteItem: async (id: string): Promise<boolean> => {
+      const run = dbConn.transaction(async () => {
+        const item = await dbConn.prepare('SELECT id FROM product_cost_items WHERE id = ?').get(id)
+        if (!item) return false
+        await dbConn.prepare('DELETE FROM product_cost_processes WHERE cost_item_id = ?').run(id)
+        await dbConn.prepare('DELETE FROM product_cost_custom_fields WHERE cost_item_id = ?').run(id)
+        await dbConn.prepare('DELETE FROM product_cost_items WHERE id = ?').run(id)
+        return true
+      })
+      return run()
+    },
+
+    /** 新增可选工艺（挂在指定成本项下） */
+    createProcess: async (costItemId: string, data: {
+      name: string
+      cost?: number
+      formula?: string
+      features?: string
+      remark?: string
+      customValues?: Record<string, string>
+    }): Promise<ProductCostProcess | null> => {
+      const item = await dbConn.prepare('SELECT id FROM product_cost_items WHERE id = ?').get(costItemId)
+      if (!item) return null
+      const id = `pcp-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const maxRow = await dbConn.prepare(
+        'SELECT MAX(sort_order) AS maxSort FROM product_cost_processes WHERE cost_item_id = ?'
+      ).get(costItemId) as { maxSort: number | null } | null
+      const sortOrder = Number(maxRow?.maxSort ?? 0) + 1
+      await dbConn.prepare(
+        `INSERT INTO product_cost_processes
+           (id, cost_item_id, name, cost, formula, features, remark, custom_values, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id, costItemId, data.name, Number(data.cost ?? 0) || 0,
+        data.formula || '', data.features || '', data.remark || '',
+        JSON.stringify(data.customValues || {}), sortOrder,
+      )
+      const row = await dbConn.prepare('SELECT * FROM product_cost_processes WHERE id = ?').get(id)
+      return row ? parseCostProcessRow(row) : null
+    },
+
+    /**
+     * 手动排序可选工艺：processIds 为该成本项下全部工艺 id 的新顺序，
+     * 事务内整体重写 sort_order 为 1..N（原子，避免相邻交换产生重复序号）。
+     * 传入列表与现有工艺集合不一致（漏传/多传/重复/混入其他成本项工艺）时抛错。
+     */
+    reorderProcesses: async (costItemId: string, processIds: string[]): Promise<ProductCostItem | null> => {
+      const item = await dbConn.prepare('SELECT id FROM product_cost_items WHERE id = ?').get(costItemId)
+      if (!item) return null
+      const existingRows = await dbConn.prepare(
+        'SELECT id FROM product_cost_processes WHERE cost_item_id = ?'
+      ).all(costItemId)
+      const existingIds = new Set(existingRows.map((r) => String(r.id)))
+      const uniqueIds = new Set(processIds)
+      if (uniqueIds.size !== processIds.length) {
+        throw new Error('工艺排序列表存在重复 id')
+      }
+      if (uniqueIds.size !== existingIds.size || processIds.some((pid) => !existingIds.has(pid))) {
+        throw new Error('工艺排序列表与当前配置不一致，请刷新后重试')
+      }
+      const run = dbConn.transaction(async () => {
+        for (let i = 0; i < processIds.length; i++) {
+          await dbConn.prepare(
+            'UPDATE product_cost_processes SET sort_order = ? WHERE id = ? AND cost_item_id = ?'
+          ).run(i + 1, processIds[i], costItemId)
+        }
+      })
+      await run()
+      return db.productCostItems.getById(costItemId)
+    },
+
+    /** 更新可选工艺（customValues 仅保留该成本项下仍存在字段的键） */
+    updateProcess: async (id: string, data: {
+      name?: string
+      cost?: number
+      formula?: string
+      features?: string
+      remark?: string
+      customValues?: Record<string, string>
+    }): Promise<ProductCostProcess | null> => {
+      const existing = await dbConn.prepare('SELECT * FROM product_cost_processes WHERE id = ?').get(id)
       if (!existing) return null
-      const row = { ...existing, ...data, updated_at: timeNow() }
-      await dbConn.prepare('UPDATE process_costs SET name=?, cost=?, formula=?, updated_at=? WHERE id=?')
-        .run(row.name, row.cost, row.formula, row.updated_at, id)
-      return row as ProcessCost
+      const merged: Record<string, any> = {
+        name: data.name !== undefined ? data.name : existing.name,
+        cost: data.cost !== undefined ? (Number(data.cost) || 0) : Number(existing.cost ?? 0),
+        formula: data.formula !== undefined ? data.formula : existing.formula,
+        features: data.features !== undefined ? data.features : existing.features,
+        remark: data.remark !== undefined ? data.remark : existing.remark,
+      }
+      let customValuesJson: string
+      if (data.customValues !== undefined) {
+        // 只保留成本项下仍存在的字段键，字段删除后的孤儿值不落库
+        const fieldRows = await dbConn.prepare('SELECT id FROM product_cost_custom_fields WHERE cost_item_id = ?').all(existing.cost_item_id)
+        const fieldIds = new Set(fieldRows.map((r) => r.id))
+        const filtered: Record<string, string> = {}
+        for (const [k, v] of Object.entries(data.customValues)) {
+          if (fieldIds.has(k)) filtered[k] = String(v)
+        }
+        customValuesJson = JSON.stringify(filtered)
+      } else {
+        customValuesJson = existing.custom_values || '{}'
+      }
+      await dbConn.prepare(
+        `UPDATE product_cost_processes SET name=?, cost=?, formula=?, features=?, remark=?, custom_values=? WHERE id=?`
+      ).run(merged.name, merged.cost, merged.formula, merged.features, merged.remark, customValuesJson, id)
+      const row = await dbConn.prepare('SELECT * FROM product_cost_processes WHERE id = ?').get(id)
+      return row ? parseCostProcessRow(row) : null
     },
-    delete: async (id: string) => {
-      const info = await dbConn.prepare('DELETE FROM process_costs WHERE id = ?').run(id)
+
+    /** 删除可选工艺 */
+    deleteProcess: async (id: string): Promise<boolean> => {
+      const info = await dbConn.prepare('DELETE FROM product_cost_processes WHERE id = ?').run(id)
       return info.changes > 0
+    },
+
+    /** 新增自定义字段定义 */
+    createField: async (costItemId: string, data: {
+      name: string
+      fieldType?: ProductCostFieldType
+      options?: string[]
+      visible?: boolean
+    }): Promise<ProductCostCustomField | null> => {
+      const item = await dbConn.prepare('SELECT id FROM product_cost_items WHERE id = ?').get(costItemId)
+      if (!item) return null
+      const id = `pcf-${Date.now()}-${Math.floor(Math.random() * 1000)}`
+      const maxRow = await dbConn.prepare(
+        'SELECT MAX(sort_order) AS maxSort FROM product_cost_custom_fields WHERE cost_item_id = ?'
+      ).get(costItemId) as { maxSort: number | null } | null
+      const sortOrder = Number(maxRow?.maxSort ?? 0) + 1
+      await dbConn.prepare(
+        `INSERT INTO product_cost_custom_fields (id, cost_item_id, name, field_type, options, visible, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        id, costItemId, data.name, data.fieldType || 'text',
+        JSON.stringify(data.options || []), data.visible === false ? 0 : 1, sortOrder,
+      )
+      const row = await dbConn.prepare('SELECT * FROM product_cost_custom_fields WHERE id = ?').get(id)
+      return row ? parseCostFieldRow(row) : null
+    },
+
+    /** 更新自定义字段定义（名称/类型/选项/显隐/排序） */
+    updateField: async (id: string, data: {
+      name?: string
+      fieldType?: ProductCostFieldType
+      options?: string[]
+      visible?: boolean
+      sortOrder?: number
+    }): Promise<ProductCostCustomField | null> => {
+      const existing = await dbConn.prepare('SELECT * FROM product_cost_custom_fields WHERE id = ?').get(id)
+      if (!existing) return null
+      const name = data.name !== undefined ? data.name : existing.name
+      const fieldType = data.fieldType !== undefined ? data.fieldType : existing.field_type
+      const options = data.options !== undefined ? JSON.stringify(data.options) : (existing.options || '[]')
+      const visible = data.visible !== undefined ? (data.visible ? 1 : 0) : Number(existing.visible ?? 1)
+      const sortOrder = data.sortOrder !== undefined ? Number(data.sortOrder) : Number(existing.sort_order ?? 0)
+      await dbConn.prepare(
+        `UPDATE product_cost_custom_fields SET name=?, field_type=?, options=?, visible=?, sort_order=? WHERE id=?`
+      ).run(name, fieldType, options, visible, sortOrder, id)
+      const row = await dbConn.prepare('SELECT * FROM product_cost_custom_fields WHERE id = ?').get(id)
+      return row ? parseCostFieldRow(row) : null
+    },
+
+    /** 删除自定义字段（事务内同步清理全部工艺 customValues 中的对应键） */
+    deleteField: async (id: string): Promise<boolean> => {
+      const run = dbConn.transaction(async () => {
+        const existing = await dbConn.prepare('SELECT * FROM product_cost_custom_fields WHERE id = ?').get(id)
+        if (!existing) return false
+        // 清理该成本项下所有工艺的对应字段值，避免孤儿数据
+        const processRows = await dbConn.prepare(
+          'SELECT id, custom_values FROM product_cost_processes WHERE cost_item_id = ?'
+        ).all(existing.cost_item_id)
+        for (const p of processRows) {
+          let values: Record<string, string> = {}
+          try {
+            const parsed = typeof p.custom_values === 'string' ? JSON.parse(p.custom_values || '{}') : {}
+            values = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {}
+          } catch {
+            values = {}
+          }
+          if (id in values) {
+            delete values[id]
+            await dbConn.prepare('UPDATE product_cost_processes SET custom_values=? WHERE id=?')
+              .run(JSON.stringify(values), p.id)
+          }
+        }
+        await dbConn.prepare('DELETE FROM product_cost_custom_fields WHERE id = ?').run(id)
+        return true
+      })
+      return run()
     },
   },
 

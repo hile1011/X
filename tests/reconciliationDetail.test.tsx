@@ -358,7 +358,7 @@ describe('对账详情页 - 成本对比', () => {
 
 describe('对账详情页 - 权限控制', () => {
   it('无编辑权限（状态5）：无保存/添加按钮，明细只读', async () => {
-    permissionMock.hasPermission = (p: string) => p !== 'quotes:edit'
+    permissionMock.hasPermission = (p: string) => p !== 'reconciliation:edit'
     renderPage()
     await waitFor(() => expect(screen.getByText('工艺成本明细')).toBeTruthy())
 
@@ -371,14 +371,14 @@ describe('对账详情页 - 权限控制', () => {
   })
 
   it('无流转权限（状态5）：无确认对账按钮', async () => {
-    permissionMock.hasPermission = (p: string) => p !== 'quotes:status-transition'
+    permissionMock.hasPermission = (p: string) => p !== 'reconciliation:execute'
     renderPage()
     await waitFor(() => expect(screen.getByText('保存成本明细')).toBeTruthy())
     expect(screen.queryByText('确认对账')).toBeNull()
   })
 
   it('无流转权限（状态8）：无退回按钮', async () => {
-    permissionMock.hasPermission = (p: string) => p !== 'quotes:status-transition'
+    permissionMock.hasPermission = (p: string) => p !== 'reconciliation:execute'
     apiMock.quotes.getById.mockResolvedValue(makeQuote({ status: 8 }))
     renderPage()
     await waitFor(() => expect(screen.getByText('工艺成本明细')).toBeTruthy())

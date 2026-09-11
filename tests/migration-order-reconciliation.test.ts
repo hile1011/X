@@ -271,8 +271,8 @@ describe('迁移 v28：订单对账管理', () => {
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 28', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(28)
+    it('CURRENT_SCHEMA_VERSION ≥ 28（v28 迁移已包含）', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(28)
     })
 
     it('schema_migrations 包含 v28 记录且名称正确', async () => {
@@ -280,8 +280,8 @@ describe('迁移 v28：订单对账管理', () => {
       expect((rows as any[])[0].name).toBe('order-reconciliation')
     })
 
-    it('当前 schema 版本为 28', async () => {
-      expect(await db.getSchemaVersion()).toBe(28)
+    it('当前 schema 版本为最新', async () => {
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 })

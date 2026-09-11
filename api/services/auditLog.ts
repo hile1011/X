@@ -9,7 +9,7 @@ export type OperationResult = 'success' | 'blocked'
 
 export interface AuditLogEntry {
   operationType: string         // 'delete'
-  entityType: string             // 'customer' | 'product' | 'quote' | 'order' | 'task' | 'process_cost'
+  entityType: string             // 'customer' | 'product' | 'quote' | 'order' | 'task' | 'product_cost_item' | 'product_cost_process' | 'product_cost_field'
   entityId: string
   entityName: string             // 显示名称，便于阅读
   operator: string               // 操作人

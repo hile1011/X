@@ -6,6 +6,27 @@ import { isDefaultStyleProduct } from '../services/productStyles'
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import type { Product } from '../types'
 
+/** 列表卡片缩略图：显示图册第一张图片，无图或加载失败时降级为占位图标 */
+function ProductCardImage({ productId, name, firstImage }: {
+  productId: string
+  name: string
+  firstImage?: { id: string; media_type: string; file_name: string } | null
+}) {
+  const [failed, setFailed] = useState(false)
+  if (firstImage && !failed) {
+    return (
+      <img
+        src={api.products.getMediaFileUrl(productId, firstImage.id)}
+        alt={firstImage.file_name || name}
+        className="w-full h-full object-cover"
+        onError={() => setFailed(true)}
+        data-testid="product-card-image"
+      />
+    )
+  }
+  return <Package className="text-gray-300" size={48} />
+}
+
 export default function Products() {
   const [products, setProducts] = useState<Product[]>([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -96,13 +117,17 @@ export default function Products() {
             </div>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 p-3 sm:p-4">
-              {filteredProducts.map((product: { id: string; name: string; sku: string; code: string; price: number; category: string; stock: number }) => (
+              {filteredProducts.map((product) => (
                 <div
                   key={product.id}
                   className="bg-gray-50 rounded-xl p-4 hover:bg-gray-100 transition-colors"
                 >
-                  <div className="w-full h-32 bg-white rounded-lg flex items-center justify-center mb-4 border border-gray-200">
-                    <Package className="text-gray-300" size={48} />
+                  <div className="w-full h-32 bg-white rounded-lg flex items-center justify-center mb-4 border border-gray-200 overflow-hidden">
+                    <ProductCardImage
+                      productId={product.id}
+                      name={product.name}
+                      firstImage={product.firstImage}
+                    />
                   </div>
 
                   <h3 className="font-semibold text-gray-800 truncate mb-1">{product.name}</h3>

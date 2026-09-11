@@ -1,4 +1,4 @@
-import type { Customer, Product, Order, OrderItem, Task, Quote, ProcessCost } from './types/index.js'
+import type { Customer, Product, Order, OrderItem, Task, Quote, ProductCostItem } from './types/index.js'
 
 export const mockCustomers: Customer[] = [
   {
@@ -339,37 +339,79 @@ export const mockQuotes: Quote[] = [
   },
 ]
 
-export const mockProcessCosts: ProcessCost[] = [
+export const mockProductCostItems: ProductCostItem[] = [
   {
-    id: 'pc-001',
-    name: '单面数码UV印刷',
-    cost: 0.8,
-    formula: '印刷面积 × 单价',
-    created_at: '2024-07-01T09:00:00Z',
-    updated_at: '2024-07-01T09:00:00Z',
-  },
-  {
-    id: 'pc-002',
-    name: '双面数码UV印刷',
-    cost: 1.5,
-    formula: '印刷面积 × 单价 × 2',
-    created_at: '2024-07-01T09:00:00Z',
-    updated_at: '2024-07-01T09:00:00Z',
-  },
-  {
-    id: 'pc-003',
-    name: '热转印印刷',
-    cost: 0.5,
-    formula: '印刷面积 × 单价',
-    created_at: '2024-07-01T09:00:00Z',
-    updated_at: '2024-07-01T09:00:00Z',
-  },
-  {
-    id: 'pc-004',
-    name: '丝网印刷',
-    cost: 0.3,
-    formula: '印刷面积 × 单价 × 色数',
-    created_at: '2024-07-01T09:00:00Z',
-    updated_at: '2024-07-01T09:00:00Z',
+    id: 'pci-001',
+    name: '印刷成本',
+    sortOrder: 1,
+    processes: [
+      {
+        id: 'pcp-001',
+        costItemId: 'pci-001',
+        name: '单面数码UV印刷',
+        cost: 0.8,
+        formula: '印刷面积 × 单价',
+        features: '适用于小批量、多色渐变图案',
+        remark: '',
+        customValues: {},
+        sortOrder: 1,
+        createdAt: '2024-07-01T09:00:00Z',
+        updatedAt: '2024-07-01T09:00:00Z',
+      },
+      {
+        id: 'pcp-002',
+        costItemId: 'pci-001',
+        name: '双面数码UV印刷',
+        cost: 1.5,
+        formula: '印刷面积 × 单价 × 2',
+        features: '双面同版印刷，正反面一致',
+        remark: '',
+        customValues: {},
+        sortOrder: 2,
+        createdAt: '2024-07-01T09:00:00Z',
+        updatedAt: '2024-07-01T09:00:00Z',
+      },
+      {
+        id: 'pcp-003',
+        costItemId: 'pci-001',
+        name: '热转印印刷',
+        cost: 0.5,
+        formula: '印刷面积 × 单价',
+        features: '色彩还原度高，适合照片级图案',
+        remark: '',
+        customValues: {},
+        sortOrder: 3,
+        createdAt: '2024-07-01T09:00:00Z',
+        updatedAt: '2024-07-01T09:00:00Z',
+      },
+      {
+        id: 'pcp-004',
+        costItemId: 'pci-001',
+        name: '丝网印刷',
+        cost: 0.3,
+        formula: '印刷面积 × 单价 × 色数',
+        features: '成本低，适合大批量单色印刷',
+        remark: '',
+        customValues: {},
+        sortOrder: 4,
+        createdAt: '2024-07-01T09:00:00Z',
+        updatedAt: '2024-07-01T09:00:00Z',
+      },
+    ],
+    fields: [
+      {
+        id: 'pcf-001',
+        costItemId: 'pci-001',
+        name: '适用数量',
+        fieldType: 'select',
+        options: ['小批量', '中批量', '大批量'],
+        visible: true,
+        sortOrder: 1,
+        createdAt: '2024-07-01T09:00:00Z',
+        updatedAt: '2024-07-01T09:00:00Z',
+      },
+    ],
+    createdAt: '2024-07-01T09:00:00Z',
+    updatedAt: '2024-07-01T09:00:00Z',
   },
 ]

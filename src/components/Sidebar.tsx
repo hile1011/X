@@ -21,22 +21,23 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
   { icon: LayoutDashboard, path: '/', label: '工作台', permission: 'dashboard:view' },
   { icon: FileText, path: '/quotes', label: '订单管理', permission: 'quotes:view' },
-  // 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移）
-  { icon: GanttChart, path: '/production-tracking', label: '做货跟踪', permission: 'quotes:view' },
-  // 订单对账管理：已发货已收款订单的成本核对与对账确认（v28）
-  { icon: Scale, path: '/reconciliation-alerts', label: '订单对账管理', permission: 'quotes:view' },
+  // 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移；v30 独立模块权限）
+  { icon: GanttChart, path: '/production-tracking', label: '做货跟踪', permission: 'production-tracking:view' },
+  // 订单对账管理：已发货已收款订单的成本核对与对账确认（v28；v30 独立模块权限）
+  { icon: Scale, path: '/reconciliation-alerts', label: '订单对账管理', permission: 'reconciliation:view' },
   {
     icon: BarChart3,
     label: '报表统计',
     children: [
-      { icon: TrendingUp, path: '/annual-report', label: '年度业务报表', permission: 'reports:view' },
+      // 年度业务报表（v30 独立模块权限）
+      { icon: TrendingUp, path: '/annual-report', label: '年度业务报表', permission: 'annual-report:view' },
     ],
   },
   {
     icon: Settings,
     label: '基础设置',
     children: [
-      { icon: ClipboardList, path: '/process-costs', label: '工艺成本管理', permission: 'process-costs:view' },
+      { icon: ClipboardList, path: '/product-cost-items', label: '产品成本项配置', permission: 'process-costs:view' },
       { icon: Table2, path: '/sheet-templates', label: '款式模板管理', permission: 'sheet-templates:view' },
       { icon: Users, path: '/customers', label: '客户管理', permission: 'customers:view' },
       { icon: Package, path: '/products', label: '产品管理', permission: 'products:view' },

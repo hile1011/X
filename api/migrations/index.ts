@@ -1,4 +1,4 @@
-export const CURRENT_SCHEMA_VERSION = 28
+export const CURRENT_SCHEMA_VERSION = 32
 
 export interface Migration {
   version: number
@@ -8,7 +8,7 @@ export interface Migration {
   down: (db: any) => Promise<void>
 }
 
-const migrations: Migration[] = [
+export const migrations: Migration[] = [
   {
     version: 1,
     name: 'initial-schema',
@@ -1507,6 +1507,262 @@ const migrations: Migration[] = [
       if (await hasColumn('quotes', 'reconciledTime')) {
         await db.exec(`ALTER TABLE quotes DROP COLUMN reconciledTime`)
       }
+    },
+  },
+  {
+    version: 29,
+    name: 'add-quotes-quick-edit-permission',
+    description: 'V0.21：订单管理新增 quotes:quick-edit 权限（双击订单行直接进入编辑模式的开关，需与 quotes:edit 同时持有才生效）。为兼容存量行为，自动分配给所有已拥有 quotes:edit 的角色',
+    up: async (db: any) => {
+      // 1. 新增权限（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(
+        'perm-quotes-quick-edit',
+        'quotes:quick-edit',
+        '订单-双击进入编辑',
+        'quotes',
+        'quick-edit',
+        'button',
+        '双击订单行直接进入编辑模式（需同时拥有「订单-编辑」权限）',
+        18,
+      )
+
+      // 2. 分配给 admin 角色（幂等）
+      await db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      ).run('role-admin', 'perm-quotes-quick-edit')
+
+      // 3. 存量兼容：自动分配给所有已拥有 quotes:edit 的角色，
+      //    保证升级后既有"双击直接编辑"行为不变；管理员可在角色管理中按需收回
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-quotes-quick-edit'
+        FROM role_permissions rp
+        JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:edit'
+      `)
+    },
+    down: async (db: any) => {
+      // 先删角色关联，再删权限（避免外键约束）
+      await db.prepare('DELETE FROM role_permissions WHERE permission_id = ?').run('perm-quotes-quick-edit')
+      await db.prepare('DELETE FROM permissions WHERE id = ?').run('perm-quotes-quick-edit')
+    },
+  },
+  {
+    version: 30,
+    name: 'add-business-module-permissions',
+    description: 'V0.22：做货跟踪/订单对账管理/年度业务报表三个功能模块从订单与报表权限中独立，新增 6 项模块权限（production-tracking:view/edit、reconciliation:view/edit/execute、annual-report:view）。为兼容存量行为，自动按原等效权限分配给已有角色',
+    up: async (db: any) => {
+      // 1. 新增权限（幂等）
+      const modulePerms: Array<[string, string, string, string, string, string, string, number]> = [
+        // [id, code, name, module, action, type, description, sort_order]
+        ['perm-production-tracking-view', 'production-tracking:view', '做货跟踪-查看', 'production-tracking', 'view', 'menu', '做货跟踪模块访问（甘特图与订单状态跟踪）', 23],
+        ['perm-production-tracking-edit', 'production-tracking:edit', '做货跟踪-编辑', 'production-tracking', 'edit', 'button', '编辑做货任务（新增/修改/删除/移动/一键排期/拖拽）', 24],
+        ['perm-reconciliation-view', 'reconciliation:view', '订单对账-查看', 'reconciliation', 'view', 'menu', '订单对账管理模块访问（待对账/已对账双列表与对账详情）', 25],
+        ['perm-reconciliation-edit', 'reconciliation:edit', '订单对账-编辑', 'reconciliation', 'edit', 'button', '录入/编辑对账工艺成本明细', 26],
+        ['perm-reconciliation-execute', 'reconciliation:execute', '订单对账-执行', 'reconciliation', 'execute', 'button', '确认对账（5→8）与退回对账（8→5）', 27],
+        ['perm-annual-report-view', 'annual-report:view', '年度业务报表-查看', 'annual-report', 'view', 'menu', '年度业务报表模块访问（业绩统计/月度汇总/订单转化）', 81],
+      ]
+      const permStmt = db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const p of modulePerms) {
+        await permStmt.run(...p)
+      }
+
+      // 2. 存量兼容：按原等效权限自动分配，保证升级后既有角色的模块访问与操作行为零变化
+      //    （原做货跟踪/对账入口挂靠 quotes:view/edit/status-transition，年报挂靠 reports:view）
+      const permIds = modulePerms.map((p) => p[0])
+      const rpStmt = db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      )
+      // 2.1 admin 角色直接分配全部 6 项
+      for (const pid of permIds) {
+        await rpStmt.run('role-admin', pid)
+      }
+      // 2.2 存量角色：拥有原权限 → 获得对应新模块权限
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-production-tracking-view'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:view'
+      `)
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-reconciliation-view'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:view'
+      `)
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-production-tracking-edit'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:edit'
+      `)
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-reconciliation-edit'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:edit'
+      `)
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-reconciliation-execute'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'quotes:status-transition'
+      `)
+      await db.exec(`
+        INSERT IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT rp.role_id, 'perm-annual-report-view'
+        FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+        WHERE p.code = 'reports:view'
+      `)
+    },
+    down: async (db: any) => {
+      // 逆序撤销：先删全部角色关联，再删 6 项权限（避免外键约束）
+      const permIds = [
+        'perm-production-tracking-view', 'perm-production-tracking-edit',
+        'perm-reconciliation-view', 'perm-reconciliation-edit', 'perm-reconciliation-execute',
+        'perm-annual-report-view',
+      ]
+      await db.prepare(
+        `DELETE FROM role_permissions WHERE permission_id IN (${permIds.map(() => '?').join(', ')})`
+      ).run(...permIds)
+      await db.prepare(
+        `DELETE FROM permissions WHERE id IN (${permIds.map(() => '?').join(', ')})`
+      ).run(...permIds)
+    },
+  },
+  {
+    version: 31,
+    name: 'product-cost-items-config',
+    description: 'V0.23：「工艺成本管理」正式更名为「产品成本项配置」，重构为三层结构：产品成本项（product_cost_items）→ 可选工艺（product_cost_processes，多对一，含名称/成本/公式/特点/备注）→ 自定义字段（product_cost_custom_fields，支持文本/数字/日期/下拉、显隐与排序）。存量 process_costs 数据按「一行→同名成本项+其下一条工艺」无损迁移（旧表保留不删）。权限码 process-costs:* 保持不变，显示名更新为「产品成本项-*」',
+    up: async (db: any) => {
+      // 1. 三张新表（显式 COLLATE utf8mb4_unicode_ci，与存量表 JOIN 排序规则一致，见 v26 教训）
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS product_cost_items (
+          id VARCHAR(64) NOT NULL,
+          name VARCHAR(255) NOT NULL COMMENT '成本项名称（如：印刷成本、布料成本）',
+          sort_order INT NOT NULL DEFAULT 0 COMMENT '排序（小在前）',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='产品成本项配置（父级）'
+      `)
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS product_cost_processes (
+          id VARCHAR(64) NOT NULL,
+          cost_item_id VARCHAR(64) NOT NULL COMMENT '所属成本项（多对一）',
+          name VARCHAR(255) NOT NULL COMMENT '工艺名称',
+          cost DOUBLE DEFAULT 0 COMMENT '工艺成本金额',
+          formula VARCHAR(500) DEFAULT '' COMMENT '成本计算公式',
+          features VARCHAR(1000) DEFAULT '' COMMENT '工艺特点描述',
+          remark VARCHAR(1000) DEFAULT '' COMMENT '工艺备注',
+          custom_values LONGTEXT COMMENT '自定义字段值 JSON（字段id→值）',
+          sort_order INT NOT NULL DEFAULT 0 COMMENT '排序（小在前）',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          INDEX idx_pcp_item (cost_item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='产品成本项-可选工艺（一对多）'
+      `)
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS product_cost_custom_fields (
+          id VARCHAR(64) NOT NULL,
+          cost_item_id VARCHAR(64) NOT NULL COMMENT '所属成本项（字段对该成本项下所有工艺生效）',
+          name VARCHAR(255) NOT NULL COMMENT '字段显示名',
+          field_type VARCHAR(20) NOT NULL DEFAULT 'text' COMMENT '字段类型：text/number/date/select',
+          options VARCHAR(2000) DEFAULT '' COMMENT 'select 下拉选项（JSON 数组字符串）',
+          visible TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否显示（0=隐藏：列表与编辑均不渲染，已录值保留）',
+          sort_order INT NOT NULL DEFAULT 0 COMMENT '排序（小在前）',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          INDEX idx_pccf_item (cost_item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='产品成本项-自定义字段定义'
+      `)
+
+      // 2. 存量数据迁移：旧工艺成本行 → 同名成本项 + 其下一条可选工艺（幂等，INSERT IGNORE）
+      //    旧 process_costs 表保留不删：应用层切换到新表，旧表数据回滚时零损失
+      const legacyRows = await db.prepare(
+        'SELECT id, name, cost, formula FROM process_costs ORDER BY created_at ASC, id ASC'
+      ).all() as Array<{ id: string; name: string; cost: number; formula: string }>
+      for (const row of legacyRows) {
+        const itemId = `pci-${row.id}`
+        await db.prepare(
+          'INSERT IGNORE INTO product_cost_items (id, name, sort_order) VALUES (?, ?, ?)'
+        ).run(itemId, row.name || row.id, 0)
+        await db.prepare(
+          `INSERT IGNORE INTO product_cost_processes
+             (id, cost_item_id, name, cost, formula, features, remark, custom_values, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(`pcp-${row.id}`, itemId, row.name || row.id, Number(row.cost ?? 0) || 0, row.formula || '', '', '', '{}', 0)
+      }
+
+      // 3. 权限更名：模块显示名由「工艺成本」更新为「产品成本项」
+      //    权限码 process-costs:* 保持不变（role_permissions 按 id 关联，零迁移成本）
+      await db.exec(`
+        UPDATE permissions SET name = '产品成本项-查看', description = '产品成本项配置模块访问（成本项、可选工艺与自定义字段管理）'
+        WHERE code = 'process-costs:view'
+      `)
+      await db.exec(`
+        UPDATE permissions SET name = '产品成本项-新增', description = '新增产品成本项、可选工艺与自定义字段'
+        WHERE code = 'process-costs:create'
+      `)
+      await db.exec(`
+        UPDATE permissions SET name = '产品成本项-编辑', description = '编辑产品成本项、可选工艺与自定义字段'
+        WHERE code = 'process-costs:edit'
+      `)
+      await db.exec(`
+        UPDATE permissions SET name = '产品成本项-删除', description = '删除产品成本项、可选工艺与自定义字段'
+        WHERE code = 'process-costs:delete'
+      `)
+    },
+    down: async (db: any) => {
+      // 1. 权限显示名回退（code 不变，仅回退 name/description）
+      const rollbackPerms: Array<[string, string, string]> = [
+        ['process-costs:view', '工艺成本-查看', ''],
+        ['process-costs:create', '工艺成本-新增', ''],
+        ['process-costs:edit', '工艺成本-编辑', ''],
+        ['process-costs:delete', '工艺成本-删除', ''],
+      ]
+      for (const [code, name, description] of rollbackPerms) {
+        await db.prepare(
+          'UPDATE permissions SET name = ?, description = ? WHERE code = ?'
+        ).run(name, description, code)
+      }
+
+      // 2. 删除三张新表（先子后父；旧 process_costs 表未动，数据零损失）
+      await db.exec('DROP TABLE IF EXISTS product_cost_processes')
+      await db.exec('DROP TABLE IF EXISTS product_cost_custom_fields')
+      await db.exec('DROP TABLE IF EXISTS product_cost_items')
+    },
+  },
+  {
+    version: 32,
+    name: 'product-media-gallery',
+    description: 'V0.24：产品图册——新增 product_media 表（图片/视频，原图存储不压缩，sort_order 支持上传顺序与自定义排序），媒体文件存于 api/uploads/products/，由 /api/products/:id/media 系列接口管理',
+    up: async (db: any) => {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS product_media (
+          id VARCHAR(64) NOT NULL,
+          product_id VARCHAR(64) NOT NULL COMMENT '所属产品',
+          media_type VARCHAR(10) NOT NULL DEFAULT 'image' COMMENT '媒体类型：image / video',
+          file_name VARCHAR(500) NOT NULL COMMENT '原始文件名（上传时的名称）',
+          file_path VARCHAR(1000) NOT NULL COMMENT '存储相对路径（相对 api/uploads/，如 products/xxx.jpg）',
+          file_size BIGINT NOT NULL DEFAULT 0 COMMENT '文件大小（字节，原图不压缩）',
+          mime_type VARCHAR(100) NOT NULL DEFAULT '' COMMENT 'MIME 类型',
+          sort_order INT NOT NULL DEFAULT 0 COMMENT '排序（小在前：上传顺序或自定义重排后的顺序）',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          INDEX idx_pm_product (product_id, sort_order)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='产品图册（图片/视频，保留原始质量与分辨率）'
+      `)
+    },
+    down: async (db: any) => {
+      await db.exec('DROP TABLE IF EXISTS product_media')
     },
   },
 ]

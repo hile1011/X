@@ -93,10 +93,10 @@ describe('迁移 v27：仪表盘更名为工作台', () => {
       expect(await db.getSchemaVersion()).toBe(26)
     })
 
-    it('重新迁移后名称恢复「工作台」，版本回到 28', async () => {
+    it('重新迁移后名称恢复「工作台」，版本回到最新', async () => {
       await db.runner.migrate()
       expect(await getDashboardPermName()).toBe('工作台')
-      expect(await db.getSchemaVersion()).toBe(28)
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 
@@ -108,8 +108,8 @@ describe('迁移 v27：仪表盘更名为工作台', () => {
   })
 
   describe('版本号', () => {
-    it('CURRENT_SCHEMA_VERSION 为 28', () => {
-      expect(CURRENT_SCHEMA_VERSION).toBe(28)
+    it('CURRENT_SCHEMA_VERSION ≥ 28（v27 迁移已包含）', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(28)
     })
 
     it('schema_migrations 包含 v27 记录', async () => {
@@ -117,8 +117,8 @@ describe('迁移 v27：仪表盘更名为工作台', () => {
       expect((rows as any[])[0].name).toBe('rename-dashboard-to-workbench')
     })
 
-    it('当前 schema 版本为 28', async () => {
-      expect(await db.getSchemaVersion()).toBe(28)
+    it('当前 schema 版本为最新', async () => {
+      expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
     })
   })
 })

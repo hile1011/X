@@ -181,6 +181,37 @@ export const api = {
     }).then(handleResponse),
     delete: (id: string) => authFetch(`${API_BASE}/products/${id}`, { method: 'DELETE' }).then(handleResponse),
     deleteCheck: (id: string) => authFetch(`${API_BASE}/products/${id}/delete-check`).then(handleResponse),
+    /** 产品图册（v32）：媒体列表（按上传顺序/自定义排序） */
+    getMedia: (productId: string) => authFetch(`${API_BASE}/products/${productId}/media`).then(handleResponse),
+    /** 产品图册：上传图片/视频（multipart，原文件存储不压缩；返回新创建的媒体记录数组） */
+    uploadMedia: async (productId: string, files: File[]): Promise<unknown> => {
+      const formData = new FormData()
+      files.forEach((f) => formData.append('files', f))
+      const res = await authFetch(`${API_BASE}/products/${productId}/media`, {
+        method: 'POST',
+        body: formData,
+      })
+      return handleResponse(res)
+    },
+    /** 产品图册：删除单个媒体（含磁盘原文件） */
+    deleteMedia: (productId: string, mediaId: string) =>
+      authFetch(`${API_BASE}/products/${productId}/media/${mediaId}`, { method: 'DELETE' }).then(handleResponse),
+    /** 产品图册：自定义重排（mediaIds 为该产品全部媒体 id 的新顺序） */
+    reorderMedia: (productId: string, mediaIds: string[]) =>
+      authFetch(`${API_BASE}/products/${productId}/media/reorder`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify({ mediaIds }),
+      }).then(handleResponse),
+    /**
+     * 产品图册：媒体文件访问 URL
+     * <img>/<video> 标签无法设置 Authorization 头，通过 query 参数传递 token（同订单缩略图方案）
+     */
+    getMediaFileUrl: (productId: string, mediaId: string) => {
+      const token = getAuthToken()
+      const url = `${API_BASE}/products/${productId}/media/${mediaId}/file`
+      return token ? `${url}?token=${encodeURIComponent(token)}` : url
+    },
   },
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
@@ -254,21 +285,62 @@ export const api = {
       headers: jsonHeaders,
     }).then(handleResponse),
   },
-  processCosts: {
-    getAll: () => authFetch(`${API_BASE}/process-costs`).then(handleResponse),
-    getById: (id: string) => authFetch(`${API_BASE}/process-costs/${id}`).then(handleResponse),
-    create: (data: unknown) => authFetch(`${API_BASE}/process-costs`, {
+  /** 产品成本项配置（v31：成本项 → 可选工艺（多对一）+ 自定义字段） */
+  productCostItems: {
+    /** 全部成本项（组装树：含其下工艺与字段定义） */
+    getAll: () => authFetch(`${API_BASE}/product-cost-items`).then(handleResponse),
+    getById: (id: string) => authFetch(`${API_BASE}/product-cost-items/${id}`).then(handleResponse),
+    createItem: (data: { name: string }) => authFetch(`${API_BASE}/product-cost-items`, {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify(data),
     }).then(handleResponse),
-    update: (id: string, data: unknown) => authFetch(`${API_BASE}/process-costs/${id}`, {
+    updateItem: (id: string, data: { name: string }) => authFetch(`${API_BASE}/product-cost-items/${id}`, {
       method: 'PUT',
       headers: jsonHeaders,
       body: JSON.stringify(data),
     }).then(handleResponse),
-    delete: (id: string) => authFetch(`${API_BASE}/process-costs/${id}`, { method: 'DELETE' }).then(handleResponse),
-    deleteCheck: (id: string) => authFetch(`${API_BASE}/process-costs/${id}/delete-check`).then(handleResponse),
+    deleteItem: (id: string) => authFetch(`${API_BASE}/product-cost-items/${id}`, { method: 'DELETE' }).then(handleResponse),
+    deleteItemCheck: (id: string) => authFetch(`${API_BASE}/product-cost-items/${id}/delete-check`).then(handleResponse),
+    /** 新增可选工艺：{ name, cost?, formula?, features?, remark?, customValues? } */
+    createProcess: (itemId: string, data: unknown) => authFetch(`${API_BASE}/product-cost-items/${itemId}/processes`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    updateProcess: (itemId: string, processId: string, data: unknown) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/processes/${processId}`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify(data),
+      }).then(handleResponse),
+    deleteProcess: (itemId: string, processId: string) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/processes/${processId}`, { method: 'DELETE' }).then(handleResponse),
+    deleteProcessCheck: (itemId: string, processId: string) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/processes/${processId}/delete-check`).then(handleResponse),
+    /** 手动排序可选工艺：{ processIds }（该成本项下全部工艺 id 的新顺序，整体重写序号） */
+    reorderProcesses: (itemId: string, processIds: string[]) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/processes/reorder`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify({ processIds }),
+      }).then(handleResponse),
+    /** 新增自定义字段：{ name, fieldType?, options?, visible? } */
+    createField: (itemId: string, data: unknown) => authFetch(`${API_BASE}/product-cost-items/${itemId}/fields`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(data),
+    }).then(handleResponse),
+    updateField: (itemId: string, fieldId: string, data: unknown) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/fields/${fieldId}`, {
+        method: 'PUT',
+        headers: jsonHeaders,
+        body: JSON.stringify(data),
+      }).then(handleResponse),
+    deleteField: (itemId: string, fieldId: string) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/fields/${fieldId}`, { method: 'DELETE' }).then(handleResponse),
+    deleteFieldCheck: (itemId: string, fieldId: string) =>
+      authFetch(`${API_BASE}/product-cost-items/${itemId}/fields/${fieldId}/delete-check`).then(handleResponse),
   },
   sheetTemplates: {
     /** 全部模板（一对多）；可选 styleCode 过滤该款式的全部模板 */

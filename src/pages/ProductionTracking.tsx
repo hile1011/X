@@ -263,7 +263,10 @@ function toDateHeaderRecord(header: DateGroupHeaderRow, firstTask?: ProductionTa
 export default function ProductionTracking() {
   const navigate = useNavigate()
   const { hasPermission } = usePermission()
-  const canEdit = hasPermission('quotes:edit')
+  // 做货任务编辑：做货跟踪模块权限（v30 独立）
+  const canEdit = hasPermission('production-tracking:edit')
+  // 双击进入订单编辑：与订单列表一致的快捷编辑开关（quick-edit 且 edit 才生效）
+  const canQuickEdit = hasPermission('quotes:quick-edit') && hasPermission('quotes:edit')
 
   // ─── 数据 ─────────────────────────────────────────────
   const [overview, setOverview] = useState<ProductionTaskOverviewRow[]>([])
@@ -776,7 +779,7 @@ export default function ProductionTracking() {
     // 左侧任务列表双击：打开订单详情/编辑
     listTable?.on?.('dblclick_cell', (args: { originData?: { quoteId?: string } }) => {
       const quoteId = args?.originData?.quoteId
-      if (quoteId) navigate(hasPermission('quotes:edit') ? `/quotes/${quoteId}/edit` : `/quotes/${quoteId}`)
+      if (quoteId) navigate(canQuickEdit ? `/quotes/${quoteId}/edit` : `/quotes/${quoteId}`)
     })
 
     // 容器尺寸自适应
@@ -806,7 +809,7 @@ export default function ProductionTracking() {
       ganttInstanceRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, canEdit])
+  }, [loading, canEdit, canQuickEdit])
 
   // records 变化：同步甘特图（range 变化需 updateOption，否则 setRecords）
   useEffect(() => {
@@ -1438,8 +1441,8 @@ export default function ProductionTracking() {
                 return (
                   <div
                     key={quote.id}
-                    onDoubleClick={() => navigate(hasPermission('quotes:edit') ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
-                    title={hasPermission('quotes:edit') ? '双击进入编辑模式' : '双击查看订单详情'}
+                    onDoubleClick={() => navigate(canQuickEdit ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
+                    title={canQuickEdit ? '双击进入编辑模式' : '双击查看订单详情'}
                     className="flex items-center gap-4 py-2 border-b border-gray-100 last:border-0 hover:bg-gray-50 transition-colors cursor-pointer"
                   >
                     <div className="w-72 shrink-0 flex items-center gap-2">
