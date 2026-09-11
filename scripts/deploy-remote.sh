@@ -276,6 +276,7 @@ step_package_upload() {
         --exclude='docs' \
         --exclude='dist' \
         --exclude='api/dist' \
+        --exclude='api/uploads' \
         . 2>/dev/null
 
     local src_size=$(du -h "$src_tarball" | cut -f1)
