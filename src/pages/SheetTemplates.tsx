@@ -75,6 +75,8 @@ export default function SheetTemplates() {
   const [loading, setLoading] = useState(true)
   // 编辑状态：null = 列表视图；非 null = 编辑对应模板
   const [editingId, setEditingId] = useState<string | null>(null)
+  // 刚通过「新增模板」创建的记录 id：首次进入编辑器时表格初始化 20 行（编辑已有模板则按实际行数，不自动补齐）
+  const [justCreatedId, setJustCreatedId] = useState<string | null>(null)
   // 新增弹窗
   const [showCreateModal, setShowCreateModal] = useState(false)
   // 搜索与筛选（与订单列表一致的字段查询）
@@ -156,14 +158,17 @@ export default function SheetTemplates() {
       <TemplateEditor
         record={editingRecord}
         styleName={getStyleName(editingRecord.styleCode)}
-        onBack={() => setEditingId(null)}
+        isNewTemplate={justCreatedId === editingRecord.id}
+        onBack={() => { setEditingId(null); setJustCreatedId(null) }}
         onSaved={(saved) => {
           setTemplates((prev) => prev.map((t) => (t.id === saved.id ? saved : t)))
           setEditingId(null)
+          setJustCreatedId(null)
         }}
         onDeleted={(id) => {
           setTemplates((prev) => prev.filter((t) => t.id !== id))
           setEditingId(null)
+          setJustCreatedId(null)
         }}
       />
     )
@@ -301,6 +306,8 @@ export default function SheetTemplates() {
             setShowCreateModal(false)
             // 确保返回列表时所属款式处于展开状态，新模板立即可见
             setExpandedStyles((prev) => ({ ...prev, [created.styleCode]: true }))
+            // 标记新建：编辑器首次打开时表格初始化 20 行
+            setJustCreatedId(created.id)
             setEditingId(created.id)
           }}
         />
@@ -431,9 +438,11 @@ function CreateTemplateModal({ styleOptions, existingNames, onClose, onCreated }
 }
 
 /** 模板编辑器：VTableSheet 可视化编辑单个模板（含改名/删除） */
-function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
+function TemplateEditor({ record, styleName, isNewTemplate, onBack, onSaved, onDeleted }: {
   record: SheetTemplateRecordFE
   styleName: string
+  /** 刚通过「新增模板」创建：首次打开初始化 20 行；编辑已有模板按实际行数，不自动补齐 */
+  isNewTemplate: boolean
   onBack: () => void
   onSaved: (record: SheetTemplateRecordFE) => void
   onDeleted: (id: string) => void
@@ -482,7 +491,11 @@ function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
       sheets: [{
         sheetKey: TableConstants.SHEET_KEY,
         sheetTitle: 'sheet1',
-        rowCount: 25, // 默认网格行数（数据不足时补空行到 25；数据更多时按数据实际行数展示）
+        // 新建模板：初始默认 20 行（数据不足补空行，更多按实际行数展示）；
+        // 编辑已有模板：按实际数据行数展示，不自动补齐——尊重用户手动删除空白行后的状态
+        rowCount: isNewTemplate
+          ? TableConstants.DEFAULT_ROW_COUNT
+          : Math.max(record.data.length, 1),
         columns: TableConstants.COL_WIDTHS.map((width, field) => ({
           field,
           width,

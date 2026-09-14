@@ -13,6 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { wrapFabricMetersFormulas } from '../src/services/fabricMeters'
+import { TableConstants } from '../src/constants/TableConstants'
 
 // ============================ 测试用模板数据（款式1：无底无侧普通袋） ============================
 
@@ -138,6 +139,127 @@ describe('VTable 在线表格 — 公式联动测试', () => {
   afterAll(() => {
     sheet?.release?.()
     container?.remove()
+  })
+
+  describe('默认行数配置（rowCount 为「最小行数」语义）', () => {
+    /**
+     * 2026-09-14 排查：订单编辑页（BagQuote.tsx）曾遗漏 rowCount 配置导致表格仍补到
+     * VTable-Sheet 默认 100 行。修复后三处创建点统一引用 TableConstants.DEFAULT_ROW_COUNT。
+     * 同日需求细化：仅新建场景初始化 20 行（当日由 25 调整为 20）；编辑已保存数据
+     * （订单/模板）按实际行数设置 rowCount，不自动补齐——用户手动删除的空白行不会被补回。
+     * 此组用例在真实 VTable 实例上固化上述行为，防止回归。
+     */
+
+    /** 用与页面一致的配置创建 VTableSheet（可覆盖 rowCount 与数据行数） */
+    function createSheetWithRowCount(container: HTMLElement, data: (string | number | null)[][] = cloneData(), rowCount: number = TableConstants.DEFAULT_ROW_COUNT): VTableSheet {
+      return new VTableSheet(container, {
+        undoRedo: { show: true },
+        VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+        sheets: [{
+          sheetKey: SHEET_KEY,
+          sheetTitle: SHEET_KEY,
+          columns: TEST_COLUMNS,
+          data,
+          formulas: { ...TEMPLATE_FORMULAS },
+          showHeader: false,
+          rowCount,
+        }],
+      })
+    }
+
+    /** 读取表格实际渲染行数 */
+    function getTableRowCount(sheet: VTableSheet): number {
+      const ws = sheet.getActiveSheet()
+      return (ws?.tableInstance as any)?.rowCount ?? -1
+    }
+
+    it('常量值：DEFAULT_ROW_COUNT = 20（三处页面统一引用源）', () => {
+      expect(TableConstants.DEFAULT_ROW_COUNT).toBe(20)
+    })
+
+    it('新建场景：数据不足 20 行补空行到 20 行（模板 10 行数据）', () => {
+      const c = document.createElement('div')
+      document.body.appendChild(c)
+      const s = createSheetWithRowCount(c)
+      try {
+        expect(TEMPLATE_DATA.length).toBeLessThan(20)
+        expect(getTableRowCount(s)).toBe(20)
+      } finally {
+        s?.release?.()
+        c?.remove()
+      }
+    })
+
+    it('数据超过 20 行：按数据实际行数展示（不截断）', () => {
+      const c = document.createElement('div')
+      document.body.appendChild(c)
+      // 构造 30 行数据（模板 10 行 + 20 行数据行）
+      const bigData = cloneData()
+      for (let i = 0; i < 20; i++) bigData.push([`扩展行${i + 1}`, 100, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null])
+      const s = createSheetWithRowCount(c, bigData)
+      try {
+        expect(bigData.length).toBe(30)
+        expect(getTableRowCount(s)).toBe(30)
+      } finally {
+        s?.release?.()
+        c?.remove()
+      }
+    })
+
+    it('编辑场景：rowCount = 实际数据行数，不自动补齐（用户删空行后重开保持删减状态）', () => {
+      const c = document.createElement('div')
+      document.body.appendChild(c)
+      // 模拟用户已删除空白行的已保存数据：仅保留前 5 行
+      const savedData = cloneData().slice(0, 5)
+      // 页面逻辑（BagQuote/SheetTemplates）：编辑时 rowCount = Math.max(数据行数, 1)
+      const s = createSheetWithRowCount(c, savedData, Math.max(savedData.length, 1))
+      try {
+        expect(savedData.length).toBe(5)
+        expect(getTableRowCount(s)).toBe(5) // 不补齐到 20
+      } finally {
+        s?.release?.()
+        c?.remove()
+      }
+    })
+
+    it('编辑场景：rowCount 恰等于数据行数时公式计算不受影响', () => {
+      const c = document.createElement('div')
+      document.body.appendChild(c)
+      const savedData = cloneData().slice(0, 5)
+      const s = createSheetWithRowCount(c, savedData, savedData.length)
+      try {
+        // 前 5 行内公式仍正常计算（B3=B2 成品行数量联动正反面）
+        const fm = (s as any).formulaManager
+        const v = fm?.getCellValue?.({ sheet: SHEET_KEY, row: 2, col: 1 })
+        expect(v?.value ?? v).toBe(7200)
+      } finally {
+        s?.release?.()
+        c?.remove()
+      }
+    })
+
+    it('未配置 rowCount：回退 VTable-Sheet 默认 100 行（历史行为参照）', () => {
+      const c = document.createElement('div')
+      document.body.appendChild(c)
+      const s = new VTableSheet(c, {
+        undoRedo: { show: true },
+        VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+        sheets: [{
+          sheetKey: SHEET_KEY,
+          sheetTitle: SHEET_KEY,
+          columns: TEST_COLUMNS,
+          data: cloneData(),
+          formulas: { ...TEMPLATE_FORMULAS },
+          showHeader: false,
+        }],
+      })
+      try {
+        expect(getTableRowCount(s)).toBe(100)
+      } finally {
+        s?.release?.()
+        c?.remove()
+      }
+    })
   })
 
   describe('初始公式计算验证', () => {

@@ -66,6 +66,61 @@ export function resolveFormulasFallback(
   return { ...templateFormulas }
 }
 
+/**
+ * 裁剪表格数据的尾部空区：VTable-Sheet 会把加载的数据自动补齐到默认 100 行×100 列
+ * （类似 Excel 打开时的空白区域），保存/导出若按 rowCount 全量收集，会把删除行后
+ * 缩减的数据重新膨胀为空行空列写库——表现为"删除行无效"（2026-09-14 生产反馈）。
+ * 本函数从尾部裁掉全 null 的行与列（中间的空行/空列保留，公式与行结构不受影响）。
+ * 导出为纯函数供单元测试覆盖（tests/tableDataTrim.test.ts）。
+ */
+export function trimTrailingEmptyRowsAndCols(
+  tableData: (string | number | null)[][],
+): (string | number | null)[][] {
+  const isEmptyCell = (v: string | number | null | undefined) =>
+    v === null || v === undefined || v === ''
+  const rowIsEmpty = (row: (string | number | null)[]) => row.every(isEmptyCell)
+
+  // 1) 裁剪尾部全空行
+  let lastNonEmptyRow = -1
+  for (let r = 0; r < tableData.length; r++) {
+    if (!rowIsEmpty(tableData[r])) lastNonEmptyRow = r
+  }
+  const rows = tableData.slice(0, lastNonEmptyRow + 1)
+
+  // 2) 计算所有行中最后一个非空列的最大值，裁掉其后全部空列
+  let lastNonEmptyCol = -1
+  for (const row of rows) {
+    for (let c = row.length - 1; c > lastNonEmptyCol; c--) {
+      if (!isEmptyCell(row[c])) {
+        lastNonEmptyCol = c
+        break
+      }
+    }
+  }
+  return rows.map((row) => row.slice(0, lastNonEmptyCol + 1))
+}
+
+/**
+ * 保存前的表格数据裁剪策略（2026-09-14 需求：空白行的去留完全由用户操作决定）：
+ * - 仅当表格初始化时发生过补齐（配置行数 > 数据行数，即新建订单/切换模板补到 20 行）
+ *   且用户未主动增加行（收集行数 ≤ 初始化行数）时，才裁剪尾部补齐的空行/空列；
+ * - 编辑已保存订单（初始化无补齐）或用户增加过行时原样返回——
+ *   用户手动增加的空白行必须原样保存（VTable 删除行为物理删除，收集行数即用户所见行数）。
+ * 导出为纯函数供单元测试覆盖（tests/tableDataTrim.test.ts）。
+ */
+export function trimTableDataForSave(
+  tableData: (string | number | null)[][],
+  initRowCount: number,
+  paddedInit: boolean,
+): (string | number | null)[][] {
+  const userAddedRows = tableData.length > initRowCount
+  if (paddedInit && !userAddedRows) {
+    return trimTrailingEmptyRowsAndCols(tableData)
+  }
+  return tableData
+}
+
+
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
   productionTimeStart: DateUtils.today(),
@@ -277,6 +332,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
   // 新增订单时为 null，使用模板数据初始化。
   const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
+  // 当前表格初始化状态：配置行数（新建/切模板=25，编辑=数据行数）与是否发生补齐
+  //（配置行数 > 数据行数）。保存时据此判断是否裁剪补齐空行（见 trimTableDataForSave）
+  const sheetInitRowCountRef = useRef(0)
+  const sheetPaddedRef = useRef(false)
   // 表格中所有单元格的公式（地址→公式字符串），加载时直接使用，不依赖模板比对。
   // v9 迁移脚本已将老数据（removedFormulaAddresses + modifiedFormulas + 模板公式）计算初始化为 allFormulas。
   const allFormulasRef = useRef<Record<string, string>>({})
@@ -563,6 +622,12 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         return false
       }
 
+      // 保存前裁剪策略（2026-09-14 需求：空白行的去留完全由用户操作决定）：
+      // 仅新建/切换模板场景（初始化补齐到 20 行）且用户未增加行时，裁掉补齐的空行/空列；
+      // 编辑已保存订单（初始化无补齐）或用户手动增加过行时原样保存——
+      // VTable 删除行为物理删除（rowCount 真实减少），收集行数即用户所见行数
+      tableData = trimTableDataForSave(tableData, sheetInitRowCountRef.current, sheetPaddedRef.current)
+
       // 公式收集竞态兜底（与导出口径一致）：表格刚被模板重新初始化/公式引擎尚未就绪时，
       // 实时收集会得到空对象 —— 直接保存会把数据库公式清空（生产事故根因之一）。
       // 回退顺序：数据库已保存的 allFormulas → 当前款式模板公式
@@ -680,6 +745,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         }
         tableData.push(rowData)
       }
+      // 裁剪 VTable 自动补齐的尾部空区（与保存口径一致），避免导出的 Excel 带大量空行
+      const trimmedData = trimTrailingEmptyRowsAndCols(tableData)
       // 公式来源优先级：当前表格实时收集的公式 > 数据库 allFormulas > 所选模板（含内置兜底）
       // 实时收集确保导出与页面显示完全一致（含用户未保存的修改）
       const template = SheetTemplateManager.getTemplate(orderInfo.productStyle, orderInfo.templateId)
@@ -698,7 +765,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         ? exportFormulas
         : (allFormulasRef.current || template.formulas)
       // 导出口径与保存一致：布料米数列向上取整 + 公式整体包裹 CEILING
-      const metersNorm = normalizeFabricMeters(tableData, formulas)
+      const metersNorm = normalizeFabricMeters(trimmedData, formulas)
       const blob = await api.export.orderWithTable(id, { data: metersNorm.data, formulas: metersNorm.formulas ?? formulas })
       const now = new Date()
       const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
@@ -723,9 +790,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
 
     const template = SheetTemplateManager.getTemplate(orderInfo.productStyle, orderInfo.templateId)
     // 编辑已有订单时优先使用数据库保存的表格数据；新增订单时用模板数据
-    const initialData = loadedTableDataRef.current && loadedTableDataRef.current.length > 0
-      ? loadedTableDataRef.current
-      : template.data
+    const savedTable = loadedTableDataRef.current
+    const useSavedTable = savedTable != null && savedTable.length > 0
+    const initialData = savedTable && savedTable.length > 0 ? savedTable : template.data
     // 定位布料米数列（表头关键字查找），供显示取整与汇总取整使用
     sheetMetersCol = findFabricMetersCol(initialData)
     // activeFormulas 构建策略：
@@ -750,6 +817,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     }
     const sivTimer = setTimeout(restoreSIV, 1000)
 
+    // 新建/切换模板：初始默认 20 行（数据不足补空行，更多按实际行数展示）；
+    // 编辑已保存订单：按实际数据行数展示，不自动补齐——尊重用户手动删除空白行后的状态
+    const configRowCount = useSavedTable ? initialData.length : TableConstants.DEFAULT_ROW_COUNT
+    // 记录初始化状态：保存时仅裁剪补齐产生的空行，用户增加的空白行原样保留（见 trimTableDataForSave）
+    sheetInitRowCountRef.current = configRowCount
+    sheetPaddedRef.current = configRowCount > initialData.length
+
     const sheet = new VTableSheet(sheetContainerRef.current, {
       showFormulaBar: true,
       undoRedo: { show: !readOnly },
@@ -765,6 +839,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           data: initialData,
           formulas: activeFormulas,
           showHeader: false,
+          rowCount: configRowCount,
         },
       ],
     })

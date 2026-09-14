@@ -7,6 +7,7 @@ import { api } from '../api'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { findFabricMetersCol, ceilFabricMeters, FABRIC_METERS_DEFAULT_COL } from '../services/fabricMeters'
 import { OrderStatus } from '../constants/OrderStatus'
+import { TableConstants } from '../constants/TableConstants'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
 
 interface OrderInfo {
@@ -737,7 +738,7 @@ export default function BagQuoteTable() {
           data: template.data,
           formulas: template.formulas,
           showHeader: false,
-          rowCount: 25, // 默认网格行数（数据不足时补空行到 25；数据更多时按数据实际行数展示）
+          rowCount: TableConstants.DEFAULT_ROW_COUNT, // 本页表格始终以模板数据初始化（新建场景）：默认 20 行（数据不足补空行；更多按实际行数）
         },
       ],
     })
