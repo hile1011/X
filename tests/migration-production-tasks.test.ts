@@ -101,24 +101,25 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
       await resetTestDatabase()
       await db.runner.rollback(23)
 
-      const created = await db.quotes.create({
-        customerName: '存量迁移客户',
-        productStyle: '1',
-        quantity: '100',
-        productionStepStatus: { '1': 'completed', '2': 'in_progress' },
-      } as any)
-      // 单独一单直接落库损坏 JSON（模拟历史脏数据）
-      const broken = await db.quotes.create({
-        customerName: '损坏数据客户', productStyle: '1', quantity: '1',
-      } as any)
+      // v34 起 db.quotes.create 的 INSERT 含布局列（columnWidthConfig/rowHeightConfig），
+      // v23 回滚态不存在这些列，改用原生 SQL 造存量数据（与 migration-fabric-meters 惯例一致）
+      const createdId = 'quote-v24-migrate-seed'
       await pool.execute(
-        `UPDATE quotes SET productionStepStatus = '{invalid-json' WHERE id = ?`,
-        [broken.id],
+        `INSERT INTO quotes (id, quote_number, customerName, productStyle, quantity, status, productionStepStatus)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [createdId, '1234567890123456', '存量迁移客户', '1', '100', 1,
+         JSON.stringify({ '1': 'completed', '2': 'in_progress' })],
+      )
+      // 单独一单直接落库损坏 JSON（模拟历史脏数据）
+      await pool.execute(
+        `INSERT INTO quotes (id, quote_number, customerName, productStyle, quantity, status, productionStepStatus)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['quote-v24-broken-seed', '2234567890123456', '损坏数据客户', '1', '1', 1, '{invalid-json'],
       )
 
       await db.runner.migrate()
 
-      const tasks = await db.productionTasks.getByQuoteId(created.id)
+      const tasks = await db.productionTasks.getByQuoteId(createdId)
       expect(tasks).toHaveLength(6)
       expect(tasks.map((t) => t.name)).toEqual(DEFAULT_STEPS)
       expect(tasks.map((t) => t.status)).toEqual([2, 1, 0, 0, 0, 0])

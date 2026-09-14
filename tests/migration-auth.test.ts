@@ -104,9 +104,9 @@ describe('迁移 v12 - add-auth-rbac 表结构', () => {
 })
 
 describe('迁移 v12 - 权限目录种子数据', () => {
-  it('预置 50 项权限（含 v29 双击编辑、v30 三个业务模块权限）', async () => {
+  it('预置 52 项权限（含 v29 双击编辑、v30 三个业务模块权限、v35 AI 智能下单）', async () => {
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(50)
+    expect(row.cnt).toBe(52)
   })
 
   it('权限码格式为 module:action', async () => {
@@ -155,11 +155,11 @@ describe('迁移 v12 - admin 角色种子数据', () => {
     expect(role.is_system).toBe(1)
   })
 
-  it('admin 角色拥有全部 50 项权限', async () => {
+  it('admin 角色拥有全部 52 项权限', async () => {
     const row = await db.db.prepare(
       'SELECT COUNT(*) as cnt FROM role_permissions WHERE role_id = ?'
     ).get('role-admin') as { cnt: number }
-    expect(row.cnt).toBe(50)
+    expect(row.cnt).toBe(52)
   })
 
   it('roles code 唯一索引：插入重复 code 报错', async () => {
@@ -201,7 +201,7 @@ describe('迁移 v12 - 默认管理员账号', () => {
        JOIN permissions p ON p.id = rp.permission_id
        WHERE ur.user_id = ?`
     ).get('user-admin-default') as { cnt: number }
-    expect(rows.cnt).toBe(50)
+    expect(rows.cnt).toBe(52)
   })
 })
 
@@ -209,7 +209,7 @@ describe('迁移 v12 - 幂等性', () => {
   it('重新执行 migrate 不重复插入权限', async () => {
     await db.runner.migrate()
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(row.cnt).toBe(50)
+    expect(row.cnt).toBe(52)
   })
 
   it('重新执行 migrate 不重复插入 admin 角色', async () => {
@@ -251,7 +251,7 @@ describe('迁移 v12 回滚（down）', () => {
 
     // 验证数据恢复
     const permCount = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as { cnt: number }
-    expect(permCount.cnt).toBe(50)
+    expect(permCount.cnt).toBe(52)
 
     const admin = await db.db.prepare('SELECT * FROM users WHERE email = ?').get('517290808@qq.com') as any
     expect(admin).toBeTruthy()

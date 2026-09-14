@@ -102,9 +102,9 @@ describe('迁移 v30 - 权限目录', () => {
     expect(rows).toHaveLength(0)
   })
 
-  it('权限总数为 50（44 + 6 项模块权限）', async () => {
+  it('权限总数为 52（44 + 6 项模块权限 + 2 项 AI 智能下单权限）', async () => {
     const row = await db.db.prepare('SELECT COUNT(*) as cnt FROM permissions').get() as any
-    expect(Number(row.cnt)).toBe(50)
+    expect(Number(row.cnt)).toBe(52)
   })
 })
 

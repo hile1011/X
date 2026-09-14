@@ -5,6 +5,7 @@ import { asyncHandler } from '../asyncHandler.js'
 import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 import { requirePermission, requireAnyPermission } from '../middleware/auth.js'
 import { normalizeFabricMeters, logFabricMetersCeil, type FabricMetersChange } from '../services/fabricMeters.js'
+import { sanitizeSheetLayoutFields } from '../services/sheetLayout.js'
 import { detectQuoteDataReset, QUOTE_DATA_RESET_CODE } from '../services/quoteDataGuard.js'
 
 export const quotesRouter = express.Router()
@@ -108,7 +109,9 @@ quotesRouter.post('/', requirePermission('quotes:create'), asyncHandler(async (r
   const operator = req.user?.name || ''
   // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
   const norm = normalizeQuoteFabricMeters(req.body)
-  const data = await db.quotes.create({ ...req.body, ...norm.fields, created_by: operator, updated_by: operator })
+  // 布局配置校验（v34）：正有限数、key 界内，脏条目丢弃（前端已收集合法值，此为 API 直调兜底）
+  const layoutFields = sanitizeSheetLayoutFields(req.body)
+  const data = await db.quotes.create({ ...req.body, ...norm.fields, ...layoutFields, created_by: operator, updated_by: operator })
   await logFabricMetersCeil({
     entityType: 'quote',
     entityId: data.id,
@@ -138,7 +141,9 @@ quotesRouter.put('/:id', requirePermission('quotes:edit'), asyncHandler(async (r
   }
   // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
   const norm = normalizeQuoteFabricMeters(req.body)
-  const data = await db.quotes.update(id, { ...req.body, ...norm.fields, updated_by: operator })
+  // 布局配置校验（v34）：局部更新（如仅改状态）不带布局字段时保持已存值
+  const layoutFields = sanitizeSheetLayoutFields(req.body)
+  const data = await db.quotes.update(id, { ...req.body, ...norm.fields, ...layoutFields, updated_by: operator })
   if (!data) {
     return res.status(404).json({ error: '报价不存在' })
   }

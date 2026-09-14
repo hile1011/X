@@ -12,6 +12,7 @@ import { TableConstants } from '../constants/TableConstants'
 import { StyleConstants } from '../constants/StyleConstants'
 import { ExcelUtils } from '../utils/ExcelUtils'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { collectSheetLayout, applySheetLayout, filterRowHeightConfigForSave } from '../utils/sheetLayout'
 
 /** 数据库模板记录（后端 SheetTemplateRecord 的前端形态，一对多） */
 interface SheetTemplateRecordFE {
@@ -20,6 +21,9 @@ interface SheetTemplateRecordFE {
   name: string
   data: (string | number | null)[][]
   formulas: Record<string, string>
+  // 布局配置（v34）：[{key:列/行号,width/height:px}]，仅用户拖拽调整过的行列；新建订单继承
+  columnWidthConfig?: Array<{ key: number; width: number }>
+  rowHeightConfig?: Array<{ key: number; height: number }>
   sortOrder: number
   updatedBy: string
   createdAt: string
@@ -515,9 +519,17 @@ function TemplateEditor({ record, styleName, isNewTemplate, onBack, onSaved, onD
         data: template.data,
         formulas: { ...template.formulas },
         showHeader: false,
+        // v34 布局持久化：不通过 sheets 配置传 columnWidthConfig/rowHeightConfig——
+        // ListTable.isAutoRowHeight 对 rowHeightConfig 做 truthy 判断（空数组也成立），
+        // 会强制全表逐行内容自适应行高导致错位；改由下方 applySheetLayout 公开 API 恢复
       }],
     })
     sheetInstanceRef.current = sheet
+    // v34 布局恢复：重新打开模板编辑器时恢复用户调整过的列宽/行高（新模板无配置 = 默认尺寸）
+    applySheetLayout(sheet, {
+      columnWidthConfig: record.columnWidthConfig ?? [],
+      rowHeightConfig: record.rowHeightConfig ?? [],
+    }, TableConstants.SHEET_KEY)
     formulaManagerRef.current = (sheet as any).formulaManager
 
     const activeWs = sheet.getActiveSheet()
@@ -610,10 +622,26 @@ function TemplateEditor({ record, styleName, isNewTemplate, onBack, onSaved, onD
       const normFormulas = metersNorm.formulas ?? formulas
       const ceilCount = metersNorm.ceilChanges.length
 
+      // 布局收集（v34）：仅用户拖拽调整过的列宽/行高；行高过滤超出数据行数的行号
+      //（新建模板初始化补齐的空行被默认行数约束收集时不存在膨胀，此处防御性过滤）
+      const layout = collectSheetLayout(sheet, TableConstants.SHEET_KEY)
+      const rowHeightConfig = filterRowHeightConfigForSave(layout.rowHeightConfig, normData.length)
+
       const nameChanged = trimmed !== record.name
-      const saved = await api.sheetTemplates.update(record.id, { name: nameChanged ? trimmed : undefined, data: normData, formulas: normFormulas }) as SheetTemplateRecordFE
-      // 同步内存缓存：订单页立即使用最新模板
-      SheetTemplateManager.setOverride(saved.id, saved.styleCode, saved.name, { data: normData, formulas: normFormulas })
+      const saved = await api.sheetTemplates.update(record.id, {
+        name: nameChanged ? trimmed : undefined,
+        data: normData,
+        formulas: normFormulas,
+        columnWidthConfig: layout.columnWidthConfig,
+        rowHeightConfig,
+      }) as SheetTemplateRecordFE
+      // 同步内存缓存：订单页立即使用最新模板（含布局，新建订单继承）
+      SheetTemplateManager.setOverride(saved.id, saved.styleCode, saved.name, {
+        data: normData,
+        formulas: normFormulas,
+        columnWidthConfig: layout.columnWidthConfig,
+        rowHeightConfig,
+      })
       const baseMsg = nameChanged ? '模板已保存并重命名' : '模板已保存'
       showMessage('success', ceilCount > 0 ? `${baseMsg}（布料米数已向上取整 ${ceilCount} 处）` : baseMsg)
       setTimeout(() => onSaved(saved), 600)

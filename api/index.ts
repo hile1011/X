@@ -13,6 +13,7 @@ import { bagQuoteRouter } from './routes/bagQuote.js'
 import { quotesRouter } from './routes/quotes.js'
 import { productCostItemsRouter } from './routes/productCostItems.js'
 import { sheetTemplatesRouter } from './routes/sheetTemplates.js'
+import { aiOrderRouter } from './routes/aiOrder.js'
 import { exportRouter } from './routes/export.js'
 import { operationLogsRouter } from './routes/operationLogs.js'
 import { authRouter } from './routes/auth.js'
@@ -21,10 +22,10 @@ import { usersRouter } from './routes/users.js'
 import { rolesRouter } from './routes/roles.js'
 import { authenticate } from './middleware/auth.js'
 
-const envPath = fs.existsSync(path.resolve(process.cwd(), '.env'))
-  ? path.resolve(process.cwd(), '.env')
-  : path.resolve(process.cwd(), 'api/.env')
-dotenv.config({ path: envPath })
+// 根目录 .env 优先（VITE_* 等共享配置），api/.env 兜底补充后端配置（PORT、DASHSCOPE_API_KEY 等）。
+// dotenv 默认不覆盖已存在的变量，故先加载的根目录 .env 优先级不变。
+dotenv.config({ path: path.resolve(process.cwd(), '.env') })
+dotenv.config({ path: path.resolve(process.cwd(), 'api/.env') })
 
 const app = express()
 const port = Number(process.env.PORT) || 3001
@@ -67,6 +68,7 @@ app.use('/api/upload', authenticate, uploadRouter)
 app.use('/api/bag-quote', authenticate, bagQuoteRouter)
 app.use('/api/quotes', authenticate, quotesRouter)
 app.use('/api/product-cost-items', authenticate, productCostItemsRouter) // 产品成本项配置（成本项/可选工艺/自定义字段）
+app.use('/api/ai-order', authenticate, aiOrderRouter) // AI 智能下单（文字+图片生成订单草稿）
 app.use('/api/sheet-templates', authenticate, sheetTemplatesRouter) // 款式模板管理（在线可视化编辑）
 app.use('/api/export', authenticate, exportRouter)
 app.use('/api/operation-logs', authenticate, operationLogsRouter)

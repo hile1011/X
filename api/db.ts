@@ -1,6 +1,7 @@
 import { pool, initDatabase, withTransaction, closePool, execMultiStatement } from './dbClient.js'
 import { MigrationRunner, CURRENT_SCHEMA_VERSION } from './migrations/index.js'
 import type { Customer, Product, Order, OrderItem, Task, Quote, ProductCostItem, ProductCostProcess, ProductCostCustomField, ProductCostFieldType, ProductMedia } from './types/index.js'
+import type { LayoutSizeConfig } from './services/sheetLayout.js'
 
 /**
  * 异步数据库包装器
@@ -100,6 +101,10 @@ export interface SheetTemplateRecord {
   name: string
   data: (string | number | null)[][]
   formulas: Record<string, string>
+  /** 列宽配置（v34：[{key:列号,width:px}]，仅用户调整过的列；未调整过为空数组） */
+  columnWidthConfig?: Array<{ key: number; width: number }>
+  /** 行高配置（v34：[{key:行号,height:px}]，仅用户调整过的行；未调整过为空数组） */
+  rowHeightConfig?: Array<{ key: number; height: number }>
   sortOrder: number
   updatedBy: string
   createdAt: string
@@ -112,12 +117,20 @@ function parseSheetTemplateRow(row: Record<string, any>): SheetTemplateRecord {
     if (typeof val === 'string') return JSON.parse(val || defaultVal)
     return val ?? JSON.parse(defaultVal)
   }
+  const parseLayout = <T extends { key: number }>(val: any): T[] => {
+    if (typeof val === 'string') {
+      try { return JSON.parse(val || '[]') } catch { return [] }
+    }
+    return Array.isArray(val) ? val : []
+  }
   return {
     id: row.id,
     styleCode: row.style_code,
     name: row.name || '',
     data: parse(row.data, '[]'),
     formulas: parse(row.formulas, '{}'),
+    columnWidthConfig: parseLayout<{ key: number; width: number }>(row.columnWidthConfig),
+    rowHeightConfig: parseLayout<{ key: number; height: number }>(row.rowHeightConfig),
     sortOrder: Number(row.sort_order ?? 0),
     updatedBy: row.updated_by || '',
     createdAt: row.created_at,
@@ -292,6 +305,9 @@ function parseLargeFields(row: any) {
   ;(c as any).modifiedFormulas = parse((c as any).modifiedFormulas, '{}')
   ;(c as any).allFormulas = parse((c as any).allFormulas, '{}')
   ;(c as any).productionStepStatus = parse(c.productionStepStatus, '{}')
+  // 布局配置（v34）：[{key,width/height}] 数组，NULL/空串回退 []（未调整过布局）
+  ;(c as any).columnWidthConfig = parse((c as any).columnWidthConfig, '[]')
+  ;(c as any).rowHeightConfig = parse((c as any).rowHeightConfig, '[]')
   // 模板关联（v23）：数据库列为 snake_case，统一映射为业务侧 templateId（空 = 内置默认模板）
   ;(c as any).templateId = (c as any).template_id ?? ''
   // 收款字段（v17/v18）：mysql2 将 DECIMAL 返回为字符串，TINYINT 返回 0/1，统一转为业务类型
@@ -594,8 +610,9 @@ export const dbApi = {
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
-        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus,
+        columnWidthConfig, rowHeightConfig)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         id, data.user_id || '', data.created_by || '', data.updated_by || '', data.customer_id || '', quoteNumber, customerName,
         data.shippingAddress || '', productStyle, (data as any).templateId || '', data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
@@ -611,7 +628,9 @@ export const dbApi = {
         JSON.stringify(data.removedFormulaAddresses || []),
         JSON.stringify(data.modifiedFormulas || {}),
         JSON.stringify(data.allFormulas || {}),
-        JSON.stringify(data.productionStepStatus || {})
+        JSON.stringify(data.productionStepStatus || {}),
+        JSON.stringify((data as any).columnWidthConfig || []),
+        JSON.stringify((data as any).rowHeightConfig || [])
       )
 
       return {
@@ -649,6 +668,8 @@ export const dbApi = {
         modifiedFormulas: data.modifiedFormulas || {},
         allFormulas: data.allFormulas || {},
         productionStepStatus: data.productionStepStatus || {},
+        columnWidthConfig: (data as any).columnWidthConfig || [],
+        rowHeightConfig: (data as any).rowHeightConfig || [],
         created_at: timeNow(), updated_at: timeNow(),
       }
     },
@@ -662,6 +683,10 @@ export const dbApi = {
       existingParsed.modifiedFormulas = typeof (existingParsed as any).modifiedFormulas === 'string' ? JSON.parse((existingParsed as any).modifiedFormulas || '{}') : ((existingParsed as any).modifiedFormulas || {})
       existingParsed.allFormulas = typeof (existingParsed as any).allFormulas === 'string' ? JSON.parse((existingParsed as any).allFormulas || '{}') : ((existingParsed as any).allFormulas || {})
       existingParsed.productionStepStatus = typeof (existingParsed as any).productionStepStatus === 'string' ? JSON.parse((existingParsed as any).productionStepStatus || '{}') : ((existingParsed as any).productionStepStatus || {})
+      // 布局配置（v34）：局部更新（如仅改状态）不带布局字段时保持已存值
+      const parseLayout = (v: unknown): any[] => (typeof v === 'string' ? JSON.parse(v || '[]') : (Array.isArray(v) ? v : []))
+      ;(existingParsed as any).columnWidthConfig = parseLayout((existingParsed as any).columnWidthConfig)
+      ;(existingParsed as any).rowHeightConfig = parseLayout((existingParsed as any).rowHeightConfig)
       // 模板关联（v23）：原始行为 snake_case，补映射避免局部更新（如仅改状态）时 template_id 被清空
       ;(existingParsed as any).templateId = (existing as any).template_id ?? (existingParsed as any).templateId ?? ''
       let updatedQuote: Quote = { ...existingParsed, ...data, updated_at: timeNow() }
@@ -677,6 +702,8 @@ export const dbApi = {
       const modifiedFormulasJson = JSON.stringify(updatedQuote.modifiedFormulas || {})
       const allFormulasJson = JSON.stringify(updatedQuote.allFormulas || {})
       const productionStepStatusJson = JSON.stringify(updatedQuote.productionStepStatus || {})
+      const columnWidthConfigJson = JSON.stringify((updatedQuote as any).columnWidthConfig || [])
+      const rowHeightConfigJson = JSON.stringify((updatedQuote as any).rowHeightConfig || [])
 
       await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, updated_by=?, shippingAddress=?,
         productStyle=?, template_id=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
@@ -684,7 +711,8 @@ export const dbApi = {
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
         receivableSampleFee=?, actualSampleFee=?, sampleFeeDeduct=?, deposit=?, pendingAmount=?,
         status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, reconciledTime=?, endTime=?,
-        images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?, updated_at=? WHERE id=?`).run(
+        images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?,
+        columnWidthConfig=?, rowHeightConfig=?, updated_at=? WHERE id=?`).run(
         updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id, updatedQuote.updated_by,
         updatedQuote.shippingAddress, updatedQuote.productStyle, (updatedQuote as any).templateId || '', updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
@@ -696,7 +724,8 @@ export const dbApi = {
         updatedQuote.status, updatedQuote.sampleTime, updatedQuote.sampleCompletedTime, updatedQuote.productionStartTime,
         updatedQuote.shippingTime, updatedQuote.paymentTime, (updatedQuote as any).reconciledTime || existing.reconciledTime || '',
         updatedQuote.endTime,
-        JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson, updatedQuote.updated_at, id
+        JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson,
+        columnWidthConfigJson, rowHeightConfigJson, updatedQuote.updated_at, id
       )
       return updatedQuote
     },
@@ -823,8 +852,9 @@ export const dbApi = {
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
-        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus,
+        columnWidthConfig, rowHeightConfig)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
         newId, existing.user_id || '', operator, operator, existing.customer_id || '', quoteNumber, customerName,
         existing.shippingAddress || '', productStyle, (existing as any).template_id || '', existing.productSpec || '',
         existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
@@ -841,7 +871,10 @@ export const dbApi = {
         existing.removedFormulaAddresses || '[]',
         existing.modifiedFormulas || '{}',
         existing.allFormulas || '{}',
-        existing.productionStepStatus || '{}'
+        existing.productionStepStatus || '{}',
+        // 复制订单：布局配置一并复制（v34，原样继承用户调整过的行列尺寸）
+        existing.columnWidthConfig || '[]',
+        existing.rowHeightConfig || '[]'
       )
 
       return {
@@ -880,6 +913,8 @@ export const dbApi = {
         modifiedFormulas: typeof existing.modifiedFormulas === 'string' ? JSON.parse(existing.modifiedFormulas || '{}') : (existing.modifiedFormulas || {}),
         allFormulas: typeof existing.allFormulas === 'string' ? JSON.parse(existing.allFormulas || '{}') : (existing.allFormulas || {}),
         productionStepStatus: typeof existing.productionStepStatus === 'string' ? JSON.parse(existing.productionStepStatus || '{}') : (existing.productionStepStatus || {}),
+        columnWidthConfig: typeof (existing as any).columnWidthConfig === 'string' ? JSON.parse((existing as any).columnWidthConfig || '[]') : ((existing as any).columnWidthConfig || []),
+        rowHeightConfig: typeof (existing as any).rowHeightConfig === 'string' ? JSON.parse((existing as any).rowHeightConfig || '[]') : ((existing as any).rowHeightConfig || []),
         created_at: timeNow(), updated_at: timeNow(),
       }
     },
@@ -1177,15 +1212,18 @@ export const dbApi = {
      * 新增模板（一对多：同款式可有多个，名称在款式内唯一）
      * @returns 新建的模板记录；重名时抛出错误
      */
-    create: async (styleCode: string, name: string, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string): Promise<SheetTemplateRecord> => {
+    create: async (styleCode: string, name: string, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string,
+      layout?: { columnWidthConfig?: LayoutSizeConfig[]; rowHeightConfig?: LayoutSizeConfig[] }): Promise<SheetTemplateRecord> => {
       const trimmed = (name || '').trim()
       if (!trimmed) throw new Error('模板名称不能为空')
       const dup = await dbConn.prepare('SELECT id FROM sheet_templates WHERE style_code = ? AND name = ?').get(styleCode, trimmed)
       if (dup) throw new Error(`该款式下已存在同名模板「${trimmed}」`)
       const id = `sheet-tpl-${Date.now()}-${Math.floor(Math.random() * 1000)}`
       const maxSort = await dbConn.prepare('SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM sheet_templates WHERE style_code = ?').get(styleCode) as any
-      await dbConn.prepare('INSERT INTO sheet_templates (id, style_code, name, data, formulas, sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(id, styleCode, trimmed, JSON.stringify(data), JSON.stringify(formulas), Number(maxSort?.max_sort ?? 0) + 1, updatedBy)
+      await dbConn.prepare('INSERT INTO sheet_templates (id, style_code, name, data, formulas, columnWidthConfig, rowHeightConfig, sort_order, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(id, styleCode, trimmed, JSON.stringify(data), JSON.stringify(formulas),
+          JSON.stringify(layout?.columnWidthConfig || []), JSON.stringify(layout?.rowHeightConfig || []),
+          Number(maxSort?.max_sort ?? 0) + 1, updatedBy)
       const row = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
       return parseSheetTemplateRow(row as Record<string, any>)
     },
@@ -1193,7 +1231,8 @@ export const dbApi = {
      * 更新模板（内容必传，名称可选改名）
      * @returns 更新后的模板记录；改名重名时抛出错误
      */
-    update: async (id: string, name: string | undefined, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string): Promise<SheetTemplateRecord | null> => {
+    update: async (id: string, name: string | undefined, data: (string | number | null)[][], formulas: Record<string, string>, updatedBy: string,
+      layout?: { columnWidthConfig?: LayoutSizeConfig[]; rowHeightConfig?: LayoutSizeConfig[] }): Promise<SheetTemplateRecord | null> => {
       const existing = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
       if (!existing) return null
       const nextName = name !== undefined ? name.trim() : (existing as any).name
@@ -1201,8 +1240,13 @@ export const dbApi = {
       const dup = await dbConn.prepare('SELECT id FROM sheet_templates WHERE style_code = ? AND name = ? AND id != ?')
         .get((existing as any).style_code, nextName, id)
       if (dup) throw new Error(`该款式下已存在同名模板「${nextName}」`)
-      await dbConn.prepare('UPDATE sheet_templates SET name=?, data=?, formulas=?, updated_by=? WHERE id=?')
-        .run(nextName, JSON.stringify(data), JSON.stringify(formulas), updatedBy, id)
+      // 布局配置（v34）：未传时保持已存值（局部更新），传入（含空数组）则覆盖
+      const existingLayout = parseSheetTemplateRow(existing as Record<string, any>)
+      const nextWidths = layout?.columnWidthConfig !== undefined ? layout.columnWidthConfig : (existingLayout.columnWidthConfig || [])
+      const nextHeights = layout?.rowHeightConfig !== undefined ? layout.rowHeightConfig : (existingLayout.rowHeightConfig || [])
+      await dbConn.prepare('UPDATE sheet_templates SET name=?, data=?, formulas=?, columnWidthConfig=?, rowHeightConfig=?, updated_by=? WHERE id=?')
+        .run(nextName, JSON.stringify(data), JSON.stringify(formulas),
+          JSON.stringify(nextWidths), JSON.stringify(nextHeights), updatedBy, id)
       const row = await dbConn.prepare('SELECT * FROM sheet_templates WHERE id = ?').get(id)
       return parseSheetTemplateRow(row as Record<string, any>)
     },

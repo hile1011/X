@@ -60,6 +60,8 @@ export class SheetTemplateManager {
         name: string
         data: (string | number | null)[][]
         formulas: Record<string, string>
+        columnWidthConfig?: Array<{ key: number; width: number }>
+        rowHeightConfig?: Array<{ key: number; height: number }>
       }>
       const next: Record<string, SheetTemplateEntry> = {}
       for (const r of records) {
@@ -68,7 +70,13 @@ export class SheetTemplateManager {
             id: r.id,
             styleCode: r.styleCode,
             name: r.name || '',
-            template: { data: r.data, formulas: r.formulas || {} },
+            template: {
+              data: r.data,
+              formulas: r.formulas || {},
+              // 布局配置（v34）：新建订单继承所选模板的行列尺寸
+              columnWidthConfig: Array.isArray(r.columnWidthConfig) ? r.columnWidthConfig : [],
+              rowHeightConfig: Array.isArray(r.rowHeightConfig) ? r.rowHeightConfig : [],
+            },
           }
         }
       }
@@ -654,11 +662,14 @@ export class SheetTemplateManager {
    * 深拷贝模板（防止外部修改污染内部数据）
    * - data: 逐行拷贝数组
    * - formulas: 展开到新对象
+   * - 布局配置（v34）: 展开到新数组
    */
   private static deepClone(template: SheetTemplate): SheetTemplate {
     return {
       data: template.data.map((row) => [...row]),
       formulas: { ...template.formulas },
+      columnWidthConfig: (template.columnWidthConfig ?? []).map((c) => ({ ...c })),
+      rowHeightConfig: (template.rowHeightConfig ?? []).map((h) => ({ ...h })),
     }
   }
 }

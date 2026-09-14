@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Select as AntSelect } from 'antd'
 import { api, downloadBlob } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X, Sparkles } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
@@ -53,6 +53,10 @@ export interface Quote {
   tableData?: (string | number | null)[][]
   // 用户已删除的公式地址列表
   removedFormulaAddresses?: string[]
+  // 在线表格列宽配置（v34：[{key:列号,width:px}]，仅用户拖拽调整过的列；打印按布局输出）
+  columnWidthConfig?: Array<{ key: number; width: number }>
+  // 在线表格行高配置（v34：[{key:行号,height:px}]，仅用户拖拽调整过的行；打印按布局输出）
+  rowHeightConfig?: Array<{ key: number; height: number }>
   created_at: string
   updated_at: string
 }
@@ -591,6 +595,16 @@ export default function Quotes() {
             >
               {exportingPayment ? <Loader2 size={18} className="animate-spin" /> : <Receipt size={18} />}
               导出收款单
+            </button>
+          )}
+          {hasPermission('ai-order:view') && (
+            <button
+              onClick={() => navigate('/ai-order-chat')}
+              className="flex items-center gap-2 px-4 py-2 border border-primary-200 text-primary-700 bg-white rounded-lg hover:bg-primary-50 transition-colors"
+              title="通过文字描述与参考图片，AI 智能生成订单信息"
+            >
+              <Sparkles size={18} />
+              AI智能下单
             </button>
           )}
           {hasPermission('quotes:create') && (

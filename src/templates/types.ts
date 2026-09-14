@@ -13,4 +13,8 @@ export interface SheetTemplate {
   data: (string | number | null)[][]
   /** 公式映射：key = Excel 单元格地址（如 "B3"），value = 公式字符串（如 "=B2"） */
   formulas: Record<string, string>
+  /** 列宽配置（v34：[{key:列号,width:px}]，仅用户拖拽调整过的列；新建订单继承模板布局） */
+  columnWidthConfig?: Array<{ key: number; width: number }>
+  /** 行高配置（v34：[{key:行号,height:px}]，仅用户拖拽调整过的行；新建订单继承模板布局） */
+  rowHeightConfig?: Array<{ key: number; height: number }>
 }

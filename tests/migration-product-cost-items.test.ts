@@ -175,8 +175,8 @@ describe('迁移 v31 - 权限更名', () => {
     })
   }
 
-  it('权限总数不变（50 项，无新增权限）', async () => {
-    expect(await countRows('permissions')).toBe(50)
+  it('权限总数不变（v31 无新增权限；总数 52 来自 v35 AI 智能下单模块）', async () => {
+    expect(await countRows('permissions')).toBe(52)
   })
 })
 

@@ -13,8 +13,11 @@ import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import ProductionTasksTab from '../components/ProductionTasksTab'
 import type { Quote } from './Quotes'
 import { findTablePositions, extractFabricPrepRows, type FabricPrepRow } from '../services/tableLocator'
+import { parseAiTableFill, applyAiFillToTableData, applyAiTableCellsToTableData, type AiTableFill } from '../services/aiTableFill'
+import type { AiTableCell } from '../types'
 import { findFabricMetersCol, ceilFabricMeters, normalizeFabricMeters, FABRIC_METERS_DEFAULT_COL } from '../services/fabricMeters'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
+import { AI_ORDER_DRAFT_STORAGE_KEY } from './AiOrderChat'
 import { OrderStatus } from '../constants/OrderStatus'
 import { StyleConstants } from '../constants/StyleConstants'
 import { TableConstants } from '../constants/TableConstants'
@@ -23,6 +26,8 @@ import { DateUtils } from '../utils/DateUtils'
 import { SheetTemplateManager } from '../templates/SheetTemplateManager'
 import { computeSelectionSummary, type SelectionSummary, type CellRangeLike } from '../utils/SelectionSummary'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { collectSheetLayout, applySheetLayout, filterRowHeightConfigForSave, resolveActualSizes } from '../utils/sheetLayout'
+import { extractImageFilesFromDataTransfer } from '../utils/dropImageExtract'
 
 interface OrderInfo {
   unitPrice: string
@@ -283,6 +288,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const [previewImageSrc, setPreviewImageSrc] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [showSaveSuccess, setShowSaveSuccess] = useState(false)
+  // AI 智能下单草稿载入提示（非空时显示绿色横幅，点击关闭）
+  const [aiImportNotice, setAiImportNotice] = useState('')
   const [saveError, setSaveError] = useState<string>('')
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string>('')
@@ -295,6 +302,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const [quoteNumber, setQuoteNumber] = useState<string>('')
   const [createdAt, setCreatedAt] = useState<string>('')
   const [printQuote, setPrintQuote] = useState<Quote | null>(null)
+  // 打印布局（v34）：打开打印预览时从表格实例读取的实际列宽/行高，随 printQuote 一起更新
+  const [printSizes, setPrintSizes] = useState<{ columnWidths: number[]; rowHeights: number[] }>({ columnWidths: [], rowHeights: [] })
   const [status, setStatus] = useState<number>(1)
   const [statusTimeNodes, setStatusTimeNodes] = useState<{
     quoteTime: string
@@ -332,10 +341,19 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
   // 新增订单时为 null，使用模板数据初始化。
   const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
+  // AI 智能下单草稿解析出的表格填充值（v35）：数量/宽/高/底，在线表格初始化时
+  // 写入成品行（模板公式自动级联重算全部计算列），一次性消费后置 null
+  const aiTableFillRef = useRef<AiTableFill | null>(null)
+  // AI 草稿的 tableCells（单元格级填充：克重/门幅/出血/成本价格等），初始化时
+  // 按行标签+列名双区动态定位写入，一次性消费后置 null
+  const aiTableCellsRef = useRef<AiTableCell[] | null>(null)
   // 当前表格初始化状态：配置行数（新建/切模板=25，编辑=数据行数）与是否发生补齐
   //（配置行数 > 数据行数）。保存时据此判断是否裁剪补齐空行（见 trimTableDataForSave）
   const sheetInitRowCountRef = useRef(0)
   const sheetPaddedRef = useRef(false)
+  // 从数据库加载的布局配置（v34：用户拖拽调整过的列宽/行高），编辑已有订单时恢复；
+  // 新增订单为 null（使用所选模板布局初始化），切换款式/模板时清空
+  const loadedLayoutRef = useRef<{ columnWidthConfig: Array<{ key: number; width: number }>; rowHeightConfig: Array<{ key: number; height: number }> } | null>(null)
   // 表格中所有单元格的公式（地址→公式字符串），加载时直接使用，不依赖模板比对。
   // v9 迁移脚本已将老数据（removedFormulaAddresses + modifiedFormulas + 模板公式）计算初始化为 allFormulas。
   const allFormulasRef = useRef<Record<string, string>>({})
@@ -367,6 +385,42 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   useEffect(() => {
     fetchStyleOptions().then(setStyleOptions)
   }, [])
+
+  // AI 智能下单草稿填充（v35）：从 AI 对话页确认跳转而来（/quotes/new?from=ai）时，
+  // 读取 sessionStorage 草稿合并进表单，参考图片作为产品图初始数据；用后即清。
+  // 仅新建订单（无 id）时生效；非空字段覆盖默认值，空字段保留默认。
+  useEffect(() => {
+    if (id) return
+    const raw = sessionStorage.getItem(AI_ORDER_DRAFT_STORAGE_KEY)
+    if (!raw) return
+    sessionStorage.removeItem(AI_ORDER_DRAFT_STORAGE_KEY)
+    try {
+      const parsed = JSON.parse(raw) as { draft: Partial<OrderInfo> & { tableCells?: AiTableCell[] }; images?: string[] }
+      if (parsed && typeof parsed === 'object' && parsed.draft) {
+        setOrderInfo((prev) => {
+          const next = { ...prev }
+          for (const key of Object.keys(next) as Array<keyof OrderInfo>) {
+            const v = (parsed.draft as Record<string, unknown>)[key]
+            if (typeof v === 'string' && v !== '') next[key] = v
+          }
+          return next
+        })
+        // 解析规格/数量供在线表格初始化：写入成品行后模板公式（B3='=B2' 等）
+        // 自动级联重算切片尺寸/布料米数/总重量/成本报价等全部计算列
+        aiTableFillRef.current = parseAiTableFill(parsed.draft.productSpec, parsed.draft.quantity)
+        // AI 单元格级填充（克重/门幅/出血/成本区价格等，AI 对话页已预览并允许用户剔除）
+        aiTableCellsRef.current = Array.isArray((parsed.draft as Record<string, unknown>).tableCells)
+          ? ((parsed.draft as Record<string, unknown>).tableCells as AiTableCell[])
+          : null
+        if (Array.isArray(parsed.images)) {
+          setProductImages(parsed.images.filter((i) => typeof i === 'string'))
+        }
+        setAiImportNotice('已载入 AI 生成的订单信息，在线表格已按数量/规格/克重/工艺价格自动填充并重算，请核对后保存')
+      }
+    } catch {
+      // 草稿解析失败静默忽略，按普通新建订单处理
+    }
+  }, [id])
 
   // 加载数据库模板覆盖（幂等，进程内一次）：加载失败时静默使用内置模板
   useEffect(() => {
@@ -501,6 +555,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         setProductImages(data.images || [])
         // 加载已保存的在线表格数据（覆盖模板默认值，后续以数据库为准）
         loadedTableDataRef.current = (data.tableData && data.tableData.length > 0) ? data.tableData : null
+        // 加载布局配置（v34）：重新打开订单时恢复用户调整过的列宽/行高
+        loadedLayoutRef.current = {
+          columnWidthConfig: Array.isArray(data.columnWidthConfig) ? data.columnWidthConfig : [],
+          rowHeightConfig: Array.isArray(data.rowHeightConfig) ? data.rowHeightConfig : [],
+        }
         // 加载所有公式（v9 迁移已将老数据初始化为 allFormulas，直接使用，不依赖模板比对）
         allFormulasRef.current = data.allFormulas || {}
         // 重置 dirty 状态：加载完成时无未保存编辑
@@ -521,6 +580,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     // 从表格实例提取当前二维数据
     let tableData: (string | number | null)[][] = []
     const sheet = sheetInstanceRef.current
+    let printSizes: { columnWidths: number[]; rowHeights: number[] } = { columnWidths: [], rowHeights: [] }
     if (sheet) {
       const ws = sheet.getActiveSheet()
       const activeTable = ws?.tableInstance as any
@@ -533,6 +593,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         }
         tableData.push(rowData)
       }
+      // 布局适配（v34）：打印按页面所见输出列宽行高（含默认尺寸的完整数组）
+      printSizes = resolveActualSizes(activeTable, rowCount, colCount)
     }
     // 打印口径与保存一致：布料米数列向上取整（详情见 services/fabricMeters）
     tableData = normalizeFabricMeters(tableData).data
@@ -561,6 +623,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       updated_at: '',
     }
     setPrintQuote(quote)
+    setPrintSizes(printSizes)
   }
 
   // opts.confirmDataReset：服务端防篡改守卫拦截（公式清空/表格大幅缩水）后，
@@ -659,6 +722,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       tableData = metersNorm.data
       allFormulas = metersNorm.formulas ?? allFormulas
 
+      // 布局收集（v34）：仅记录用户拖拽调整过的列宽/行高；行高与裁剪联动——
+      // 超出最终保存行数的行高配置一并丢弃（该行已不存在），列宽配置不受裁剪影响
+      const layout = collectSheetLayout(sheetInstanceRef.current, TableConstants.SHEET_KEY)
+      const rowHeightConfig = filterRowHeightConfigForSave(layout.rowHeightConfig, tableData.length)
+
       const quoteData = {
         ...orderInfo,
         costPrice: Math.round((costPrice || 0) * 100) / 100,
@@ -677,6 +745,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         tableData,
         allFormulas,
         productionStepStatus,
+        // 布局配置（v34）：随订单保存，重新打开时恢复
+        columnWidthConfig: layout.columnWidthConfig,
+        rowHeightConfig,
       }
       // 守卫确认标记：仅在用户于确认框中同意后携带（服务端防篡改守卫要求）
       const payload: any = { ...quoteData }
@@ -766,7 +837,17 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         : (allFormulasRef.current || template.formulas)
       // 导出口径与保存一致：布料米数列向上取整 + 公式整体包裹 CEILING
       const metersNorm = normalizeFabricMeters(trimmedData, formulas)
-      const blob = await api.export.orderWithTable(id, { data: metersNorm.data, formulas: metersNorm.formulas ?? formulas })
+      // 布局适配（v34）：按页面所见导出列宽行高——读取当前实际尺寸（含默认值），
+      // 裁剪仅去尾部空区、保留行列的前缀索引不变，故按裁剪后行列数取前缀即可
+      const { columnWidths, rowHeights } = resolveActualSizes(activeTable, activeTable?.rowCount ?? 0, activeTable?.colCount ?? 16)
+      const trimmedWidths = columnWidths.slice(0, metersNorm.data[0]?.length ?? 0)
+      const trimmedHeights = rowHeights.slice(0, metersNorm.data.length)
+      const blob = await api.export.orderWithTable(id, {
+        data: metersNorm.data,
+        formulas: metersNorm.formulas ?? formulas,
+        columnWidths: trimmedWidths.some((w) => w > 0) ? trimmedWidths : undefined,
+        rowHeights: trimmedHeights.some((h) => h > 0) ? trimmedHeights : undefined,
+      })
       const now = new Date()
       const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       downloadBlob(blob, `Order_${orderInfo.customerName || 'Export'}_${ts}.xlsx`)
@@ -792,7 +873,25 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     // 编辑已有订单时优先使用数据库保存的表格数据；新增订单时用模板数据
     const savedTable = loadedTableDataRef.current
     const useSavedTable = savedTable != null && savedTable.length > 0
-    const initialData = savedTable && savedTable.length > 0 ? savedTable : template.data
+    let initialData = savedTable && savedTable.length > 0 ? savedTable : template.data
+    // AI 智能下单草稿（v35）：新建订单时按草稿填充表格（克隆模板数据，禁止原地修改缓存模板）。
+    // 先应用 tableCells 单元格级填充（克重/门幅/出血/成本价格等），再写入成品行数量/规格。
+    // 模板公式（B3='=B2'、H3='=F3+C3'、M 列 CEILING 等）从输入列级联推导全部计算列，
+    // 初始化后 recalculateFormulas 自动重算。
+    const aiFill = aiTableFillRef.current
+    const aiCells = aiTableCellsRef.current
+    if ((aiFill || (aiCells && aiCells.length > 0)) && !useSavedTable) {
+      aiTableFillRef.current = null
+      aiTableCellsRef.current = null
+      if (aiCells && aiCells.length > 0) {
+        initialData = applyAiTableCellsToTableData(initialData, aiCells)
+      }
+      if (aiFill) {
+        initialData = applyAiFillToTableData(initialData, aiFill)
+      }
+      // 填充的规格/数量为有效业务数据，标记 dirty 防止切换款式/模板时无提示丢失
+      setIsTableDirty(true)
+    }
     // 定位布料米数列（表头关键字查找），供显示取整与汇总取整使用
     sheetMetersCol = findFabricMetersCol(initialData)
     // activeFormulas 构建策略：
@@ -824,6 +923,15 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     sheetInitRowCountRef.current = configRowCount
     sheetPaddedRef.current = configRowCount > initialData.length
 
+    // 布局恢复（v34）：编辑已保存订单优先用订单自身保存的布局（仅调整过的行列）；
+    // 新建订单/切换款式模板用所选模板的布局初始化；两者皆空 = 默认尺寸，不传配置
+    const savedLayout = loadedLayoutRef.current
+    const hasSavedLayout = useSavedTable
+      && ((savedLayout?.columnWidthConfig?.length ?? 0) > 0 || (savedLayout?.rowHeightConfig?.length ?? 0) > 0)
+    const initLayout = hasSavedLayout
+      ? savedLayout!
+      : { columnWidthConfig: template.columnWidthConfig ?? [], rowHeightConfig: template.rowHeightConfig ?? [] }
+
     const sheet = new VTableSheet(sheetContainerRef.current, {
       showFormulaBar: true,
       undoRedo: { show: !readOnly },
@@ -840,10 +948,15 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           formulas: activeFormulas,
           showHeader: false,
           rowCount: configRowCount,
+          // v34 布局持久化：不通过 sheets 配置传 columnWidthConfig/rowHeightConfig——
+          // ListTable.isAutoRowHeight 对 rowHeightConfig 做 truthy 判断（空数组也成立），
+          // 会强制全表逐行内容自适应行高导致错位；改由下方 applySheetLayout 公开 API 恢复
         },
       ],
     })
     sheetInstanceRef.current = sheet
+    // v34 布局恢复：编辑已保存订单优先用订单自身布局；新建订单/切换模板继承所选模板布局
+    applySheetLayout(sheet, initLayout, TableConstants.SHEET_KEY)
     // 将公式引擎引用赋值给模块级变量，供 getCellStyle 实时检测公式单元格
     activeFormulaManager = (sheet as any).formulaManager
 
@@ -1190,9 +1303,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
-    const files = e.dataTransfer.files
-    if (!files || files.length === 0) return
-    processFiles(Array.from(files))
+    // 多平台拖拽：files（微信/本地文件/截图）优先；网页图片（1688 等）从 html/uri-list
+    // 提取 URL 后下载（浏览器直连 → 后端代理兜底绕过 CORS/防盗链）
+    void extractImageFilesFromDataTransfer(e.dataTransfer).then((files) => {
+      if (files.length > 0) processFiles(files)
+    })
   }
 
   const handleImageRemove = (index: number) => {
@@ -1260,6 +1375,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     // 清除所有表格相关状态，加载新模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
     loadedTableDataRef.current = null
     allFormulasRef.current = {}
+    // 布局配置（v34）：切换后用新模板布局重新初始化，原订单布局不保留
+    loadedLayoutRef.current = null
     setIsTableDirty(false)
     setOrderInfo((prev) => ({ ...prev, productStyle: style, templateId }))
   }
@@ -2313,6 +2430,16 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         </div>
       )}
 
+      {aiImportNotice && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-primary-600 text-white rounded-lg shadow-lg">
+          <CheckCircle size={20} />
+          <span className="font-medium">{aiImportNotice}</span>
+          <button onClick={() => setAiImportNotice('')} className="ml-1 hover:text-gray-200" title="关闭">
+            <X size={18} />
+          </button>
+        </div>
+      )}
+
       {saveError && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-red-500 text-white rounded-lg shadow-lg">
           <X size={20} />
@@ -2331,6 +2458,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         <PrintPreviewModal
           quote={printQuote}
           styleLabel={styleOptions.find((s) => s.value === orderInfo.productStyle)?.label || orderInfo.productStyle}
+          columnWidths={printSizes.columnWidths}
+          rowHeights={printSizes.rowHeights}
           onClose={() => setPrintQuote(null)}
         />
       )}

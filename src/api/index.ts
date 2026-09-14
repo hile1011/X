@@ -1,4 +1,5 @@
 import { useAuthStore } from '../store/auth'
+import type { AiOrderAnalyzeRequest, AiOrderAnalyzeResponse } from '../types'
 
 const API_BASE = '/api'
 
@@ -218,6 +219,17 @@ export const api = {
       return token ? `${url}?token=${encodeURIComponent(token)}` : url
     },
   },
+  upload: {
+    /**
+     * 图片代理抓取：拖拽网页图片（1688/淘宝等）上传时，浏览器直连受 CORS/防盗链限制，
+     * 由后端代理下载后返回 { dataUrl, contentType, size }
+     */
+    fetchImage: (url: string) => authFetch(`${API_BASE}/upload/fetch-image`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ url }),
+    }).then(handleResponse),
+  },
   quotes: {
     getAll: () => authFetch(`${API_BASE}/quotes`).then(handleResponse),
     getImageFlags: () => authFetch(`${API_BASE}/quotes/image-flags`).then(handleResponse),
@@ -347,21 +359,44 @@ export const api = {
     deleteFieldCheck: (itemId: string, fieldId: string) =>
       authFetch(`${API_BASE}/product-cost-items/${itemId}/fields/${fieldId}/delete-check`).then(handleResponse),
   },
+  /** AI 智能下单（v35：文字描述+参考图片 → 订单草稿） */
+  aiOrder: {
+    /** 智能分析：综合文字与图片提取订单信息，返回草稿与标准配置匹配结果 */
+    analyze: (data: AiOrderAnalyzeRequest) =>
+      authFetch(`${API_BASE}/ai-order/analyze`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(data),
+      }).then(handleResponse) as Promise<AiOrderAnalyzeResponse>,
+  },
   sheetTemplates: {
     /** 全部模板（一对多）；可选 styleCode 过滤该款式的全部模板 */
     getAll: (styleCode?: string) => authFetch(
       `${API_BASE}/sheet-templates${styleCode ? `?styleCode=${encodeURIComponent(styleCode)}` : ''}`
     ).then(handleResponse),
     getById: (id: string) => authFetch(`${API_BASE}/sheet-templates/${id}`).then(handleResponse),
-    /** 新增模板：{ styleCode, name, data?, formulas? }，重名时后端返回 409 */
-    create: (payload: { styleCode: string; name: string; data?: (string | number | null)[][]; formulas?: Record<string, string> }) =>
+    /** 新增模板：{ styleCode, name, data?, formulas?, columnWidthConfig?, rowHeightConfig? }，重名时后端返回 409 */
+    create: (payload: {
+      styleCode: string
+      name: string
+      data?: (string | number | null)[][]
+      formulas?: Record<string, string>
+      columnWidthConfig?: Array<{ key: number; width: number }>
+      rowHeightConfig?: Array<{ key: number; height: number }>
+    }) =>
       authFetch(`${API_BASE}/sheet-templates`, {
         method: 'POST',
         headers: jsonHeaders,
         body: JSON.stringify(payload),
       }).then(handleResponse),
-    /** 更新模板：{ name?, data, formulas }，改名重名时后端返回 409 */
-    update: (id: string, payload: { name?: string; data: (string | number | null)[][]; formulas: Record<string, string> }) =>
+    /** 更新模板：{ name?, data, formulas, columnWidthConfig?, rowHeightConfig? }，改名重名时后端返回 409 */
+    update: (id: string, payload: {
+      name?: string
+      data: (string | number | null)[][]
+      formulas: Record<string, string>
+      columnWidthConfig?: Array<{ key: number; width: number }>
+      rowHeightConfig?: Array<{ key: number; height: number }>
+    }) =>
       authFetch(`${API_BASE}/sheet-templates/${id}`, {
         method: 'PUT',
         headers: jsonHeaders,
@@ -385,8 +420,13 @@ export const api = {
       }
       return res.blob()
     },
-    /** 导出单订单 + 在线表格（返回 Blob 用于下载） */
-    orderWithTable: async (orderId: string, tableData: { data: (string | number | null)[][]; formulas: Record<string, string> }): Promise<Blob> => {
+    /** 导出单订单 + 在线表格（返回 Blob 用于下载；columnWidths/rowHeights 为 px，按页面所见导出布局） */
+    orderWithTable: async (orderId: string, tableData: {
+      data: (string | number | null)[][]
+      formulas: Record<string, string>
+      columnWidths?: number[]
+      rowHeights?: number[]
+    }): Promise<Blob> => {
       const res = await authFetch(`${API_BASE}/export/order-with-table`, {
         method: 'POST',
         headers: jsonHeaders,

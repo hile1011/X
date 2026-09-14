@@ -15,6 +15,7 @@ interface PermissionItem {
 const moduleNames: Record<string, string> = {
   dashboard: '工作台',
   quotes: '订单管理',
+  'ai-order': 'AI智能下单',
   'production-tracking': '做货跟踪',
   reconciliation: '订单对账管理',
   'quotes-table': '订单表格版',

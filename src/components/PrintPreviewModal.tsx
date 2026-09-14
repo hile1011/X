@@ -2,11 +2,15 @@ import { useRef, useEffect, useMemo } from 'react'
 import type { Quote } from '../pages/Quotes'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TableConstants } from '../constants/TableConstants'
-import { getPrintTableRows, isTableTitleRow } from '../utils/printTableRange'
+import { getPrintTableRowEntries, isTableTitleRow } from '../utils/printTableRange'
 
 interface PrintPreviewModalProps {
   quote: Quote
   styleLabel: string
+  /** 在线表格各列实际宽度（px，索引=列号；v34 打印布局适配，页面实时值优先） */
+  columnWidths?: number[]
+  /** 在线表格各行实际高度（px，索引=原始行号；v34 打印布局适配，页面实时值优先） */
+  rowHeights?: number[]
   onClose: () => void
 }
 
@@ -27,7 +31,7 @@ const STATUS_COLORS: Record<number, string> = {
  * 流程：将 A4 预览内容渲染到隐藏 DOM → 提取 HTML → 在新标签页中展示预览 + 打印按钮
  * 新标签页包含完整样式（复制父文档样式表），用户确认后调用浏览器打印。
  */
-export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewModalProps) {
+export function PrintPreviewModal({ quote, styleLabel, columnWidths, rowHeights, onClose }: PrintPreviewModalProps) {
   const contentRef = useRef<HTMLDivElement>(null)
 
   // 组件挂载后：提取渲染好的 HTML，在新标签页中打开预览
@@ -130,16 +134,52 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
   const statusLabel = OrderStatus.getLabel(quote.status) || '未知'
   const statusColor = STATUS_COLORS[quote.status] || '#6b7280'
 
-  // 在线表格列宽百分比（按 COL_WIDTHS 比例分配，适配 A4 宽度）
+  // 在线表格列宽百分比（v34 布局适配）：页面实时尺寸（columnWidths）优先，
+  // 未提供时（如订单列表页打印）用订单保存的 columnWidthConfig 叠加默认列宽；
+  // 按比例分配适配 A4 宽度
+  const effectiveColWidths = useMemo(() => {
+    const defaults = TableConstants.COL_WIDTHS
+    if (columnWidths && columnWidths.length > 0) {
+      // 页面实时值：非法值（0/undefined）回退默认列宽
+      return defaults.map((def, i) => {
+        const w = columnWidths[i]
+        return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : def
+      })
+    }
+    const cfg = Array.isArray(quote.columnWidthConfig) ? quote.columnWidthConfig : []
+    return defaults.map((def, i) => cfg.find((c) => c?.key === i && typeof c.width === 'number' && c.width > 0)?.width ?? def)
+  }, [columnWidths, quote.columnWidthConfig])
   const colPercents = useMemo(() => {
-    const widths = TableConstants.COL_WIDTHS
-    const total = widths.reduce((s, w) => s + w, 0)
-    return widths.map((w) => `${(w / total) * 100}%`)
-  }, [])
+    const total = effectiveColWidths.reduce((s, w) => s + w, 0)
+    return effectiveColWidths.map((w) => `${(w / total) * 100}%`)
+  }, [effectiveColWidths])
   const colCount = TableConstants.getColumnCount()
   // 打印范围限制：仅保留第二个标题行之前的内容（过滤空行 + 截断，详见 printTableRange.ts）
-  const printTableRows = useMemo(() => getPrintTableRows(quote.tableData), [quote.tableData])
-  const hasTableData = printTableRows.length > 0
+  // srcIdx = 原始行号，供行高对位（v34）
+  const printTableEntries = useMemo(() => getPrintTableRowEntries(quote.tableData), [quote.tableData])
+  const hasTableData = printTableEntries.length > 0
+
+  // 行高（v34 布局适配）：页面实时值（rowHeights，按原始行号索引）优先；
+  // 未提供时用订单保存的 rowHeightConfig（仅调整过的行，其余行自适应高度）。
+  // 列宽按 A4 等比缩放，行高乘同一比例保持页面所见的宽高比例。
+  const printWidthPx = 794 - 112 // A4 794px 宽 - 左右 padding 56px
+  const printScale = useMemo(() => {
+    const total = effectiveColWidths.reduce((s, w) => s + w, 0)
+    return total > 0 ? printWidthPx / total : 1
+  }, [effectiveColWidths])
+  const rowHeightFor = (srcIdx: number): number | undefined => {
+    let px: number | undefined
+    if (rowHeights && rowHeights.length > 0) {
+      const h = rowHeights[srcIdx]
+      px = typeof h === 'number' && Number.isFinite(h) && h > 0 ? h : undefined
+    } else {
+      const cfg = Array.isArray(quote.rowHeightConfig)
+        ? quote.rowHeightConfig.find((c) => c?.key === srcIdx)
+        : undefined
+      px = cfg && typeof cfg.height === 'number' && cfg.height > 0 ? cfg.height : undefined
+    }
+    return px !== undefined ? Math.round(px * printScale) : undefined
+  }
 
   // 隐藏渲染：内容会被提取到新标签页，用户不可见
   return (
@@ -312,11 +352,13 @@ export function PrintPreviewModal({ quote, styleLabel, onClose }: PrintPreviewMo
                   ))}
                 </colgroup>
                 <tbody>
-                  {printTableRows.map((row, rowIdx) => {
+                  {printTableEntries.map(({ row, srcIdx }, rowIdx) => {
                     // 标题行保留在线表格原有样式：蓝底白字加粗（#4472C4 / #FFFFFF）
                     const isTitle = isTableTitleRow(row)
+                    // v34 布局适配：按页面所见行高打印（原始行号对位，等比缩放到 A4）
+                    const trHeight = rowHeightFor(srcIdx)
                     return (
-                      <tr key={rowIdx}>
+                      <tr key={rowIdx} style={trHeight !== undefined ? { height: `${trHeight}px` } : undefined}>
                         {Array.from({ length: colCount }).map((_, colIdx) => (
                           <td
                             key={colIdx}

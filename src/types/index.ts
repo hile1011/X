@@ -143,6 +143,10 @@ export interface Quote {
   tableData?: (string | number | null)[][]
   // 用户已删除的公式地址列表（如 ["J8"]），加载时排除这些公式使 tableData 值生效
   removedFormulaAddresses?: string[]
+  // 在线表格列宽配置（v34：[{key:列号,width:px}]，仅用户拖拽调整过的列；重新打开时恢复布局）
+  columnWidthConfig?: Array<{ key: number; width: number }>
+  // 在线表格行高配置（v34：[{key:行号,height:px}]，仅用户拖拽调整过的行；重新打开时恢复布局）
+  rowHeightConfig?: Array<{ key: number; height: number }>
   created_at: string
   updated_at: string
 }
@@ -197,3 +201,83 @@ export interface ProductCostItem {
   createdAt: string
   updatedAt: string
 }
+
+// ============================================================
+// AI 智能下单（v35：ai-order 模块）
+// ============================================================
+
+/** AI 提取的订单草稿（字段与 BagQuote OrderInfo 对齐，均为字符串） */
+export interface AiOrderDraft {
+  customerName: string
+  /** 产品款式 code（后端已将 AI 输出的款式名称映射为 code） */
+  productStyle: string
+  /** 规格尺寸，如 40*35*10cm */
+  productSpec: string
+  /** 布料材质（优先产品成本项配置标准名称） */
+  fabricMaterial: string
+  /** 印刷工艺（标准名称，多个用 + 拼接） */
+  process: string
+  /** 提手材质/方式 */
+  handleMaterial: string
+  /** 提带规格 */
+  handleSpec: string
+  /** 数量（纯数字字符串） */
+  quantity: string
+  /** 装箱规格 */
+  boxSpec: string
+  /** 单价 */
+  unitPrice: string
+  /** 打样费 */
+  sampleFee: string
+  /** 备注 */
+  remark: string
+  /** 在线表格单元格填充（行标签+列名定位，AI 直接生成细粒度表格输入值） */
+  tableCells: AiTableCell[]
+}
+
+/** AI 输出的表格单元格：row=行标签（成品/正反面/手提…），col=列名关键字（数量/宽/克重/布料价格…） */
+export interface AiTableCell {
+  row: string
+  col: string
+  value: string | number
+}
+
+/** AI 分析的标准配置匹配结果（后端基于产品成本项配置二次校验） */
+export interface AiOrderDraftMeta {
+  /** 草稿中命中标准配置的字段名列表 */
+  matchedFields: string[]
+  /** 非标准字段明细（黄色警示标识，允许人工干预调整） */
+  nonStandard: Array<{ field: string; value: string; reason: string }>
+  /** 尚未提取到的关键字段中文名 */
+  missingFields: string[]
+  /** 标准选项池（供前端下拉建议） */
+  standardOptions: {
+    /** 产品成本项配置（成本项→可选工艺），按成本项分组 */
+    costItems: Array<{ name: string; processes: string[] }>
+    /** 款式选项（value=code，label=名称） */
+    styles: Array<{ value: string; label: string }>
+  }
+}
+
+/** POST /api/ai-order/analyze 请求 */
+export interface AiOrderAnalyzeRequest {
+  /** 本轮文字描述 */
+  message: string
+  /** 参考图片（base64 dataURL，最多 4 张） */
+  images: string[]
+  /** 对话历史（最近若干轮，服务端裁剪） */
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+}
+
+/** POST /api/ai-order/analyze 响应 */
+export interface AiOrderAnalyzeResponse {
+  /** AI 的自然语言回复 */
+  reply: string
+  /** 订单草稿（本轮无有效草稿时为 null） */
+  draft: AiOrderDraft | null
+  /** AI 置信度 0-1 */
+  confidence: number
+  /** 标准匹配结果 */
+  draftMeta: AiOrderDraftMeta
+}
+

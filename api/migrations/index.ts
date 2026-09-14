@@ -1,6 +1,6 @@
 import { normalizeFabricMeters, parseColFromAddress } from '../services/fabricMeters.js'
 
-export const CURRENT_SCHEMA_VERSION = 33
+export const CURRENT_SCHEMA_VERSION = 35
 
 export interface Migration {
   version: number
@@ -1887,6 +1887,99 @@ export const migrations: Migration[] = [
       }
 
       await db.exec('DROP TABLE IF EXISTS fabric_meters_ceil_audit')
+    },
+  },
+  {
+    version: 34,
+    name: 'sheet-layout-config',
+    description: 'V0.26：在线表格布局持久化——quotes 与 sheet_templates 各新增 columnWidthConfig/rowHeightConfig（LONGTEXT JSON，VTable 结构 [{key:行/列号,width/height:px}]，仅记录用户拖拽调整过的行列），编辑订单/模板重新打开时恢复布局；新建订单继承所选模板布局',
+    up: async (db: any) => {
+      // MySQL 8 不支持 ADD/DROP COLUMN IF NOT EXISTS，通过 information_schema 判断实现幂等
+      const colExists = async (table: string, col: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        ).all(table, col) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const addCol = async (table: string, col: string, ddl: string) => {
+        if (!(await colExists(table, col))) {
+          await db.exec(`ALTER TABLE \`${table}\` ADD COLUMN \`${col}\` ${ddl}`)
+        }
+      }
+      await addCol('quotes', 'columnWidthConfig',
+        "LONGTEXT COMMENT '在线表格列宽配置 JSON [{key:列号,width:px}]，仅用户调整过的列（v34）'")
+      await addCol('quotes', 'rowHeightConfig',
+        "LONGTEXT COMMENT '在线表格行高配置 JSON [{key:行号,height:px}]，仅用户调整过的行（v34）'")
+      await addCol('sheet_templates', 'columnWidthConfig',
+        "LONGTEXT COMMENT '在线表格列宽配置 JSON [{key:列号,width:px}]，仅用户调整过的列（v34）'")
+      await addCol('sheet_templates', 'rowHeightConfig',
+        "LONGTEXT COMMENT '在线表格行高配置 JSON [{key:行号,height:px}]，仅用户调整过的行（v34）'")
+    },
+    down: async (db: any) => {
+      // 逆序撤销：删除 4 个布局列（存在才删，幂等）
+      const colExists = async (table: string, col: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        ).all(table, col) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const dropCol = async (table: string, col: string) => {
+        if (await colExists(table, col)) {
+          await db.exec(`ALTER TABLE \`${table}\` DROP COLUMN \`${col}\``)
+        }
+      }
+      await dropCol('sheet_templates', 'rowHeightConfig')
+      await dropCol('sheet_templates', 'columnWidthConfig')
+      await dropCol('quotes', 'rowHeightConfig')
+      await dropCol('quotes', 'columnWidthConfig')
+    },
+  },
+  {
+    version: 35,
+    name: 'ai-order-module-permissions',
+    description: 'V0.27：新增 AI 智能下单模块权限（ai-order:view 菜单入口、ai-order:analyze 智能分析操作）。存量角色按原等效权限 quotes:create 自动分配（AI 下单为创建订单的前置流程），admin 角色显式分配全部新权限',
+    up: async (db: any) => {
+      // 1. 新增权限（幂等）
+      const perms: Array<[string, string, string, string, string, string, string, number]> = [
+        // [id, code, name, module, action, type, description, sort_order]
+        ['perm-ai-order-view', 'ai-order:view', 'AI智能下单-查看', 'ai-order', 'view', 'menu', 'AI 智能下单模块访问（对话式生成订单草稿）', 28],
+        ['perm-ai-order-analyze', 'ai-order:analyze', 'AI智能下单-智能分析', 'ai-order', 'analyze', 'button', 'AI 分析文字描述与参考图片，生成订单草稿', 29],
+      ]
+      const permStmt = db.prepare(
+        'INSERT IGNORE INTO permissions (id, code, name, module, action, type, description, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      for (const p of perms) {
+        await permStmt.run(...p)
+      }
+
+      // 2. admin 角色显式分配全部新权限
+      const rpStmt = db.prepare(
+        'INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)'
+      )
+      for (const p of perms) {
+        await rpStmt.run('role-admin', p[0])
+      }
+
+      // 3. 存量兼容：拥有「订单-新增」权限的角色自动获得 AI 智能下单入口与分析能力
+      //    （AI 下单本质是创建订单的前置辅助流程，与 quotes:create 等效）
+      for (const pid of ['perm-ai-order-view', 'perm-ai-order-analyze']) {
+        await db.exec(`
+          INSERT IGNORE INTO role_permissions (role_id, permission_id)
+          SELECT rp.role_id, '${pid}'
+          FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+          WHERE p.code = 'quotes:create'
+        `)
+      }
+    },
+    down: async (db: any) => {
+      // 逆序撤销：先删角色关联，再删权限（避免外键约束）
+      const permIds = ['perm-ai-order-view', 'perm-ai-order-analyze']
+      await db.prepare(
+        `DELETE FROM role_permissions WHERE permission_id IN (${permIds.map(() => '?').join(', ')})`
+      ).run(...permIds)
+      await db.prepare(
+        `DELETE FROM permissions WHERE id IN (${permIds.map(() => '?').join(', ')})`
+      ).run(...permIds)
     },
   },
 ]

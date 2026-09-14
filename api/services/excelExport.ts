@@ -527,6 +527,10 @@ export interface TableExportData {
   data: (string | number | null)[][]
   /** 公式映射（单元格地址 -> 公式字符串，如 { "B3": "=B2" }） */
   formulas: Record<string, string>
+  /** 各列实际宽度（px，索引=列号；v34 布局适配，可选）——按页面所见导出列宽 */
+  columnWidths?: number[]
+  /** 各行实际高度（px，索引=行号；v34 布局适配，可选）——按页面所见导出行高 */
+  rowHeights?: number[]
 }
 
 /** 将单元格地址（如 "B3"）转换为列号+行号（1-based） */
@@ -886,7 +890,7 @@ export async function generateOrderWithTableExcel(
     views: [{ state: 'frozen', ySplit: 0 }],
   })
 
-  const { data, formulas } = tableData
+  const { data, formulas, columnWidths, rowHeights } = tableData
 
   // 写入静态数据
   for (let r = 0; r < data.length; r++) {
@@ -913,9 +917,25 @@ export async function generateOrderWithTableExcel(
     }
   }
 
-  // 表格列宽设置
+  // 表格列宽设置：v34 布局适配——前端传入各列实际宽度（px）时按页面所见导出，
+  // 否则回退默认 14 字符宽。ExcelJS 列宽单位为字符数，px → 字符：(px - 5) / 7
+  //（与 pixelToFractionalCol 的换算互逆）
   for (let c = 0; c < (data[0]?.length ?? 0); c++) {
-    tableSheet.getColumn(c + 1).width = 14
+    const px = columnWidths?.[c]
+    tableSheet.getColumn(c + 1).width = (typeof px === 'number' && px > 0)
+      ? Math.max((px - 5) / 7, 4)
+      : 14
+  }
+
+  // 行高设置（v34 布局适配）：前端传入各行实际高度（px）时按页面所见导出。
+  // ExcelJS 行高单位为磅（point），px → pt：px * 0.75（1px = 0.75pt，96dpi 标准）
+  if (Array.isArray(rowHeights)) {
+    for (let r = 0; r < data.length && r < rowHeights.length; r++) {
+      const px = rowHeights[r]
+      if (typeof px === 'number' && Number.isFinite(px) && px > 0) {
+        tableSheet.getRow(r + 1).height = px * 0.75
+      }
+    }
   }
 
   // 数值/公式单元格统一应用 2 位小数格式，与订单管理在线表格规则一致

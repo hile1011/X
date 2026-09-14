@@ -9,6 +9,7 @@ import { findFabricMetersCol, ceilFabricMeters, FABRIC_METERS_DEFAULT_COL } from
 import { OrderStatus } from '../constants/OrderStatus'
 import { TableConstants } from '../constants/TableConstants'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { extractImageFilesFromDataTransfer } from '../utils/dropImageExtract'
 
 interface OrderInfo {
   unitPrice: string
@@ -881,9 +882,11 @@ export default function BagQuoteTable() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsDragging(false)
-    const files = e.dataTransfer.files
-    if (!files || files.length === 0) return
-    processFiles(Array.from(files))
+    // 多平台拖拽：files（微信/本地文件/截图）优先；网页图片（1688 等）从 html/uri-list
+    // 提取 URL 后下载（浏览器直连 → 后端代理兜底绕过 CORS/防盗链）
+    void extractImageFilesFromDataTransfer(e.dataTransfer).then((files) => {
+      if (files.length > 0) processFiles(files)
+    })
   }
 
   const handleImageRemove = (index: number) => {

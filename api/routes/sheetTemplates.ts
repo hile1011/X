@@ -3,6 +3,7 @@ import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 import { requirePermission } from '../middleware/auth.js'
 import { normalizeFabricMeters, logFabricMetersCeil } from '../services/fabricMeters.js'
+import { sanitizeSheetLayoutConfig } from '../services/sheetLayout.js'
 
 export const sheetTemplatesRouter = express.Router()
 
@@ -71,10 +72,15 @@ sheetTemplatesRouter.post('/', requirePermission('sheet-templates:edit'), asyncH
   }
   const data = Array.isArray(req.body?.data) && req.body.data.length > 0 ? req.body.data : [[null]]
   const formulas = (req.body?.formulas && typeof req.body.formulas === 'object' && !Array.isArray(req.body.formulas)) ? req.body.formulas : {}
+  // 布局配置校验（v34）：正有限数、key 界内，脏条目丢弃（前端已收集合法值，此为 API 直调兜底）
+  const layout = {
+    columnWidthConfig: sanitizeSheetLayoutConfig(req.body?.columnWidthConfig, 'width'),
+    rowHeightConfig: sanitizeSheetLayoutConfig(req.body?.rowHeightConfig, 'height'),
+  }
   // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
   const norm = normalizeFabricMeters(data, formulas)
   try {
-    const created = await db.sheetTemplates.create(styleCode, name, norm.data, norm.formulas ?? formulas, req.user?.name || '')
+    const created = await db.sheetTemplates.create(styleCode, name, norm.data, norm.formulas ?? formulas, req.user?.name || '', layout)
     await logFabricMetersCeil({
       entityType: 'sheet-template',
       entityId: created.id,
@@ -98,10 +104,15 @@ sheetTemplatesRouter.put('/:id', requirePermission('sheet-templates:edit'), asyn
     return res.status(400).json({ error: validated.error })
   }
   const name = typeof req.body?.name === 'string' ? req.body.name : undefined
+  // 布局配置校验（v34）：未传时保持已存值（局部更新），传入（含空数组）则覆盖
+  const layout = {
+    columnWidthConfig: sanitizeSheetLayoutConfig(req.body?.columnWidthConfig, 'width'),
+    rowHeightConfig: sanitizeSheetLayoutConfig(req.body?.rowHeightConfig, 'height'),
+  }
   // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
   const norm = normalizeFabricMeters(validated.data, validated.formulas)
   try {
-    const saved = await db.sheetTemplates.update(id, name, norm.data, norm.formulas ?? validated.formulas, req.user?.name || '')
+    const saved = await db.sheetTemplates.update(id, name, norm.data, norm.formulas ?? validated.formulas, req.user?.name || '', layout)
     if (!saved) {
       return res.status(404).json({ error: '模板不存在' })
     }

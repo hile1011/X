@@ -71,6 +71,9 @@ const SEED_PERMISSIONS = [
   { id: 'perm-reconciliation-view', code: 'reconciliation:view', name: '订单对账-查看', module: 'reconciliation', action: 'view', type: 'menu', sort: 25 },
   { id: 'perm-reconciliation-edit', code: 'reconciliation:edit', name: '订单对账-编辑', module: 'reconciliation', action: 'edit', type: 'button', sort: 26 },
   { id: 'perm-reconciliation-execute', code: 'reconciliation:execute', name: '订单对账-执行', module: 'reconciliation', action: 'execute', type: 'button', sort: 27 },
+  // v35：AI 智能下单模块权限
+  { id: 'perm-ai-order-view', code: 'ai-order:view', name: 'AI智能下单-查看', module: 'ai-order', action: 'view', type: 'menu', sort: 28 },
+  { id: 'perm-ai-order-analyze', code: 'ai-order:analyze', name: 'AI智能下单-智能分析', module: 'ai-order', action: 'analyze', type: 'button', sort: 29 },
   { id: 'perm-sheet-templates-view', code: 'sheet-templates:view', name: '模板管理-查看', module: 'sheet-templates', action: 'view', type: 'menu', sort: 19 },
   { id: 'perm-sheet-templates-edit', code: 'sheet-templates:edit', name: '模板管理-编辑', module: 'sheet-templates', action: 'edit', type: 'button', sort: 20 },
   { id: 'perm-order-templates-view', code: 'order-templates:view', name: '订单模板-查看', module: 'order-templates', action: 'view', type: 'menu', sort: 21 },

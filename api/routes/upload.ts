@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs'
 import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
+import { assertPublicHttpUrl, fetchImageBuffer } from '../services/imageFetch.js'
 
 export const uploadRouter = express.Router()
 
@@ -226,5 +227,35 @@ uploadRouter.post('/excel/preview', upload.single('file'), async (req, res) => {
       fs.unlinkSync(req.file.path)
     }
     res.status(500).json({ error: '文件解析失败', details: (error as Error).message })
+  }
+})
+
+/**
+ * 图片代理抓取：拖拽网页图片（1688/淘宝等）上传产品图时，
+ * 浏览器直连受 CORS/防盗链限制，由后端代理下载后返回 dataUrl。
+ * 认证由 app.use('/api/upload', authenticate, ...) 统一挂载。
+ */
+uploadRouter.post('/fetch-image', async (req, res) => {
+  try {
+    const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
+    if (!url) {
+      return res.status(400).json({ error: '请提供图片链接' })
+    }
+    const target = await assertPublicHttpUrl(url)
+    const { buffer, mime } = await fetchImageBuffer(target)
+    res.json({
+      success: true,
+      dataUrl: `data:${mime};base64,${buffer.toString('base64')}`,
+      contentType: mime,
+      size: buffer.byteLength,
+    })
+  } catch (error) {
+    const message = (error as Error).message || '图片获取失败'
+    console.error('图片代理抓取失败:', message)
+    // 用户输入问题（非法链接/内网地址/格式不支持）返回 400，源站问题（403/超时）返回 502
+    const clientErrors = ['无效的图片链接', '仅支持 http/https 图片链接', '不允许访问内网地址', '图片域名解析失败',
+      '链接内容不是支持的图片格式', '图片超过 20MB 大小限制', '图片内容为空']
+    const status = clientErrors.some((m) => message.includes(m)) ? 400 : 502
+    res.status(status).json({ error: message })
   }
 })

@@ -31,6 +31,33 @@ export function isTableTitleRow(row: TableRow | undefined | null): boolean {
   return row.slice(1).some(hasValue)
 }
 
+/** 打印行条目：row = 行数据，srcIdx = 在原始 tableData 中的行号（0-based，供行高布局对位） */
+export interface PrintTableRowEntry {
+  row: TableRow
+  srcIdx: number
+}
+
+/**
+ * 获取打印用的表格行（带原始行号）：
+ * 逻辑与 getPrintTableRows 一致，额外保留原始行号（空行过滤前），
+ * 供打印时按 srcIdx 应用行高布局（行高数组按原始行号索引）。
+ */
+export function getPrintTableRowEntries(tableData: TableRow[] | undefined | null): PrintTableRowEntry[] {
+  const entries: PrintTableRowEntry[] = []
+  const rows = (tableData ?? [])
+    .map((row, srcIdx) => ({ row, srcIdx }))
+    .filter((e) => e.row.some(hasValue))
+  let titleCount = 0
+  for (const e of rows) {
+    if (isTableTitleRow(e.row)) {
+      titleCount++
+      if (titleCount === 2) break
+    }
+    entries.push(e)
+  }
+  return entries
+}
+
 /**
  * 获取打印用的表格行：
  *   1. 过滤全空行（与打印原有逻辑一致）
@@ -38,15 +65,5 @@ export function isTableTitleRow(row: TableRow | undefined | null): boolean {
  *   3. 标题行不足 2 个时返回全部非空行
  */
 export function getPrintTableRows(tableData: TableRow[] | undefined | null): TableRow[] {
-  const rows = (tableData ?? []).filter((row) => row.some(hasValue))
-  let titleCount = 0
-  for (let i = 0; i < rows.length; i++) {
-    if (isTableTitleRow(rows[i])) {
-      titleCount++
-      if (titleCount === 2) {
-        return rows.slice(0, i)
-      }
-    }
-  }
-  return rows
+  return getPrintTableRowEntries(tableData).map((e) => e.row)
 }

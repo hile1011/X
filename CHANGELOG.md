@@ -6,6 +6,44 @@
 
 ---
 
+## [v1.6.0] - 2026-09-15
+
+### 🎯 核心主题：AI 智能下单 + 在线表格布局持久化
+
+### ✨ 新增功能
+
+#### AI 智能下单（DB v35）
+- **对话式生成订单草稿**：`/ai-order-chat` 独立页面，输入文字描述 + 参考图片（粘贴/拖拽/点击上传，支持拖入多图提取），AI 综合分析生成帆布袋定制订单草稿
+- **模型**：阿里云 DashScope（OpenAI 兼容接口，通义千问 Qwen-VL 视觉模型），环境变量 `DASHSCOPE_API_KEY` / `DASHSCOPE_MODEL`（默认 qwen-vl-max）/ `DASHSCOPE_BASE_URL` 可配置
+- **标准配置匹配**：基于产品成本项配置（材质/印刷工艺等标准选项）+ 款式列表构建系统提示词，AI 草稿自动匹配标准选项，非标准需求明确标识
+- **表格细粒度填充**：AI 直接生成在线表格单元格级输入（行标签+列名定位），草稿确认后一键带入订单编辑页
+- **权限**：`ai-order:view`（菜单入口）、`ai-order:analyze`（分析操作），存量角色按 `quotes:create` 等效自动分配
+
+#### 在线表格布局持久化（DB v34）
+- **列宽/行高记忆**：quotes 与 sheet_templates 各新增 `columnWidthConfig` / `rowHeightConfig`（LONGTEXT JSON，仅记录用户拖拽调整过的行列），编辑订单/模板重新打开时恢复布局
+- **模板继承**：新建订单继承所选模板的布局配置
+
+### 🔧 其他改进
+
+- dotenv 双配置加载：根目录 `.env` 优先（VITE_* 共享配置），`api/.env` 兜底补充后端配置（PORT、DASHSCOPE_API_KEY 等）
+- 图片抓取服务（imageFetch）：统一的外部图片下载与 base64 转换
+- 打印区域计算（printTableRange）适配布局配置
+
+### 🗄️ 数据库变更
+
+- **v34** `sheet-layout-config`：quotes / sheet_templates 新增布局配置 4 列（幂等 + 可回滚）
+- **v35** `ai-order-module-permissions`：AI 智能下单 2 项权限（存量角色自动兼容分配）
+
+### ✅ 测试
+
+- 新增 7 个测试文件：aiOrder（提示词构建/草稿解析/标准匹配）、aiTableFill（表格填充）、dropImageExtract（拖图提取）、imageFetch、sheetLayout、migration-ai-order-permissions、migration-sheet-layout；既有迁移测试同步适配 CURRENT_SCHEMA_VERSION=35
+
+### ⚠️ 部署注意
+
+- 生产环境 `/usr/X-prod/.env` 需补充 `DASHSCOPE_API_KEY`，否则 AI 分析接口返回"AI 服务未配置"提示（其他功能不受影响）
+
+---
+
 ## [v1.5.2] - 2026-09-14
 
 ### 🎨 体验优化

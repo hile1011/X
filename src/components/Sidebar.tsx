@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   LayoutDashboard, FileText, Users, Package, ClipboardList, BarChart3, Table2,
   LogOut, ChevronLeft, ChevronRight, ChevronDown, Shield, KeyRound, Lock,
-  Settings, UserCog, TrendingUp, Scale, GanttChart, type LucideIcon,
+  Settings, UserCog, TrendingUp, Scale, GanttChart, Sparkles, type LucideIcon,
 } from 'lucide-react'
 import { useAuthStore } from '../store/auth'
 import { usePermission } from '../hooks/usePermission'
@@ -21,6 +21,8 @@ interface MenuItem {
 const menuItems: MenuItem[] = [
   { icon: LayoutDashboard, path: '/', label: '工作台', permission: 'dashboard:view' },
   { icon: FileText, path: '/quotes', label: '订单管理', permission: 'quotes:view' },
+  // AI 智能下单：对话式生成订单草稿（v35 独立模块权限）
+  { icon: Sparkles, path: '/ai-order-chat', label: 'AI智能下单', permission: 'ai-order:view' },
   // 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移；v30 独立模块权限）
   { icon: GanttChart, path: '/production-tracking', label: '做货跟踪', permission: 'production-tracking:view' },
   // 订单对账管理：已发货已收款订单的成本核对与对账确认（v28；v30 独立模块权限）

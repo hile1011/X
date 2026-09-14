@@ -116,10 +116,9 @@ describe('迁移 v33 - 表结构', () => {
     expect((indexes as any[]).map((i) => i.INDEX_NAME)).toContain('uk_fm_entity')
   })
 
-  it('Schema 版本为最新版本（33）', async () => {
+  it('Schema 版本为最新版本', async () => {
     const version = await db.getSchemaVersion()
     expect(version).toBe(CURRENT_SCHEMA_VERSION)
-    expect(version).toBe(33)
   })
 })
 
@@ -143,7 +142,7 @@ describe('迁移 v33 - 存量数据取整', () => {
 
   it('migrate 后 quotes 布料米数被向上取整、M 列公式被包裹', async () => {
     await db.runner.migrate()
-    expect(await db.getSchemaVersion()).toBe(33)
+    expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
 
     const row = await queryOne('SELECT tableData, allFormulas FROM quotes WHERE id = ?', [QUOTE_ID])
     expect(row).toBeTruthy()

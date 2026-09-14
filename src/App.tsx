@@ -15,6 +15,7 @@ import AnnualReport from './pages/AnnualReport'
 import ReconciliationAlerts from './pages/ReconciliationAlerts'
 import ReconciliationDetail from './pages/ReconciliationDetail'
 import Quotes from './pages/Quotes'
+import AiOrderChat from './pages/AiOrderChat'
 import ProductionTracking from './pages/ProductionTracking'
 import BagQuote from './pages/BagQuote'
 import BagQuoteTable from './pages/BagQuoteTable'
@@ -76,6 +77,10 @@ function App() {
               } />
               <Route path="/quotes" element={
                 <ProtectedRoute permission="quotes:view"><Quotes /></ProtectedRoute>
+              } />
+              {/* AI 智能下单（v35）：对话式生成订单草稿，确认后跳转新建订单页自动填充 */}
+              <Route path="/ai-order-chat" element={
+                <ProtectedRoute permission="ai-order:view"><AiOrderChat /></ProtectedRoute>
               } />
               {/* 做货跟踪：订单做货流程甘特图 + 订单状态跟踪（自仪表盘迁移；v30 独立模块权限） */}
               <Route path="/production-tracking" element={

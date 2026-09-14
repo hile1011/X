@@ -138,9 +138,10 @@ exportRouter.post(
  * POST /api/export/order-with-table
  * Body: {
  *   orderId: string,
- *   tableData: { data: (string|number|null)[][], formulas: Record<string, string> }
+ *   tableData: { data: (string|number|null)[][], formulas: Record<string, string>,
+ *                columnWidths?: number[], rowHeights?: number[] }
  * }
- * Response: Excel 文件下载（含在线表格 + 公式）
+ * Response: Excel 文件下载（含在线表格 + 公式；columnWidths/rowHeights 为 px，按页面所见导出布局）
  */
 exportRouter.post(
   '/order-with-table',
@@ -165,6 +166,9 @@ exportRouter.post(
       const workbook = await generateOrderWithTableExcel(order, {
         data: tableData.data,
         formulas: tableData.formulas || {},
+        // v34 布局适配：前端传入各列/行实际尺寸（px）时按页面所见导出
+        columnWidths: Array.isArray(tableData.columnWidths) ? tableData.columnWidths : undefined,
+        rowHeights: Array.isArray(tableData.rowHeights) ? tableData.rowHeights : undefined,
       }, styleLabelResolver)
       const buffer = await workbookToBuffer(workbook)
       const filename = generateFileName(`Order_${order.customerName}`)

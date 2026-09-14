@@ -72,10 +72,9 @@ describe('迁移 v32 - 表结构', () => {
     expect(names).toContain('idx_pm_product')
   })
 
-  it('Schema 版本为最新版本（33）', async () => {
+  it('Schema 版本为最新版本', async () => {
     const version = await db.getSchemaVersion()
     expect(version).toBe(CURRENT_SCHEMA_VERSION)
-    expect(version).toBe(33)
   })
 })
 
