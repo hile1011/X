@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { Plus } from 'lucide-react'
 import {
   loadTodos,
   saveTodos,
@@ -57,11 +58,12 @@ function getDueInfo(dueDate: string): { text: string; cls: string } {
  *   编号列表/删除线/颜色/字号等编辑样式在展示界面原样呈现
  * - 无外框设计：组件无白色容器/描边/阴影，条目直接置于工作台灰底上，
  *   以淡蓝底色（blue-50）与背景区分，视觉柔和
- * - 高度撑满工作台首行（与「今日新增」卡片等高）；待办 ≤2 条时卡片占满整行并拉伸全高，
- *   多于 2 条时双列排列、超出滚动
+ * - 高度撑满工作台首行（与「今日新增」卡片等高）
+ * - 页面智能排列：1 条占满整行拉伸全高；2 条左右各半并排拉伸；
+ *   3 条及以上双列网格、奇数条时末条占满整行避免尾部空缺、超出滚动
  * - 每条待办：优先级色条 + 大号内容文本 + 截止日期/创建时间
- * - 点击即编辑（无单独新增按钮，空状态点击 = 新增）
- * - 排序：优先级高在前，同级按创建时间
+ * - 新增：有待办时右上角悬浮「新增」按钮；空状态整块点击即新增
+ * - 点击条目即编辑；排序：优先级高在前，同级按创建时间
  * - 数据持久化到 localStorage
  */
 export default function DailyTodos() {
@@ -101,12 +103,16 @@ export default function DailyTodos() {
     setEditing(null)
   }
 
-  // 待办 ≤2 条时：卡片占满整行并拉伸至容器全高（填满右侧区域）；
-  // 多于 2 条时：双列网格自然排列，超出容器高度滚动
-  const stretch = visibleTodos.length > 0 && visibleTodos.length <= 2
+  // 页面智能排列：
+  // - 1 条：占满整行并纵向拉伸全高
+  // - 2 条：左右各半并排，纵向拉伸全高
+  // - 3 条及以上：双列网格自然排列；奇数条时末条占满整行避免尾部空缺；超出滚动
+  const count = visibleTodos.length
+  const stretch = count > 0 && count <= 2
+  const lastFull = count >= 3 && count % 2 === 1
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="relative h-full flex flex-col">
       {/* 待办网格：无标题头，内容即卡片；大屏双列，小屏单列；点击即编辑 */}
       {visibleTodos.length === 0 ? (
         <div
@@ -118,16 +124,18 @@ export default function DailyTodos() {
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto pr-1">
           <div className={`grid grid-cols-1 md:grid-cols-2 gap-2.5 ${stretch ? 'h-full auto-rows-fr' : ''}`}>
-            {visibleTodos.map((todo) => {
+            {visibleTodos.map((todo, idx) => {
               const priority = todo.priority || 'medium'
               const pStyle = PRIORITY_STYLES[priority]
               // 内容为主体（富文本渲染）；旧数据无内容时回退标题纯文本
               const hasContent = extractPlainText(todo.content).length > 0
               const due = todo.dueDate ? getDueInfo(todo.dueDate) : null
+              // 智能排列：单条或奇数末条占满整行
+              const full = count === 1 || (lastFull && idx === count - 1)
               return (
                 <div
                   key={todo.id}
-                  className={`relative flex flex-col rounded-lg bg-blue-50 pl-4 pr-3 py-2.5 hover:bg-blue-100/60 cursor-pointer transition-colors ${stretch ? 'md:col-span-2' : ''}`}
+                  className={`relative flex flex-col rounded-lg bg-blue-50 pl-4 pr-3 py-2.5 hover:bg-blue-100/60 cursor-pointer transition-colors ${full ? 'md:col-span-2' : ''}`}
                   onClick={() => handleClick(todo)}
                   title="点击编辑"
                 >
@@ -162,6 +170,22 @@ export default function DailyTodos() {
             })}
           </div>
         </div>
+      )}
+
+      {/* 新增入口：有待办时右上角悬浮胶囊按钮（不占网格位、滚动常驻）；空状态整块可点击新增 */}
+      {visibleTodos.length > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleClick(null)
+          }}
+          className="absolute right-2 top-0 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/90 backdrop-blur border border-blue-200 text-blue-600 text-xs font-medium shadow-sm hover:bg-white hover:border-blue-300 transition-colors"
+          title="新增待办"
+        >
+          <Plus size={13} />
+          新增
+        </button>
       )}
 
       {/* 编辑/新增弹窗 */}
