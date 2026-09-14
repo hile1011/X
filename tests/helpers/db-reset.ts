@@ -38,6 +38,8 @@ const TABLES_TO_RESET = [
   'permissions',
   // 审计表：必须在 quotes 之后清空（删除 quotes 时触发器会写入历史记录）
   'quote_history',
+  // 布料米数取整迁移审计（v33）
+  'fabric_meters_ceil_audit',
   // schema_migrations 保留，避免重复跑迁移
 ]
 

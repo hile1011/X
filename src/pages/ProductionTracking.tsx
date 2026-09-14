@@ -556,7 +556,7 @@ export default function ProductionTracking() {
 
   const addMaterial = useCallback((idx: number) => {
     if (!selectedRow) return
-    patchMaterials(idx, [...selectedRow.materials, { name: '', spec: '', quantity: 1, unit: '', ready: false }])
+    patchMaterials(idx, [...selectedRow.materials, { name: '', quantity: 0, cutSize: '', meters: 0, ready: false }])
   }, [selectedRow, patchMaterials])
 
   const patchMaterial = useCallback((idx: number, mIdx: number, patch: Partial<ProductionTaskMaterial>) => {
@@ -1320,23 +1320,38 @@ export default function ProductionTracking() {
                     <p className="text-[11px] text-gray-400">暂无材料清单，点击「+ 材料」添加</p>
                   ) : (
                     <div className="space-y-1">
+                      {/* 材料表头：名称 / 数量 / 切片尺寸 / 布料(m) */}
+                      <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                        <span className="w-3.5 shrink-0" />
+                        <span className="w-28 shrink-0">名称</span>
+                        <span className="w-20 shrink-0">数量</span>
+                        <span className="w-24 shrink-0">切片尺寸</span>
+                        <span className="w-20 shrink-0">布料(m)</span>
+                      </div>
                       {selectedRow.materials.map((m, mIdx) => (
-                        <div key={mIdx} className="flex items-center gap-1.5 flex-wrap">
+                        <div key={mIdx} className="flex items-center gap-1.5 flex-wrap"
+                          title={m.source === 'sheet' ? '来自在线表格自动同步（订单编辑页表格规格区联动）' : undefined}>
                           <input type="checkbox" checked={m.ready} disabled={!canEdit}
                             onChange={(e) => patchMaterial(selected.idx, mIdx, { ready: e.target.checked })}
                             className="accent-green-600 w-3.5 h-3.5" title="是否备齐" />
                           <input type="text" value={m.name} placeholder="名称" maxLength={64} readOnly={!canEdit}
                             onChange={(e) => patchMaterial(selected.idx, mIdx, { name: e.target.value })}
                             className="w-28 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                          <input type="text" value={m.spec} placeholder="规格" maxLength={64} readOnly={!canEdit}
-                            onChange={(e) => patchMaterial(selected.idx, mIdx, { spec: e.target.value })}
-                            className="w-24 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                          <input type="number" value={m.quantity} min={0} step="0.01" readOnly={!canEdit}
-                            onChange={(e) => patchMaterial(selected.idx, mIdx, { quantity: Math.round(Number(e.target.value || 0) * 100) / 100 })}
+                          <input type="number" value={m.quantity} min={0} step="1" placeholder="数量" readOnly={!canEdit}
+                            onChange={(e) => patchMaterial(selected.idx, mIdx, { quantity: Math.round(Number(e.target.value || 0)) })}
                             className="w-20 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                          <input type="text" value={m.unit} placeholder="单位" maxLength={8} readOnly={!canEdit}
-                            onChange={(e) => patchMaterial(selected.idx, mIdx, { unit: e.target.value })}
-                            className="w-14 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
+                          <input type="text" value={m.cutSize ?? ''} placeholder="切片尺寸" maxLength={32} readOnly={!canEdit}
+                            onChange={(e) => patchMaterial(selected.idx, mIdx, { cutSize: e.target.value })}
+                            title="切片尺寸（切片宽×切片高，如 41×90cm）"
+                            className="w-24 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
+                          <input type="text" value={m.meters != null ? `${m.meters}m` : ''} placeholder="布料(m)" readOnly={!canEdit}
+                            onChange={(e) => {
+                              // 文本输入：解析数字（去除 m 等非数字字符），向上取整后存储
+                              const n = Number(e.target.value.replace(/[^0-9.]/g, ''))
+                              patchMaterial(selected.idx, mIdx, { meters: isFinite(n) && n > 0 ? Math.ceil(n) : 0 })
+                            }}
+                            title="布料米数（自动向上取整，单位 m）"
+                            className="w-20 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
                           {canEdit && (
                             <button onClick={() => removeMaterial(selected.idx, mIdx)}
                               className="p-1 rounded text-red-500 hover:bg-red-50" title="删除材料">

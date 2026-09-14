@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
+import { wrapFabricMetersFormulas } from '../src/services/fabricMeters'
 
 // ============================ 测试用模板数据（款式1：无底无侧普通袋） ============================
 
@@ -885,6 +886,108 @@ describe('VTable 在线表格 — allFormulas 优先于模板合并', () => {
       // 其他公式仍正常注册
       const j9Formula = getCellFormula(sheet, 8, 9)
       expect(j9Formula).toBe(TEMPLATE_FORMULAS.J9)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+})
+
+describe('VTable 在线表格 — 布料米数向上取整公式（CEILING 包裹）', () => {
+  /**
+   * 验证布料米数列公式整体包裹 CEILING(...,1) 后（v33 布料米数系统性向上取整）：
+   * 1. 公式引擎计算的布料米数（M 列）恒为整数（模板数据下 M4 原结果 403.2 → 404）
+   * 2. 下游公式（总重量 O4 = M4*K4*1.5/1000）自动使用取整后的米数参与运算
+   * 3. 用户修改输入（数量 B2）后，M 列级联重算仍保持整数
+   * 4. M3 原公式内部本就含 CEILING（结果为整数 2160），包裹不影响其值
+   */
+
+  function createSheetWithFormulas(container: HTMLElement, formulas: Record<string, string>): VTableSheet {
+    return new VTableSheet(container, {
+      undoRedo: { show: true },
+      VTablePluginModules: [{ module: TableExportPlugin }, { module: ExcelImportPlugin }],
+      sheets: [{
+        sheetKey: SHEET_KEY,
+        sheetTitle: SHEET_KEY,
+        columns: TEST_COLUMNS,
+        data: cloneData(),
+        formulas,
+        showHeader: false,
+      }],
+    })
+  }
+
+  function readCellValue(sheet: VTableSheet, row: number, col: number): number | string | null {
+    const fm = (sheet as any).formulaManager
+    if (!fm) return null
+    const result = fm.getCellValue({ sheet: SHEET_KEY, row, col })
+    return result?.value ?? null
+  }
+
+  function writeCellValue(sheet: VTableSheet, col: number, row: number, value: any): void {
+    const ws = sheet.getActiveSheet()
+    ;(ws as any).setCellValue(col, row, value)
+    const fm = (sheet as any).formulaManager
+    if (fm) fm.setCellContent({ sheet: SHEET_KEY, row, col }, value)
+  }
+
+  it('包裹后布料米数公式计算结果恒为整数（M4：403.2 → 404）', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    // 原始公式（未包裹）：M4 = 403.2（小数）
+    const rawSheet = createSheetWithFormulas(container, { ...TEMPLATE_FORMULAS })
+    const rawM4 = readCellValue(rawSheet, 3, 12) as number
+    expect(rawM4).toBeCloseTo(403.2, 1)
+    rawSheet.release?.()
+
+    // 包裹后：M4 = 404（整数）
+    const wrapped = wrapFabricMetersFormulas({ ...TEMPLATE_FORMULAS }, 12)
+    const sheet = createSheetWithFormulas(container, wrapped.formulas)
+    try {
+      const m3 = readCellValue(sheet, 2, 12) as number
+      const m4 = readCellValue(sheet, 3, 12) as number
+      expect(Number.isInteger(m3)).toBe(true)
+      expect(m3).toBe(2160) // M3 = CEILING(7200/3,1)*90/100，本就是整数，包裹不影响
+      expect(Number.isInteger(m4)).toBe(true)
+      expect(m4).toBe(404)  // 403.2 向上取整
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+
+  it('下游公式（总重量 O4）自动使用取整后的米数计算', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapped = wrapFabricMetersFormulas({ ...TEMPLATE_FORMULAS }, 12)
+    const sheet = createSheetWithFormulas(container, wrapped.formulas)
+    try {
+      const m4 = readCellValue(sheet, 3, 12) as number
+      const o4 = readCellValue(sheet, 3, 14) as number
+      // O4 = M4 * K4 * 1.5 / 1000，K4（克重）=280
+      expect(m4).toBe(404)
+      expect(o4).toBeCloseTo(404 * 280 * 1.5 / 1000, 4)
+      // 与未取整的旧值 403.2*280*1.5/1000=169.344 不同
+      expect(o4).not.toBeCloseTo(403.2 * 280 * 1.5 / 1000, 4)
+    } finally {
+      sheet?.release?.()
+      container?.remove()
+    }
+  })
+
+  it('修改数量（B2）后 M 列级联重算仍为整数', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const wrapped = wrapFabricMetersFormulas({ ...TEMPLATE_FORMULAS }, 12)
+    const sheet = createSheetWithFormulas(container, wrapped.formulas)
+    try {
+      writeCellValue(sheet, 1, 1, 10000) // B2 数量 7200 → 10000
+      const m3 = readCellValue(sheet, 2, 12) as number
+      const m4 = readCellValue(sheet, 3, 12) as number
+      expect(Number.isInteger(m3)).toBe(true)
+      expect(Number.isInteger(m4)).toBe(true)
+      expect(m3).toBeGreaterThan(0)
+      expect(m4).toBeGreaterThan(0)
     } finally {
       sheet?.release?.()
       container?.remove()

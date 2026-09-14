@@ -158,14 +158,14 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
         {
           name: '面料采购', planStart: '2026-09-01', planEnd: '2026-09-03',
           actualStart: '2026-09-01', actualEnd: '2026-09-02', status: 2,
-          remark: '首批', materials: [{ name: '白坯布', spec: '10安', quantity: 100, unit: 'kg', ready: true }],
+          remark: '首批', materials: [{ name: '白坯布', quantity: 100, cutSize: '41×90cm', meters: 2160, ready: true }],
         },
         { name: '裁剪', status: 1, remark: '' },
         { name: '印刷', status: 0 },
       ])
       expect(first).toHaveLength(3)
       expect(first.map((t) => t.stepOrder)).toEqual([1, 2, 3])
-      expect(first[0].materials).toEqual([{ name: '白坯布', spec: '10安', quantity: 100, unit: 'kg', ready: true }])
+      expect(first[0].materials).toEqual([{ name: '白坯布', quantity: 100, cutSize: '41×90cm', meters: 2160, ready: true }])
 
       // 回读：日期字符串与 materials 正确反序列化
       const loaded = await db.productionTasks.getByQuoteId(q.id)

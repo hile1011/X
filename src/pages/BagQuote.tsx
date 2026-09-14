@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { TreeSelect } from 'antd'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit, Copy } from 'lucide-react'
+import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit, Copy, Info } from 'lucide-react'
 import { copyText } from '../utils/clipboard'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
@@ -12,7 +12,8 @@ import SelectionSummaryBar from '../components/SelectionSummaryBar'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
 import ProductionTasksTab from '../components/ProductionTasksTab'
 import type { Quote } from './Quotes'
-import { findTablePositions } from '../services/tableLocator'
+import { findTablePositions, extractFabricPrepRows, type FabricPrepRow } from '../services/tableLocator'
+import { findFabricMetersCol, ceilFabricMeters, normalizeFabricMeters, FABRIC_METERS_DEFAULT_COL } from '../services/fabricMeters'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { StyleConstants } from '../constants/StyleConstants'
@@ -47,6 +48,23 @@ interface OrderInfo {
 
 // 订单状态选项统一使用枚举类，消除重复定义
 const STATUS_OPTIONS = OrderStatus.getAll()
+
+/**
+ * 公式收集竞态兜底（保存防篡改链路一环）：
+ * 表格刚被模板重新初始化/公式引擎未就绪时，实时收集会得到空对象——
+ * 直接保存会把数据库公式清空（2026-09-13 生产事故根因之一）。
+ * 回退顺序：实时收集结果 → 数据库已保存的 allFormulas → 当前款式模板公式。
+ * 导出为纯函数供单元测试覆盖（tests/quoteSaveFallback.test.ts）。
+ */
+export function resolveFormulasFallback(
+  collected: Record<string, string>,
+  saved: Record<string, string>,
+  templateFormulas: Record<string, string>,
+): Record<string, string> {
+  if (Object.keys(collected).length > 0) return collected
+  if (Object.keys(saved).length > 0) return { ...saved }
+  return { ...templateFormulas }
+}
 
 const DEFAULT_ORDER_INFO: OrderInfo = {
   unitPrice: '',
@@ -121,22 +139,33 @@ const getCellStyle = (args: { row: number; col: number; table?: any }): Record<s
   return override ? { ...style, ...override } : style
 }
 
+// 当前表格的布料米数列索引（创建表格时按表头「布料米数」动态定位，失败回退默认列）
+let sheetMetersCol = FABRIC_METERS_DEFAULT_COL
+
+// 单元格显示格式化：数值默认保留2位小数（右键菜单可覆盖小数位）；
+// 布料米数列先向上取整再显示（业务规则，优先于小数位覆盖；不影响公式计算，引擎读取 data 原始值）
+const formatFieldValue = (value: unknown, col?: number, row?: number) => {
+  if (typeof value === 'number' && !isNaN(value)) {
+    let v = value
+    if (col === sheetMetersCol) {
+      const ceiled = ceilFabricMeters(v)
+      if (typeof ceiled === 'number') v = ceiled
+    }
+    const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
+    if (fmt === -1) return v              // 常规
+    if (fmt === 0) return Math.round(v)   // 整数
+    if (fmt === 4) return v.toFixed(4)    // 4位小数
+    return v.toFixed(2)                    // 默认2位小数
+  }
+  return value
+}
+
 const SHEET_COLUMNS = TableConstants.COL_WIDTHS.map((width, field) => ({
   field,
   width,
   style: getCellStyle,
-  // 数值类型单元格保留2位小数（可通过右键菜单覆盖；不影响公式计算，公式引擎直接读取 data 原始值）
-  fieldFormat: (record: any, col?: number, row?: number) => {
-    const value = record?.[field]
-    if (typeof value === 'number' && !isNaN(value)) {
-      const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
-      if (fmt === -1) return value              // 常规
-      if (fmt === 0) return Math.round(value)   // 整数
-      if (fmt === 4) return value.toFixed(4)    // 4位小数
-      return value.toFixed(2)                    // 默认2位小数
-    }
-    return value
-  },
+  fieldFormat: (record: any, col?: number, row?: number) =>
+    formatFieldValue(record?.[field], col ?? field, row),
 }))
 
 interface BagQuoteProps {
@@ -271,6 +300,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const [styleOptions, setStyleOptions] = useState<StyleOption[]>([])
   // 选中单元格汇总结果：null 表示当前无选区
   const [selectionSummary, setSelectionSummary] = useState<SelectionSummary | null>(null)
+  // 备料提取行（在线表格第二个标题行前的规格区）：联动「做货流程-面料采购」材料清单；null = 结构不完整不联动
+  const [fabricPrepRows, setFabricPrepRows] = useState<FabricPrepRow[] | null>(null)
   // 数据库模板覆盖是否已加载（sheet_templates 表，v19）：新建订单需等覆盖加载后再初始化表格
   const [templatesReady, setTemplatesReady] = useState(false)
 
@@ -444,6 +475,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         tableData.push(rowData)
       }
     }
+    // 打印口径与保存一致：布料米数列向上取整（详情见 services/fabricMeters）
+    tableData = normalizeFabricMeters(tableData).data
 
     const quote: Quote = {
       id: id || '',
@@ -471,7 +504,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     setPrintQuote(quote)
   }
 
-  const handleSave = async (): Promise<boolean> => {
+  // opts.confirmDataReset：服务端防篡改守卫拦截（公式清空/表格大幅缩水）后，
+  // 用户在确认框中明确同意时携带，绕过守卫完成保存（如确需切换模板替换数据）
+  const handleSave = async (opts: { confirmDataReset?: boolean } = {}): Promise<boolean> => {
     setLoading(true)
     setSaveError('')
     let saved = false
@@ -520,6 +555,45 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         }
       }
 
+      // 表格实例未就绪（收集到 0 行）时阻止保存，防止把数据库已保存的表格清空
+      if (tableData.length === 0 && isEditMode) {
+        setLoading(false)
+        setSaveError('表格数据未就绪，请稍候重试')
+        setTimeout(() => setSaveError(''), 5000)
+        return false
+      }
+
+      // 公式收集竞态兜底（与导出口径一致）：表格刚被模板重新初始化/公式引擎尚未就绪时，
+      // 实时收集会得到空对象 —— 直接保存会把数据库公式清空（生产事故根因之一）。
+      // 回退顺序：数据库已保存的 allFormulas → 当前款式模板公式
+      allFormulas = resolveFormulasFallback(
+        allFormulas,
+        allFormulasRef.current,
+        SheetTemplateManager.getTemplate(orderInfo.productStyle, orderInfo.templateId).formulas,
+      )
+
+      // 布料米数向上取整规范化（与后端口径一致）：数值取整 + 公式整体包裹 CEILING
+      const metersNorm = normalizeFabricMeters(tableData, allFormulas)
+      // 保存前二次确认：存在将被取整的米数时提示用户（公式包裹为透明规范化，不提示）
+      if (metersNorm.ceilChanges.length > 0) {
+        const preview = metersNorm.ceilChanges.slice(0, 5)
+          .map((c) => `${c.address}：${c.from} → ${c.to}`)
+          .join('\n')
+        const more = metersNorm.ceilChanges.length > 5
+          ? `\n… 等共 ${metersNorm.ceilChanges.length} 处` : ''
+        const ok = window.confirm(
+          `布料米数采用向上取整规则，所有输入值将被自动进位至整数位。\n` +
+          `以下布料米数将被取整：\n${preview}${more}\n\n` +
+          `点击“确定”按取整后的值保存，点击“取消”放弃本次保存。`,
+        )
+        if (!ok) {
+          setLoading(false)
+          return false
+        }
+      }
+      tableData = metersNorm.data
+      allFormulas = metersNorm.formulas ?? allFormulas
+
       const quoteData = {
         ...orderInfo,
         costPrice: Math.round((costPrice || 0) * 100) / 100,
@@ -539,10 +613,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         allFormulas,
         productionStepStatus,
       }
+      // 守卫确认标记：仅在用户于确认框中同意后携带（服务端防篡改守卫要求）
+      const payload: any = { ...quoteData }
+      if (opts.confirmDataReset) payload.confirmDataReset = true
       if (isEditMode) {
-        await api.quotes.update(id!, quoteData)
+        await api.quotes.update(id!, payload)
       } else {
-        const created = await api.quotes.create(quoteData)
+        const created = await api.quotes.create(payload)
         // 新增保存后切换到编辑模式（替换 URL，不返回列表页），避免重复保存创建多个订单
         if (created?.id) {
           skipNextLoadRef.current = true
@@ -559,6 +636,13 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       allFormulasRef.current = Object.keys(allFormulas).length > 0 ? allFormulas : allFormulasRef.current
       saved = true
     } catch (error: any) {
+      // 服务端防篡改守卫拦截（公式清空/表格大幅缩水）：弹确认框，用户同意后携带标记重试
+      if (error?.code === 'QUOTE_DATA_RESET_CONFIRM_REQUIRED') {
+        const ok = window.confirm(error.message + '\n\n是否确认继续保存？')
+        if (ok) return handleSave({ confirmDataReset: true })
+        setLoading(false)
+        return false
+      }
       console.error('保存报价失败:', error)
       setSaveError(error?.message || '保存失败，请重试')
       setTimeout(() => setSaveError(''), 5000)
@@ -613,7 +697,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       const formulas = Object.keys(exportFormulas).length > 0
         ? exportFormulas
         : (allFormulasRef.current || template.formulas)
-      const blob = await api.export.orderWithTable(id, { data: tableData, formulas })
+      // 导出口径与保存一致：布料米数列向上取整 + 公式整体包裹 CEILING
+      const metersNorm = normalizeFabricMeters(tableData, formulas)
+      const blob = await api.export.orderWithTable(id, { data: metersNorm.data, formulas: metersNorm.formulas ?? formulas })
       const now = new Date()
       const ts = now.toISOString().replace(/[-T:]/g, '').substring(0, 14)
       downloadBlob(blob, `Order_${orderInfo.customerName || 'Export'}_${ts}.xlsx`)
@@ -640,6 +726,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     const initialData = loadedTableDataRef.current && loadedTableDataRef.current.length > 0
       ? loadedTableDataRef.current
       : template.data
+    // 定位布料米数列（表头关键字查找），供显示取整与汇总取整使用
+    sheetMetersCol = findFabricMetersCol(initialData)
     // activeFormulas 构建策略：
     // - 编辑已有订单：直接使用数据库保存的 allFormulas（v9 迁移已将老数据初始化），不依赖模板比对
     // - 新增订单：使用模板公式初始化
@@ -721,6 +809,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
 
         // 动态定位：汇总行、参考卖价行、成品行、参考卖价列、含税价列
         const pos = findTablePositions(tableData)
+
+        // 备料数据提取：第二个标题行前的规格区（名称/数量/切片宽/切片高/布料米数），
+        // 联动「做货流程-面料采购」材料清单；比对去重避免无变化重渲染
+        const prepRows = extractFabricPrepRows(tableData)
+        setFabricPrepRows((prev) => (JSON.stringify(prev) === JSON.stringify(prepRows) ? prev : prepRows))
 
         // 成本价 = 汇总行 × 参考卖价列（公式单元格，读取引擎计算结果）
         const rCost = pos.summaryRow >= 0
@@ -836,9 +929,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           setSelectionSummary(null)
           return
         }
-        const summary = computeSelectionSummary(ranges, (col, row) =>
-          activeTable?.getCellOriginValue?.(col, row),
-        )
+        const summary = computeSelectionSummary(ranges, (col, row) => {
+          // 布料米数列参与汇总时先向上取整（与其他显示/计算口径一致）
+          const v = activeTable?.getCellOriginValue?.(col, row)
+          return col === sheetMetersCol ? ceilFabricMeters(v) : v
+        })
         setSelectionSummary(summary)
       } catch {
         // VTable 未就绪时忽略，后续事件会重新触发
@@ -863,17 +958,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           key: index,
           width: TableConstants.COL_WIDTHS[index] || 100, // 使用默认宽度
           style: getCellStyle,
-          fieldFormat: (record: any, col?: number, row?: number) => {
-            const value = record?.[index]
-            if (typeof value === 'number' && !isNaN(value)) {
-              const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
-              if (fmt === -1) return value              // 常规
-              if (fmt === 0) return Math.round(value)   // 整数
-              if (fmt === 4) return value.toFixed(4)    // 4位小数
-              return value.toFixed(2)                    // 默认2位小数
-            }
-            return value
-          },
+          fieldFormat: (record: any, col?: number, row?: number) =>
+            formatFieldValue(record?.[index], col ?? index, row),
         }))
         activeTable?.updateColumns(newCols)
       } catch (error) {
@@ -1085,8 +1171,15 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     const style = combined.slice(0, sep)
     const templateId = combined.slice(sep + 1)
     if (style === orderInfo.productStyle && templateId === orderInfo.templateId) return
-    if (isTableDirty) {
-      const ok = window.confirm('当前在线表格有未保存的修改。\n点击"确认"切换款式/模板（未保存的修改将丢失），点击"取消"保持现状。')
+    // 警告：切换后表格用新模板重新初始化，不仅是"未保存的修改丢失"——
+    // 订单已保存到数据库的表格数据也会在下次保存时被模板默认数据替换（生产事故场景），
+    // 必须明确告知用户影响范围
+    const savedRows = isEditMode ? (loadedTableDataRef.current?.length ?? 0) : 0
+    const warnings: string[] = []
+    if (isTableDirty) warnings.push('当前在线表格有未保存的修改，切换后将丢失。')
+    if (savedRows > 0) warnings.push(`注意：订单已保存的 ${savedRows} 行表格数据也将被新模板默认数据替换！`)
+    if (warnings.length > 0) {
+      const ok = window.confirm(warnings.join('\n') + '\n\n点击"确认"切换款式/模板，点击"取消"保持现状。')
       if (!ok) return // 取消：保持现状
     }
     // 清除所有表格相关状态，加载新模板（allFormulasRef 清空为 {}，表格初始化时回退到模板公式）
@@ -1392,7 +1485,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               {/* readOnly 模式：隐藏保存和重置按钮 */}
               {!readOnly && (
                 <>
-                  <button onClick={handleSave} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
+                  <button onClick={() => handleSave()} disabled={loading} className="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 min-h-[40px] sm:min-h-0">
                     <Save size={16} />
                     {showSaveSuccess ? '保存成功' : '保存'}
                   </button>
@@ -1419,6 +1512,32 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
           min-w-0 + overflow-hidden：允许 flex 子元素收缩，使状态流转的 overflow-x-auto 生效，
           避免 480px 最小宽度撑破 375px 移动端视口 */}
       <div className="shrink-0 px-4 sm:px-6 pt-4 pb-0 w-full min-w-0 overflow-hidden">
+        {/* v24 标签页切换行：Tab1 订单信息 / Tab2 订单做货流程（独立切换固定行，位于订单状态流转上方） */}
+        <div className="flex items-center gap-1 mb-2">
+          <button
+            onClick={() => switchTab('info')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+              activeTab === 'info'
+                ? 'bg-primary-600 text-white border-primary-600'
+                : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-700'
+            }`}
+          >
+            <ClipboardList size={13} />
+            订单信息
+          </button>
+          <button
+            onClick={() => switchTab('production')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+              activeTab === 'production'
+                ? 'bg-primary-600 text-white border-primary-600'
+                : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50 hover:text-gray-700'
+            }`}
+          >
+            <Play size={13} />
+            订单做货流程
+          </button>
+        </div>
+
         {/* 状态流转（位于卖价上方） */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-2">
           <div className="flex items-center justify-between gap-3 mb-2">
@@ -1458,32 +1577,6 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 </button>
               )}
             </div>
-          </div>
-
-          {/* v24 标签页切换栏：Tab1 订单信息 / Tab2 订单做货流程 */}
-          <div className="flex items-center gap-1 border-b border-gray-100 -mb-px">
-            <button
-              onClick={() => switchTab('info')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
-                activeTab === 'info'
-                  ? 'text-primary-600 border-primary-500 bg-primary-50/50'
-                  : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              <ClipboardList size={13} />
-              订单信息
-            </button>
-            <button
-              onClick={() => switchTab('production')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-t-lg border-b-2 transition-colors ${
-                activeTab === 'production'
-                  ? 'text-primary-600 border-primary-500 bg-primary-50/50'
-                  : 'text-gray-500 border-transparent hover:text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              <Play size={13} />
-              订单做货流程
-            </button>
           </div>
 
           <div className={`overflow-x-auto ${activeTab === 'info' ? '' : 'hidden'}`}>
@@ -1541,6 +1634,11 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
             <span className="text-gray-300">·</span>
             <Table2 size={14} className="text-gray-400" />
             <h3 className="text-xs font-semibold text-gray-700">在线表格</h3>
+            {/* 布料米数取整规则提示（悬停显示说明） */}
+            <span className="flex items-center gap-0.5 text-gray-400 cursor-help" title="布料米数(M)列采用向上取整规则：该字段所有输入值将被自动进位至整数位（如 1.1 → 2），保存、打印与导出均按取整后的值处理。">
+              <Info size={12} />
+              <span className="text-[10px]">布料米数向上取整</span>
+            </span>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100">
@@ -2093,6 +2191,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               orderStatus={status}
               productionTimeStart={orderInfo.productionTimeStart}
               productionTimeEnd={orderInfo.productionTimeEnd}
+              sheetFabricPrep={fabricPrepRows}
             />
           ) : (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center text-sm text-gray-400">

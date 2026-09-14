@@ -91,7 +91,7 @@ const TASKS = [
     planStart: '2026-09-01', planEnd: '2026-09-02',
     actualStart: '2026-09-01', actualEnd: null,
     status: 1, remark: '',
-    materials: [{ name: '白坯布', spec: '10安', quantity: 100, unit: 'kg', ready: true }],
+    materials: [{ name: '白坯布', quantity: 100, cutSize: '41×90cm', meters: 2160, ready: true }],
   },
   {
     id: 'pt-2', stepOrder: 2, name: '裁剪',

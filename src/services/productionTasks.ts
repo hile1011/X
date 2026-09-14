@@ -9,14 +9,23 @@
  *   - 甘特图 record 转换（DATE 字符串 ↔ VTable-Gantt record）与时间轴范围计算
  */
 import { ProductionSteps } from '../constants/ProductionSteps'
+import type { FabricPrepRow } from './tableLocator'
+
+// 备料提取行类型再导出（组件从本模块统一导入做货流程相关类型）
+export type { FabricPrepRow }
 
 /** 材料准备项（与后端 ProductionTaskMaterial 结构一致，前端独立定义避免依赖服务端模块） */
 export interface ProductionTaskMaterial {
   name: string
-  spec: string
+  /** 数量（个；表格联动时手提自动×2） */
   quantity: number
-  unit: string
+  /** 切片尺寸（如 41×90cm；来自在线表格切片宽×切片高联动，也可手动填写） */
+  cutSize?: string
+  /** 布料总米数（M，向上取整；来自在线表格布料米数联动，也可手动填写） */
+  meters?: number
   ready: boolean
+  /** 来源标记：'sheet' = 在线表格备料自动同步（手动添加的材料无此字段） */
+  source?: 'sheet'
 }
 
 /** 做货流程任务（前端形态；与后端 ProductionTaskRecord 对应，id/时间戳由服务端维护） */
@@ -123,6 +132,67 @@ export function resolveStatusByActualTimes(
 /** 时间与状态是否矛盾（需纠正） */
 export function isStatusConflicted(task: Pick<ProductionTask, 'actualStart' | 'actualEnd' | 'status'>): boolean {
   return task.status !== resolveStatusByActualTimes(task)
+}
+
+// ────────────────────────────────────────────────────────────
+// 在线表格备料联动（规格试算区 → 面料采购材料清单）
+// ────────────────────────────────────────────────────────────
+
+/** 备料材料条目字段长度上限（与后端校验一致） */
+const FABRIC_PREP_LIMITS = { name: 64, cutSize: 32 }
+
+/**
+ * 将在线表格提取的备料数据合并进「面料采购」任务的材料准备清单：
+ *
+ * 合并规则：
+ * - 手动材料（无 source:'sheet' 标记）原样保留、顺序不变
+ * - 旧 source:'sheet' 条目整体替换为新提取行；ready 备齐状态按名称从旧条目继承
+ * - 字段映射：名称→name；数量→quantity（「手提」每袋两条，自动×2）；
+ *   切片宽×切片高→cutSize（如「41×90cm」）；布料米数→meters（向上取整，单位 M）
+ *
+ * 不联动情形（返回 null，调用方据此跳过，避免误标 dirty）：
+ * - rows 为 null（表格结构不完整，如第二个标题行被删除）
+ * - 找不到「面料采购」任务（被改名/删除）
+ * - 合并后材料无实际变化（幂等）
+ *
+ * @param tasks 当前任务数组
+ * @param rows extractFabricPrepRows 的提取结果
+ * @returns 合并后的新数组；无变化返回 null
+ */
+export function applySheetFabricPrep(
+  tasks: ProductionTask[],
+  rows: FabricPrepRow[] | null,
+): ProductionTask[] | null {
+  if (!rows) return null
+  const idx = tasks.findIndex((t) => t.name === '面料采购')
+  if (idx < 0) return null
+  const task = tasks[idx]
+
+  // 手动材料保留；同名旧条目的备齐状态供继承（含手动同名列）
+  const manual = task.materials.filter((m) => m.source !== 'sheet')
+  const readyByName = new Map<string, boolean>()
+  for (const m of task.materials) {
+    if (m.name) readyByName.set(m.name, m.ready)
+  }
+
+  const synced: ProductionTaskMaterial[] = rows.map((r) => ({
+    name: r.name.slice(0, FABRIC_PREP_LIMITS.name),
+    // 「手提」每袋两条：数量自动×2
+    quantity: r.quantity != null ? (r.name === '手提' ? r.quantity * 2 : r.quantity) : 0,
+    cutSize: r.cutWidth != null && r.cutHeight != null
+      ? `${r.cutWidth}×${r.cutHeight}cm`.slice(0, FABRIC_PREP_LIMITS.cutSize)
+      : '',
+    // 布料总米数向上取整（备料需足量），单位 M
+    meters: r.meters != null ? Math.ceil(r.meters) : 0,
+    ready: readyByName.get(r.name) ?? false,
+    source: 'sheet' as const,
+  }))
+  const materials = [...manual, ...synced]
+  if (JSON.stringify(materials) === JSON.stringify(task.materials)) return null
+
+  const next = tasks.slice()
+  next[idx] = { ...task, materials }
+  return next
 }
 
 // ────────────────────────────────────────────────────────────

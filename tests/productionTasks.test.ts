@@ -10,13 +10,15 @@
  *   5. 甘特图 record 转换 toGanttRecords：progress 状态映射
  *   6. 时间轴范围 computeTimelineRange：min/max ± 7 天、无日期回退今天 ± 14 天
  *   7. 汇总 summarizeTasks：完成数、材料备齐、计划区间
+ *   8. 备料联动 applySheetFabricPrep：字段映射、手提数量×2、米数向上取整、手动保留、ready 继承、幂等、不联动情形
  */
 import { describe, it, expect } from 'vitest'
 import {
   toDateStr, parseDate, addDays, diffDays, normalizeGanttDateArg,
   createDefaultTasks, resolveStatusByActualTimes, isStatusConflicted,
   autoSchedule, toGanttRecords, computeTimelineRange, computeInitialFocusDate, summarizeTasks,
-  type ProductionTask,
+  applySheetFabricPrep,
+  type ProductionTask, type FabricPrepRow,
 } from '../src/services/productionTasks'
 
 /** 构造测试任务 */
@@ -171,7 +173,7 @@ describe('甘特图 record 转换 toGanttRecords', () => {
     const records = toGanttRecords([
       task({ id: 'a', status: 0 }),
       task({ id: 'b', status: 1 }),
-      task({ id: 'c', status: 2, materials: [{ name: '白坯布', spec: '', quantity: 1, unit: 'kg', ready: false }] }),
+      task({ id: 'c', status: 2, materials: [{ name: '白坯布', quantity: 1, ready: false }] }),
     ])
     expect(records.map((r) => r.progress)).toEqual([0, 50, 100])
     expect(records.map((r) => r.id)).toEqual(['a', 'b', 'c'])
@@ -232,11 +234,11 @@ describe('汇总 summarizeTasks', () => {
       task({
         status: 2, planStart: '2026-09-02', planEnd: '2026-09-03',
         materials: [
-          { name: '白坯布', spec: '', quantity: 1, unit: 'kg', ready: true },
-          { name: '油墨', spec: '', quantity: 1, unit: '桶', ready: false },
+          { name: '白坯布', quantity: 1, ready: true },
+          { name: '油墨', quantity: 1, ready: false },
         ],
       }),
-      task({ status: 1, planStart: '2026-09-01', planEnd: '2026-09-10', materials: [{ name: '纸箱', spec: '', quantity: 2, unit: '个', ready: true }] }),
+      task({ status: 1, planStart: '2026-09-01', planEnd: '2026-09-10', materials: [{ name: '纸箱', quantity: 2, ready: true }] }),
       task({ status: 0 }),
     ])
     expect(summary.total).toBe(3)
@@ -249,5 +251,96 @@ describe('汇总 summarizeTasks', () => {
   it('无任务与未排期场景', () => {
     expect(summarizeTasks([])).toMatchObject({ total: 0, completed: 0, materialsTotal: 0, materialsReady: 0, planRange: '未排期' })
     expect(summarizeTasks([task()]).planRange).toBe('未排期')
+  })
+})
+
+// ============================ 备料联动（applySheetFabricPrep） ============================
+
+describe('applySheetFabricPrep - 在线表格备料合并', () => {
+  const rows: FabricPrepRow[] = [
+    { name: '正反面', quantity: 7200, cutWidth: 41, cutHeight: 90, meters: 2160 },
+    { name: '手提', quantity: 7200, cutWidth: 6, cutHeight: 70, meters: 403.2 },
+  ]
+
+  it('字段映射：名称/数量→quantity、切宽×切高→cutSize、米数向上取整→meters、来源标记 sheet', () => {
+    const next = applySheetFabricPrep([task()], rows)!
+    expect(next[0].materials).toEqual([
+      { name: '正反面', quantity: 7200, cutSize: '41×90cm', meters: 2160, ready: false, source: 'sheet' },
+      { name: '手提', quantity: 14400, cutSize: '6×70cm', meters: 404, ready: false, source: 'sheet' },
+    ])
+  })
+
+  it('手提数量自动×2；布料米数向上取整（2160.5 → 2161）', () => {
+    const next = applySheetFabricPrep([task()], [
+      { name: '手提', quantity: 3600, cutWidth: 6, cutHeight: 70, meters: 2160.5 },
+    ])!
+    expect(next[0].materials[0]).toMatchObject({ name: '手提', quantity: 7200, meters: 2161 })
+  })
+
+  it('手动材料原样保留且排在同步条目之前；ready 按名称从旧条目继承', () => {
+    const tasks: ProductionTask[] = [
+      task({
+        materials: [
+          { name: '白坯布', quantity: 5, ready: true },
+          { name: '正反面', quantity: 999, cutSize: '旧尺寸', meters: 999, ready: true, source: 'sheet' },
+        ],
+      }),
+    ]
+    const next = applySheetFabricPrep(tasks, rows)!
+    expect(next[0].materials).toEqual([
+      { name: '白坯布', quantity: 5, ready: true },
+      { name: '正反面', quantity: 7200, cutSize: '41×90cm', meters: 2160, ready: true, source: 'sheet' },
+      { name: '手提', quantity: 14400, cutSize: '6×70cm', meters: 404, ready: false, source: 'sheet' },
+    ])
+  })
+
+  it('旧 sheet 条目整体替换：表格删行后同步条目随之消失', () => {
+    const tasks: ProductionTask[] = [
+      task({
+        materials: [
+          { name: '正反面', quantity: 7200, cutSize: '41×90cm', meters: 2160, ready: false, source: 'sheet' },
+          { name: '手提', quantity: 14400, cutSize: '6×70cm', meters: 404, ready: false, source: 'sheet' },
+        ],
+      }),
+    ]
+    // 表格只剩正反面一行
+    const next = applySheetFabricPrep(tasks, rows.slice(0, 1))!
+    expect(next[0].materials).toHaveLength(1)
+    expect(next[0].materials[0].name).toBe('正反面')
+  })
+
+  it('幂等：合并结果与现有材料一致时返回 null（不误标 dirty）', () => {
+    const once = applySheetFabricPrep([task()], rows)!
+    expect(applySheetFabricPrep(once, rows)).toBeNull()
+  })
+
+  it('rows 为 null（表格结构不完整）返回 null 不联动', () => {
+    expect(applySheetFabricPrep([task()], null)).toBeNull()
+  })
+
+  it('找不到「面料采购」任务（被改名/删除）返回 null', () => {
+    const tasks: ProductionTask[] = [task({ name: '采购面料' })]
+    expect(applySheetFabricPrep(tasks, rows)).toBeNull()
+    expect(applySheetFabricPrep([], rows)).toBeNull()
+  })
+
+  it('数值缺失容错：数量 null → 0；切宽高不全 → cutSize 空；米数 null → 0', () => {
+    const next = applySheetFabricPrep([task()], [
+      { name: '底部', quantity: null, cutWidth: 41, cutHeight: null, meters: null },
+    ])!
+    expect(next[0].materials).toEqual([
+      { name: '底部', quantity: 0, cutSize: '', meters: 0, ready: false, source: 'sheet' },
+    ])
+  })
+
+  it('其他任务不受影响（原数组浅拷贝，仅面料采购任务被替换）', () => {
+    const tasks: ProductionTask[] = [
+      task(),
+      task({ id: 't2', stepOrder: 2, name: '裁剪' }),
+    ]
+    const next = applySheetFabricPrep(tasks, rows)!
+    expect(next).toHaveLength(2)
+    expect(next[1]).toBe(tasks[1])
+    expect(next[0]).not.toBe(tasks[0])
   })
 })

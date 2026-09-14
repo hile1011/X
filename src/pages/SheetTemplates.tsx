@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { ArrowLeft, Save, Trash2, Table2, Edit2, Loader2, Plus, X, Search, ChevronRight, ChevronDown } from 'lucide-react'
+import { ArrowLeft, Save, Trash2, Table2, Edit2, Loader2, Plus, X, Search, ChevronRight, ChevronDown, Info } from 'lucide-react'
 import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
 import { useHasPermission } from '../hooks/usePermission'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
 import { SheetTemplateManager } from '../templates/SheetTemplateManager'
+import { findFabricMetersCol, ceilFabricMeters, normalizeFabricMeters } from '../services/fabricMeters'
 import type { SheetTemplate } from '../templates/types'
 import { TableConstants } from '../constants/TableConstants'
 import { StyleConstants } from '../constants/StyleConstants'
@@ -468,6 +469,8 @@ function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
     const sivTimer = setTimeout(restoreSIV, 1000)
 
     const getCellStyle = makeGetCellStyle(formulaManagerRef)
+    // 定位布料米数列：该列数值先向上取整再显示（口径见 services/fabricMeters）
+    const metersCol = findFabricMetersCol(template.data)
 
     const sheet = new VTableSheet(sheetContainerRef.current, {
       showFormulaBar: true,
@@ -479,13 +482,18 @@ function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
       sheets: [{
         sheetKey: TableConstants.SHEET_KEY,
         sheetTitle: 'sheet1',
+        rowCount: 25, // 默认网格行数（数据不足时补空行到 25；数据更多时按数据实际行数展示）
         columns: TableConstants.COL_WIDTHS.map((width, field) => ({
           field,
           width,
           style: getCellStyle,
-          fieldFormat: (record: any) => {
+          fieldFormat: (record: any, col?: number) => {
             const value = record?.[field]
             if (typeof value === 'number' && !isNaN(value)) {
+              if ((col ?? field) === metersCol) {
+                const ceiled = ceilFabricMeters(value)
+                if (typeof ceiled === 'number') return ceiled.toFixed(2)
+              }
               return value.toFixed(2)
             }
             return value
@@ -583,11 +591,18 @@ function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
         }
         data.push(rowData)
       }
+      // 布料米数向上取整规范化（与订单保存/后端口径一致）：数值取整 + 公式整体包裹 CEILING
+      const metersNorm = normalizeFabricMeters(data, formulas)
+      const normData = metersNorm.data
+      const normFormulas = metersNorm.formulas ?? formulas
+      const ceilCount = metersNorm.ceilChanges.length
+
       const nameChanged = trimmed !== record.name
-      const saved = await api.sheetTemplates.update(record.id, { name: nameChanged ? trimmed : undefined, data, formulas }) as SheetTemplateRecordFE
+      const saved = await api.sheetTemplates.update(record.id, { name: nameChanged ? trimmed : undefined, data: normData, formulas: normFormulas }) as SheetTemplateRecordFE
       // 同步内存缓存：订单页立即使用最新模板
-      SheetTemplateManager.setOverride(saved.id, saved.styleCode, saved.name, { data, formulas })
-      showMessage('success', nameChanged ? '模板已保存并重命名' : '模板已保存')
+      SheetTemplateManager.setOverride(saved.id, saved.styleCode, saved.name, { data: normData, formulas: normFormulas })
+      const baseMsg = nameChanged ? '模板已保存并重命名' : '模板已保存'
+      showMessage('success', ceilCount > 0 ? `${baseMsg}（布料米数已向上取整 ${ceilCount} 处）` : baseMsg)
       setTimeout(() => onSaved(saved), 600)
     } catch (error: any) {
       console.error('保存模板失败:', error)
@@ -661,6 +676,12 @@ function TemplateEditor({ record, styleName, onBack, onSaved, onDeleted }: {
           {message.text}
         </div>
       )}
+
+      {/* 布料米数取整规则提示 */}
+      <div className="flex items-center gap-1.5 mx-4 mt-3 text-xs text-gray-400">
+        <Info size={13} className="shrink-0" />
+        <span>布料米数(M)列采用向上取整规则：所有输入值将被自动进位至整数位（如 1.1 → 2），保存时自动处理。</span>
+      </div>
 
       {/* 在线表格编辑器 */}
       <div className="flex-1 min-h-0 w-full p-4">

@@ -18,9 +18,10 @@ import type { GanttConstructorOptions } from '@visactor/vtable-gantt'
 import { Play, Plus, Save, Loader2, Zap, Trash2, ChevronUp, ChevronDown, Package, AlertCircle, CheckCircle2, CloudUpload, Undo2 } from 'lucide-react'
 import { api } from '../api'
 import {
-  type ProductionTask, type ProductionTaskMaterial, type ProductionTaskSyncStatus,
+  type ProductionTask, type ProductionTaskMaterial, type ProductionTaskSyncStatus, type FabricPrepRow,
   createDefaultTasks, resolveStatusByActualTimes, autoSchedule, toGanttRecords,
   computeTimelineRange, computeInitialFocusDate, summarizeTasks, normalizeGanttDateArg,
+  applySheetFabricPrep,
 } from '../services/productionTasks'
 
 interface ProductionTasksTabProps {
@@ -31,6 +32,8 @@ interface ProductionTasksTabProps {
   /** 订单做货起止日期（一键排期区间；格式 YYYY-MM-DD 或空） */
   productionTimeStart: string
   productionTimeEnd: string
+  /** 在线表格备料提取行（规格试算区联动面料采购材料清单；null = 表格结构不完整不联动） */
+  sheetFabricPrep?: FabricPrepRow[] | null
 }
 
 /** 状态徽标配置 */
@@ -52,7 +55,7 @@ const STATUS_OPTIONS = [
 const PLAN_BAR_COLORS = ['#60a5fa', '#2563eb', '#16a34a']
 
 export default function ProductionTasksTab({
-  quoteId, readOnly, orderStatus, productionTimeStart, productionTimeEnd,
+  quoteId, readOnly, orderStatus, productionTimeStart, productionTimeEnd, sheetFabricPrep,
 }: ProductionTasksTabProps) {
   const [tasks, setTasks] = useState<ProductionTask[]>([])
   const [loading, setLoading] = useState(true)
@@ -151,6 +154,16 @@ export default function ProductionTasksTab({
       ganttInstanceRef.current = null
     }
   }, [])
+
+  // ─── 在线表格备料联动 ─────────────────────────────────────
+  // 表格规格区（名称/数量/切片宽/切片高/布料米数）变化时自动合并进「面料采购」
+  // 材料清单，走 updateTasks 统一通道（标记 dirty + debounce 自动保存）；
+  // 结构不完整（null）或无实际变化时跳过，不产生多余保存
+  useEffect(() => {
+    if (loading || readOnly) return
+    const next = applySheetFabricPrep(tasksRef.current, sheetFabricPrep ?? null)
+    if (next) updateTasks(next)
+  }, [sheetFabricPrep, loading, readOnly, updateTasks])
 
   // ─── 甘特图实例 ───────────────────────────────────────────
   const buildOptions = useCallback((): GanttConstructorOptions => {
@@ -402,7 +415,7 @@ export default function ProductionTasksTab({
   }
 
   const addMaterial = (idx: number) => {
-    patchMaterials(idx, [...tasks[idx].materials, { name: '', spec: '', quantity: 1, unit: '', ready: false }])
+    patchMaterials(idx, [...tasks[idx].materials, { name: '', quantity: 0, cutSize: '', meters: 0, ready: false }])
   }
 
   const patchMaterial = (idx: number, mIdx: number, patch: Partial<ProductionTaskMaterial>) => {
@@ -603,23 +616,38 @@ export default function ProductionTasksTab({
               <p className="text-[11px] text-gray-400">暂无材料清单，点击「+ 材料」添加</p>
             ) : (
               <div className="space-y-1">
+                {/* 材料表头：名称 / 数量 / 切片尺寸 / 布料(m) */}
+                <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                  <span className="w-3.5 shrink-0" />
+                  <span className="w-28 shrink-0">名称</span>
+                  <span className="w-20 shrink-0">数量</span>
+                  <span className="w-24 shrink-0">切片尺寸</span>
+                  <span className="w-20 shrink-0">布料(m)</span>
+                </div>
                 {selected.materials.map((m, mIdx) => (
-                  <div key={mIdx} className="flex items-center gap-1.5 flex-wrap">
+                  <div key={mIdx} className="flex items-center gap-1.5 flex-wrap"
+                    title={m.source === 'sheet' ? '来自在线表格自动同步（修改表格规格区后联动更新）' : undefined}>
                     <input type="checkbox" checked={m.ready} disabled={readOnly}
                       onChange={(e) => patchMaterial(selectedIdx!, mIdx, { ready: e.target.checked })}
                       className="accent-green-600 w-3.5 h-3.5" title="是否备齐" />
                     <input type="text" value={m.name} placeholder="名称" maxLength={64} readOnly={readOnly}
                       onChange={(e) => patchMaterial(selectedIdx!, mIdx, { name: e.target.value })}
                       className="w-28 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                    <input type="text" value={m.spec} placeholder="规格" maxLength={64} readOnly={readOnly}
-                      onChange={(e) => patchMaterial(selectedIdx!, mIdx, { spec: e.target.value })}
-                      className="w-24 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                    <input type="number" value={m.quantity} min={0} step="0.01" readOnly={readOnly}
-                      onChange={(e) => patchMaterial(selectedIdx!, mIdx, { quantity: Math.round(Number(e.target.value || 0) * 100) / 100 })}
+                    <input type="number" value={m.quantity} min={0} step="1" placeholder="数量" readOnly={readOnly}
+                      onChange={(e) => patchMaterial(selectedIdx!, mIdx, { quantity: Math.round(Number(e.target.value || 0)) })}
                       className="w-20 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
-                    <input type="text" value={m.unit} placeholder="单位" maxLength={8} readOnly={readOnly}
-                      onChange={(e) => patchMaterial(selectedIdx!, mIdx, { unit: e.target.value })}
-                      className="w-14 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
+                    <input type="text" value={m.cutSize ?? ''} placeholder="切片尺寸" maxLength={32} readOnly={readOnly}
+                      onChange={(e) => patchMaterial(selectedIdx!, mIdx, { cutSize: e.target.value })}
+                      title="切片尺寸（切片宽×切片高，如 41×90cm）"
+                      className="w-24 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
+                    <input type="text" value={m.meters != null ? `${m.meters}m` : ''} placeholder="布料(m)" readOnly={readOnly}
+                      onChange={(e) => {
+                        // 文本输入：解析数字（去除 m 等非数字字符），向上取整后存储
+                        const n = Number(e.target.value.replace(/[^0-9.]/g, ''))
+                        patchMaterial(selectedIdx!, mIdx, { meters: isFinite(n) && n > 0 ? Math.ceil(n) : 0 })
+                      }}
+                      title="布料米数（自动向上取整，单位 m）"
+                      className="w-20 px-2 py-1 text-xs border border-gray-200 rounded bg-white focus:border-blue-400 focus:outline-none read-only:bg-gray-100" />
                     {!readOnly && (
                       <button onClick={() => removeMaterial(selectedIdx!, mIdx)}
                         className="p-1 rounded text-red-500 hover:bg-red-50" title="删除材料">

@@ -58,15 +58,20 @@ async function handleResponse(res: Response): Promise<any> {
   const text = await res.text()
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`
+    let code: string | undefined
     if (text) {
       try {
         const err = JSON.parse(text)
         msg = err.error || err.message || msg
+        code = err.code
       } catch {
         msg = text
       }
     }
-    throw new Error(msg)
+    // 透传服务端错误码（如订单数据防篡改守卫的 QUOTE_DATA_RESET_CONFIRM_REQUIRED），供调用方分支处理
+    const e = new Error(msg) as Error & { code?: string }
+    e.code = code
+    throw e
   }
   if (!text) return null
   try {

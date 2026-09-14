@@ -267,7 +267,7 @@ describe('buildPlaceholderImage', () => {
 describe('toTaskPayload', () => {
   it('剥离 id / stepOrder / 订单摘要字段，保留任务业务字段', () => {
     const rows = [
-      row({ id: 't1', stepOrder: 1, name: '面料采购', planStart: '2026-09-01', planEnd: '2026-09-05', status: 0, remark: '备注', materials: [{ name: '面料', spec: '30D', quantity: 100, unit: '米', ready: false }] }),
+      row({ id: 't1', stepOrder: 1, name: '面料采购', planStart: '2026-09-01', planEnd: '2026-09-05', status: 0, remark: '备注', materials: [{ name: '面料', quantity: 100, cutSize: '41×90cm', meters: 200, ready: false }] }),
       row({ id: 't2', stepOrder: 2, name: '裁剪', planStart: null, planEnd: null, status: 1 }),
     ]
     const payload = toTaskPayload(rows)
@@ -280,7 +280,7 @@ describe('toTaskPayload', () => {
       actualEnd: null,
       status: 0,
       remark: '备注',
-      materials: [{ name: '面料', spec: '30D', quantity: 100, unit: '米', ready: false }],
+      materials: [{ name: '面料', quantity: 100, cutSize: '41×90cm', meters: 200, ready: false }],
     })
     expect(payload[0]).not.toHaveProperty('id')
     expect(payload[0]).not.toHaveProperty('stepOrder')

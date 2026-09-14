@@ -4,11 +4,35 @@ import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 import { createDeleteCheckHandler, createProtectedDeleteHandler } from '../services/deleteHandler.js'
 import { requirePermission, requireAnyPermission } from '../middleware/auth.js'
+import { normalizeFabricMeters, logFabricMetersCeil, type FabricMetersChange } from '../services/fabricMeters.js'
+import { detectQuoteDataReset, QUOTE_DATA_RESET_CODE } from '../services/quoteDataGuard.js'
 
 export const quotesRouter = express.Router()
 
 // 缩略图内存缓存（id -> base64 缩略图），避免重复生成
 const thumbnailCache = new Map<string, string>()
+
+/**
+ * 订单保存前布料米数向上取整规范化（前端已处理，后端兜底保证入库均为取整值）
+ * 仅处理 body 中存在的 tableData（allFormulas 随之一并包裹 CEILING）；局部更新（如仅改状态）不受影响
+ */
+function normalizeQuoteFabricMeters(body: any): {
+  fields: Record<string, unknown>
+  ceilChanges: FabricMetersChange[]
+  formulaChanges: { address: string; from: string }[]
+} {
+  const tableData = body?.tableData
+  if (!Array.isArray(tableData) || tableData.length === 0) {
+    return { fields: {}, ceilChanges: [], formulaChanges: [] }
+  }
+  const formulas = (body?.allFormulas && typeof body.allFormulas === 'object' && !Array.isArray(body.allFormulas))
+    ? body.allFormulas as Record<string, string>
+    : undefined
+  const norm = normalizeFabricMeters(tableData, formulas)
+  const fields: Record<string, unknown> = { tableData: norm.data }
+  if (norm.formulas) fields.allFormulas = norm.formulas
+  return { fields, ceilChanges: norm.ceilChanges, formulaChanges: norm.formulaChanges }
+}
 
 // 查看类接口：需要 quotes:view 权限（thumbnail 仅需认证即可，供前端 img 标签加载）
 quotesRouter.get('/', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
@@ -82,7 +106,17 @@ quotesRouter.get('/:id', requirePermission('quotes:view'), asyncHandler(async (r
 // 新增订单：需要 quotes:create 权限
 quotesRouter.post('/', requirePermission('quotes:create'), asyncHandler(async (req, res) => {
   const operator = req.user?.name || ''
-  const data = await db.quotes.create({ ...req.body, created_by: operator, updated_by: operator })
+  // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
+  const norm = normalizeQuoteFabricMeters(req.body)
+  const data = await db.quotes.create({ ...req.body, ...norm.fields, created_by: operator, updated_by: operator })
+  await logFabricMetersCeil({
+    entityType: 'quote',
+    entityId: data.id,
+    entityName: (data as any).quote_number || data.customerName || data.id,
+    operator,
+    ceilChanges: norm.ceilChanges,
+    formulaChanges: norm.formulaChanges,
+  })
   res.json(data)
 }))
 
@@ -90,10 +124,32 @@ quotesRouter.post('/', requirePermission('quotes:create'), asyncHandler(async (r
 quotesRouter.put('/:id', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
   const { id } = req.params
   const operator = req.user?.name || ''
-  const data = await db.quotes.update(id, { ...req.body, updated_by: operator })
+  // 数据防篡改守卫：拦截"公式清空/表格大幅缩水"的疑似误保存（前端兜底失效或 API 直接调用时兜底）。
+  // 拦截时返回 409，前端弹确认框后携带 confirmDataReset=true 重试才放行
+  const existingQuote = await db.quotes.getById(id)
+  if (existingQuote) {
+    const resetReason = detectQuoteDataReset(
+      { tableData: existingQuote.tableData, allFormulas: existingQuote.allFormulas },
+      { tableData: req.body?.tableData, allFormulas: req.body?.allFormulas },
+    )
+    if (resetReason && req.body?.confirmDataReset !== true) {
+      return res.status(409).json({ error: resetReason, code: QUOTE_DATA_RESET_CODE })
+    }
+  }
+  // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
+  const norm = normalizeQuoteFabricMeters(req.body)
+  const data = await db.quotes.update(id, { ...req.body, ...norm.fields, updated_by: operator })
   if (!data) {
     return res.status(404).json({ error: '报价不存在' })
   }
+  await logFabricMetersCeil({
+    entityType: 'quote',
+    entityId: id,
+    entityName: (data as any).quote_number || data.customerName || id,
+    operator,
+    ceilChanges: norm.ceilChanges,
+    formulaChanges: norm.formulaChanges,
+  })
   // 清除缩略图缓存，使更新后的图片能反映到列表缩略图
   thumbnailCache.delete(id)
   res.json(data)
@@ -228,6 +284,10 @@ function validateTasks(body: any): string | null {
       if (t.materials.length > 50) return '材料数量不能超过 50'
       for (const m of t.materials) {
         if (!m || typeof m.name !== 'string' || !m.name.trim()) return '材料名称不能为空'
+        // 切片尺寸/布料总米数/来源标记（在线表格备料联动字段，可选）
+        if (m.cutSize != null && (typeof m.cutSize !== 'string' || m.cutSize.length > 32)) return '切片尺寸必须为不超过 32 字符的文本'
+        if (m.meters != null && (typeof m.meters !== 'number' || !isFinite(m.meters) || m.meters < 0)) return '布料(m)必须为非负数字'
+        if (m.source != null && m.source !== 'sheet') return '材料来源标记非法'
       }
     }
   }

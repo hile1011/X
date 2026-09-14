@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
-import { Bold, Italic, Underline, Palette, X, Trash2 } from 'lucide-react'
+import { Bold, Italic, Underline, Strikethrough, ListOrdered, Palette, X, Trash2 } from 'lucide-react'
 import { sanitizeTodoHtml, extractPlainText, type TodoItem, type TodoDraft, type TodoPriority } from '../utils/todoStorage'
 
 /**
  * 待办事项编辑弹窗
  *
  * 富文本编辑：基于 contentEditable + document.execCommand 实现
- * - 支持粗体/斜体/下划线/字体大小/文字颜色
+ * - 支持粗体/斜体/下划线/删除线/编号列表/字体大小/文字颜色
  * - 工具栏按钮 onMouseDown 阻止默认行为，避免点击时丢失内容区选区
  * - styleWithCSS 让 foreColor 以 style 属性输出，渲染更稳定
  */
@@ -186,6 +186,30 @@ export default function TodoEditModal({ initial, onSave, onDelete, onClose }: To
                 >
                   <Underline size={15} className="text-gray-600" />
                 </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('strikeThrough')}
+                  className="p-1.5 rounded hover:bg-gray-200 transition-colors line-through"
+                  title="删除线"
+                  aria-label="删除线"
+                >
+                  <Strikethrough size={15} className="text-gray-600" />
+                </button>
+
+                <div className="w-px h-5 bg-gray-200 mx-1" />
+
+                {/* 编号列表（有序列表） */}
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => exec('insertOrderedList')}
+                  className="p-1.5 rounded hover:bg-gray-200 transition-colors"
+                  title="编号列表"
+                  aria-label="编号列表"
+                >
+                  <ListOrdered size={15} className="text-gray-600" />
+                </button>
 
                 <div className="w-px h-5 bg-gray-200 mx-1" />
 
@@ -247,8 +271,8 @@ export default function TodoEditModal({ initial, onSave, onDelete, onClose }: To
                 ref={contentRef}
                 contentEditable
                 suppressContentEditableWarning
-                data-placeholder="请输入事项内容，支持设置字体大小、颜色、粗体、斜体、下划线等样式"
-                className="min-h-[180px] max-h-[340px] overflow-y-auto px-3 py-2.5 text-sm text-gray-700 outline-none [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-gray-400"
+                data-placeholder="请输入事项内容，支持字体大小、颜色、粗体、斜体、下划线、删除线、编号列表等样式"
+                className="min-h-[180px] max-h-[340px] overflow-y-auto px-3 py-2.5 text-sm text-gray-700 outline-none [&:empty]:before:content-[attr(data-placeholder)] [&:empty]:before:text-gray-400 [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
               />
             </div>
           </div>

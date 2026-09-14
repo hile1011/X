@@ -161,6 +161,8 @@ Stateless JWT，前端清除本地 token 即可，接口保留供扩展。返回
 
 **Quote 核心字段**：`id`、`quote_number`（16 位数字）、`customerName`、`status`（见 1.4）、`productStyle`、`quantity`、四价格字段（`costPrice`/`priceWithTax`/`sellPriceNoTax`/`sellPriceWithTax`）、`tableData`/`allFormulas`/`modifiedFormulas`（JSON 在线表格快照）、`images`（base64 data URI 数组）、各时间戳（`sampleTime`/`sampleCompletedTime`/`productionStartTime`/`shippingTime`/`paymentTime`/`reconciledTime`/`endTime`）、`pendingAmount`（待收总额，状态 3/4 时计算）。
 
+**布料米数向上取整（v33）**：`POST /api/quotes` 与 `PUT /api/quotes/:id` 保存订单时，后端对 `tableData` 中**布料米数列**（表头含「布料米数」，默认 M 列，定位失败回退 col=12）的数值执行**向上取整**（标准数学 ceil：`1.1→2`、`0.1→1`、`-1.1→-2`；非有限数字跳过），并对 `allFormulas` 中该列公式整体包裹 `CEILING(...,1)`（幂等，已包裹跳过）。前端保存前已做同口径处理，后端为兜底保障——入库数据必为取整值。取整变更（地址、原值→取整值）写入 `operation_logs` 审计日志（`operation_type = 'fabric-meters-ceil'`，审计失败不阻断保存）。局部更新（如仅改状态）不携带 `tableData` 时不受影响。存量订单与模板由迁移 v33 批量规范化（变更明细存 `fabric_meters_ceil_audit` 审计表，down 可逆还原）。
+
 ### 4.1 订单对账管理（v28）
 
 | 方法 | 路径 | 权限 | 说明 |
@@ -290,6 +292,8 @@ Stateless JWT，前端清除本地 token 即可，接口保留供扩展。返回
 ```
 
 校验：`data` 必须为非空二维数组；`formulas` 必须为对象；`styleCode` 必须对应存在的产品（400 引导到产品管理）；读取接口仅需认证（订单编辑页需加载模板）。
+
+**布料米数向上取整（v33）**：`POST /api/sheet-templates` 与 `PUT /api/sheet-templates/:id` 保存模板时，对 `data` 布料米数列数值向上取整、`formulas` 该列公式包裹 `CEILING(...,1)`，规则与订单接口一致（见第 4 节「布料米数向上取整」），变更同样写入 `operation_logs` 审计日志。
 
 ---
 

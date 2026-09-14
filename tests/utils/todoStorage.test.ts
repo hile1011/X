@@ -2,10 +2,10 @@
  * 每日待办本地存储层 单元测试
  * 测试目标：src/utils/todoStorage.ts
  *   - sanitizeTodoHtml：XSS 防御清洗（script/iframe/行内事件/javascript 协议）
- *   - extractPlainText：富文本 → 纯文本
+ *   - extractPlainText：富文本 → 纯文本（含有序列表编号前缀）
  *   - loadTodos / saveTodos：localStorage 读写 + 损坏数据防御
  *   - createTodo / updateTodo / deleteTodo：不可变数据操作
- *   - getTodosForDate：日期过滤 + 优先级排序
+ *   - getAllTodosSorted：跨日保留（不按日期清空）+ 优先级排序
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
@@ -17,7 +17,7 @@ import {
   createTodo,
   updateTodo,
   deleteTodo,
-  getTodosForDate,
+  getAllTodosSorted,
   type TodoItem,
   type TodoDraft,
 } from '../../src/utils/todoStorage'
@@ -103,6 +103,22 @@ describe('extractPlainText - 富文本提取纯文本', () => {
     expect(extractPlainText('<div>A</div><div>B</div>')).toBe('A\nB')
     expect(extractPlainText('<ul><li>项1</li><li>项2</li></ul>')).toBe('项1\n项2')
     expect(extractPlainText('<h1>标题</h1><h6>小标题</h6>')).toBe('标题\n小标题')
+  })
+
+  it('有序列表项提取时加编号前缀（每个 ol 计数重置）', () => {
+    expect(extractPlainText('<ol><li>步骤一</li><li>步骤二</li><li>步骤三</li></ol>')).toBe(
+      '1. 步骤一\n2. 步骤二\n3. 步骤三',
+    )
+  })
+
+  it('多个有序列表各自独立编号', () => {
+    expect(
+      extractPlainText('<ol><li>A</li><li>B</li></ol><ol><li>C</li></ol>'),
+    ).toBe('1. A\n2. B\n1. C')
+  })
+
+  it('无序列表项不加编号（保持原行为）', () => {
+    expect(extractPlainText('<ul><li>项1</li><li>项2</li></ul>')).toBe('项1\n项2')
   })
 
   it('移除其余 HTML 标签', () => {
@@ -264,26 +280,26 @@ describe('deleteTodo - 删除待办（不可变）', () => {
   })
 })
 
-// ============================ getTodosForDate ============================
+// ============================ getAllTodosSorted ============================
 
-describe('getTodosForDate - 日期过滤与排序', () => {
-  it('仅返回指定日期的待办', () => {
+describe('getAllTodosSorted - 跨日保留与排序', () => {
+  it('不按日期过滤：跨日待办全部返回（到期不清空）', () => {
     const todos = [
       makeTodo({ id: 'a', date: '2026-09-10' }),
       makeTodo({ id: 'b', date: '2026-09-11' }),
-      makeTodo({ id: 'c', date: '2026-09-10' }),
+      makeTodo({ id: 'c', date: '2026-09-08' }),
     ]
-    const result = getTodosForDate(todos, '2026-09-10')
-    expect(result.map((t) => t.id).sort()).toEqual(['a', 'c'])
+    const result = getAllTodosSorted(todos)
+    expect(result.map((t) => t.id).sort()).toEqual(['a', 'b', 'c'])
   })
 
-  it('优先级排序：high → medium → low', () => {
+  it('优先级排序：high → medium → low（跨日期混合）', () => {
     const todos = [
       makeTodo({ id: 'low', priority: 'low', created_at: '2026-09-10T03:00:00Z' }),
-      makeTodo({ id: 'med', priority: 'medium', created_at: '2026-09-10T02:00:00Z' }),
-      makeTodo({ id: 'high', priority: 'high', created_at: '2026-09-10T01:00:00Z' }),
+      makeTodo({ id: 'med', priority: 'medium', created_at: '2026-09-11T02:00:00Z' }),
+      makeTodo({ id: 'high', priority: 'high', created_at: '2026-09-12T01:00:00Z' }),
     ]
-    const result = getTodosForDate(todos, '2026-09-10')
+    const result = getAllTodosSorted(todos)
     expect(result.map((t) => t.id)).toEqual(['high', 'med', 'low'])
   })
 
@@ -292,7 +308,7 @@ describe('getTodosForDate - 日期过滤与排序', () => {
       makeTodo({ id: 'late', priority: 'high', created_at: '2026-09-10T09:00:00Z' }),
       makeTodo({ id: 'early', priority: 'high', created_at: '2026-09-10T01:00:00Z' }),
     ]
-    const result = getTodosForDate(todos, '2026-09-10')
+    const result = getAllTodosSorted(todos)
     expect(result.map((t) => t.id)).toEqual(['early', 'late'])
   })
 
@@ -301,7 +317,7 @@ describe('getTodosForDate - 日期过滤与排序', () => {
       makeTodo({ id: 'legacy', priority: undefined, created_at: '2026-09-10T01:00:00Z' }),
       makeTodo({ id: 'low', priority: 'low', created_at: '2026-09-10T02:00:00Z' }),
     ]
-    const result = getTodosForDate(todos, '2026-09-10')
+    const result = getAllTodosSorted(todos)
     expect(result.map((t) => t.id)).toEqual(['legacy', 'low'])
   })
 
@@ -310,11 +326,21 @@ describe('getTodosForDate - 日期过滤与排序', () => {
       makeTodo({ id: 'later', priority: undefined, created_at: '2026-09-10T09:00:00Z' }),
       makeTodo({ id: 'earlier', priority: undefined, created_at: '2026-09-10T01:00:00Z' }),
     ]
-    const result = getTodosForDate(todos, '2026-09-10')
+    const result = getAllTodosSorted(todos)
     expect(result.map((t) => t.id)).toEqual(['earlier', 'later'])
   })
 
+  it('返回新数组：原数组顺序不被修改', () => {
+    const todos = [
+      makeTodo({ id: 'low', priority: 'low' }),
+      makeTodo({ id: 'high', priority: 'high' }),
+    ]
+    const result = getAllTodosSorted(todos)
+    expect(result.map((t) => t.id)).toEqual(['high', 'low'])
+    expect(todos.map((t) => t.id)).toEqual(['low', 'high'])
+  })
+
   it('空数组返回空数组', () => {
-    expect(getTodosForDate([], '2026-09-10')).toEqual([])
+    expect(getAllTodosSorted([])).toEqual([])
   })
 })

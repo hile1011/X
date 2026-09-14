@@ -1,4 +1,6 @@
-export const CURRENT_SCHEMA_VERSION = 32
+import { normalizeFabricMeters, parseColFromAddress } from '../services/fabricMeters.js'
+
+export const CURRENT_SCHEMA_VERSION = 33
 
 export interface Migration {
   version: number
@@ -1763,6 +1765,128 @@ export const migrations: Migration[] = [
     },
     down: async (db: any) => {
       await db.exec('DROP TABLE IF EXISTS product_media')
+    },
+  },
+  {
+    version: 33,
+    name: 'fabric-meters-ceil',
+    description: 'V0.25：布料米数列系统性向上取整——存量 quotes（tableData/allFormulas）与 sheet_templates（data/formulas）规范化：数值向上取整、公式整体包裹 CEILING(...,1)；变更明细（原值→取整值）存入 fabric_meters_ceil_audit 审计表，down 依据审计表逆序还原',
+    up: async (db: any) => {
+      // 1. 审计表：记录原值与取整值（同时作为 down 回滚依据；uk 防重复记录）
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS fabric_meters_ceil_audit (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          entity_type VARCHAR(20) NOT NULL COMMENT 'quote / sheet_template',
+          entity_id VARCHAR(64) NOT NULL COMMENT '订单或模板 id',
+          ceil_changes JSON COMMENT '取整明细 [{address,row,from,to}]',
+          formula_changes JSON COMMENT '公式包裹明细 [{address,from}]',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY uk_fm_entity (entity_type, entity_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='布料米数向上取整迁移审计（v33，记录原始值供回滚与追溯）'
+      `)
+
+      const BATCH = 1000
+      const insertAudit = db.prepare(
+        'INSERT IGNORE INTO fabric_meters_ceil_audit (entity_type, entity_id, ceil_changes, formula_changes) VALUES (?, ?, ?, ?)'
+      )
+
+      // 2. 分批处理 quotes（keyset 分页，每批 ≤ 1000 行）
+      const updateQuote = db.prepare('UPDATE quotes SET tableData = ?, allFormulas = ? WHERE id = ?')
+      let lastId = ''
+      for (;;) {
+        const rows = await db.prepare(
+          'SELECT id, tableData, allFormulas FROM quotes WHERE id > ? ORDER BY id LIMIT 1000'
+        ).all(lastId) as { id: string; tableData: string | null; allFormulas: string | null }[]
+        if (rows.length === 0) break
+        for (const row of rows) {
+          lastId = row.id
+          let data: (string | number | null)[][] = []
+          try { data = row.tableData ? JSON.parse(row.tableData) : [] } catch { data = [] }
+          if (!Array.isArray(data) || data.length === 0) continue
+          let formulas: Record<string, string> = {}
+          try { formulas = row.allFormulas ? JSON.parse(row.allFormulas) : {} } catch { formulas = {} }
+          const norm = normalizeFabricMeters(data, formulas)
+          if (norm.ceilChanges.length === 0 && norm.formulaChanges.length === 0) continue
+          await updateQuote.run(JSON.stringify(norm.data), JSON.stringify(norm.formulas ?? formulas), row.id)
+          await insertAudit.run('quote', row.id, JSON.stringify(norm.ceilChanges), JSON.stringify(norm.formulaChanges))
+        }
+        if (rows.length < BATCH) break
+      }
+
+      // 3. 分批处理 sheet_templates（模板量少，同样按批处理保持一致）
+      const updateTpl = db.prepare('UPDATE sheet_templates SET data = ?, formulas = ? WHERE id = ?')
+      let lastTplId = ''
+      for (;;) {
+        const rows = await db.prepare(
+          'SELECT id, data, formulas FROM sheet_templates WHERE id > ? ORDER BY id LIMIT 1000'
+        ).all(lastTplId) as { id: string; data: string | null; formulas: string | null }[]
+        if (rows.length === 0) break
+        for (const row of rows) {
+          lastTplId = row.id
+          let data: (string | number | null)[][] = []
+          try { data = row.data ? JSON.parse(row.data) : [] } catch { data = [] }
+          if (!Array.isArray(data) || data.length === 0) continue
+          let formulas: Record<string, string> = {}
+          try { formulas = row.formulas ? JSON.parse(row.formulas) : {} } catch { formulas = {} }
+          const norm = normalizeFabricMeters(data, formulas)
+          if (norm.ceilChanges.length === 0 && norm.formulaChanges.length === 0) continue
+          await updateTpl.run(JSON.stringify(norm.data), JSON.stringify(norm.formulas ?? formulas), row.id)
+          await insertAudit.run('sheet_template', row.id, JSON.stringify(norm.ceilChanges), JSON.stringify(norm.formulaChanges))
+        }
+        if (rows.length < BATCH) break
+      }
+    },
+    down: async (db: any) => {
+      // 依据审计表逆序还原：数据恢复原始值、公式去 CEILING 包裹；完成后删除审计表
+      // 注意：mysql2 会将 JSON 列解析为对象返回（而非字符串），此处两种形态均兼容
+      const parseJsonCol = <T>(v: unknown, fallback: T): T => {
+        if (typeof v === 'string') { try { return JSON.parse(v) as T } catch { return fallback } }
+        if (v != null && typeof v === 'object') return v as T
+        return fallback
+      }
+      const auditRows = await db.prepare(
+        'SELECT entity_type, entity_id, ceil_changes, formula_changes FROM fabric_meters_ceil_audit'
+      ).all() as { entity_type: string; entity_id: string; ceil_changes: unknown; formula_changes: unknown }[]
+
+      for (const audit of auditRows) {
+        const ceilChanges = parseJsonCol<{ address: string; row: number; from: number; to: number }[]>(audit.ceil_changes, [])
+        const formulaChanges = parseJsonCol<{ address: string; from: string }[]>(audit.formula_changes, [])
+        if (ceilChanges.length === 0 && formulaChanges.length === 0) continue
+
+        if (audit.entity_type === 'quote') {
+          const row = await db.prepare('SELECT tableData, allFormulas FROM quotes WHERE id = ?').get(audit.entity_id) as
+            { tableData: string | null; allFormulas: string | null } | null
+          if (!row) continue
+          let data: (string | number | null)[][] = []
+          try { data = row.tableData ? JSON.parse(row.tableData) : [] } catch { data = [] }
+          let formulas: Record<string, string> = {}
+          try { formulas = row.allFormulas ? JSON.parse(row.allFormulas) : {} } catch { formulas = {} }
+          for (const c of ceilChanges) {
+            const col = parseColFromAddress(c.address)
+            if (Array.isArray(data) && data[c.row] && col >= 0) data[c.row][col] = c.from
+          }
+          for (const c of formulaChanges) formulas[c.address] = c.from
+          await db.prepare('UPDATE quotes SET tableData = ?, allFormulas = ? WHERE id = ?')
+            .run(JSON.stringify(data), JSON.stringify(formulas), audit.entity_id)
+        } else if (audit.entity_type === 'sheet_template') {
+          const row = await db.prepare('SELECT data, formulas FROM sheet_templates WHERE id = ?').get(audit.entity_id) as
+            { data: string | null; formulas: string | null } | null
+          if (!row) continue
+          let data: (string | number | null)[][] = []
+          try { data = row.data ? JSON.parse(row.data) : [] } catch { data = [] }
+          let formulas: Record<string, string> = {}
+          try { formulas = row.formulas ? JSON.parse(row.formulas) : {} } catch { formulas = {} }
+          for (const c of ceilChanges) {
+            const col = parseColFromAddress(c.address)
+            if (Array.isArray(data) && data[c.row] && col >= 0) data[c.row][col] = c.from
+          }
+          for (const c of formulaChanges) formulas[c.address] = c.from
+          await db.prepare('UPDATE sheet_templates SET data = ?, formulas = ? WHERE id = ?')
+            .run(JSON.stringify(data), JSON.stringify(formulas), audit.entity_id)
+        }
+      }
+
+      await db.exec('DROP TABLE IF EXISTS fabric_meters_ceil_audit')
     },
   },
 ]

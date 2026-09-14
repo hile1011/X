@@ -128,10 +128,15 @@ function parseSheetTemplateRow(row: Record<string, any>): SheetTemplateRecord {
 /** 做货流程材料准备项（v24，存 quote_production_tasks.materials JSON） */
 export interface ProductionTaskMaterial {
   name: string
-  spec: string
+  /** 数量（个；表格联动时手提自动×2） */
   quantity: number
-  unit: string
+  /** 切片尺寸（如 41×90cm；在线表格备料联动，也可手动填写） */
+  cutSize?: string
+  /** 布料总米数（M，向上取整；在线表格备料联动，也可手动填写） */
+  meters?: number
   ready: boolean
+  /** 来源标记：'sheet' = 在线表格备料自动同步（手动添加的材料无此字段） */
+  source?: 'sheet'
 }
 
 /** 做货流程任务记录（v24 甘特图数据） */

@@ -196,6 +196,25 @@ describe('handleResponse - 响应解析', () => {
     fetchMock.mockResolvedValueOnce(mockResponse({ ok: false, status: 502, text: '' }))
     await expect(api.roles.getAll()).rejects.toThrow('请求失败 (502)')
   })
+
+  it('失败 + JSON code 字段：错误对象透传 code（供守卫确认等分支处理）', async () => {
+    fetchMock.mockResolvedValueOnce(mockResponse({
+      ok: false, status: 409,
+      body: { error: '检测到本次保存将清空订单的全部 79 个表格公式。', code: 'QUOTE_DATA_RESET_CONFIRM_REQUIRED' },
+    }))
+    const err = await api.quotes.update('q1', { status: 1 }).catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain('79')
+    expect(err.code).toBe('QUOTE_DATA_RESET_CONFIRM_REQUIRED')
+  })
+
+  it('失败 + JSON 无 code 字段：错误对象 code 为 undefined', async () => {
+    fetchMock.mockResolvedValueOnce(mockResponse({ ok: false, status: 403, body: { error: '无权限' } }))
+    const err = await api.roles.getAll().catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toBe('无权限')
+    expect(err.code).toBeUndefined()
+  })
 })
 
 // ─── 端点组装 ─────────────────────────────────────────────────

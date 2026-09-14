@@ -20,6 +20,7 @@ import {
   findHeaderRow,
   findTablePositions,
   extractPrices,
+  extractFabricPrepRows,
   type TablePositions,
 } from '../src/services/tableLocator'
 
@@ -486,5 +487,82 @@ describe('联动一致性 - 模拟 syncFromTable 数据提取', () => {
     expect(prices.costPrice).toBe(2.97)
     expect(prices.sellPriceNoTax).toBe(3.42)
     expect(prices.sellPriceWithTax).toBe(3.76)
+  })
+})
+
+// ============================ 备料数据提取（extractFabricPrepRows） ============================
+
+describe('extractFabricPrepRows - 在线表格备料提取', () => {
+  it('款式1：提取规格区数据行，成品行（无切料数据）被排除', () => {
+    const rows = extractFabricPrepRows(STYLE1_DATA)!
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toEqual({ name: '正反面', quantity: 7200, cutWidth: 41, cutHeight: 90, meters: 2160 })
+    expect(rows[1]).toEqual({ name: '手提', quantity: 7200, cutWidth: 6, cutHeight: 70, meters: 403.2 })
+  })
+
+  it('款式2：含底部行，布料米数为 null（用门幅余料）仍提取', () => {
+    const rows = extractFabricPrepRows(STYLE2_DATA)!
+    expect(rows).toHaveLength(3)
+    expect(rows[2]).toEqual({ name: '底部', quantity: 7200, cutWidth: 41, cutHeight: 14, meters: null })
+  })
+
+  it('无第二个标题行时返回 null（结构不完整，不联动）', () => {
+    // 截断：只保留标题行 + 数据行，去掉加工费成本核算区
+    const truncated = STYLE1_DATA.slice(0, 4)
+    expect(extractFabricPrepRows(truncated)).toBeNull()
+  })
+
+  it('空数据 / 非数组返回 null', () => {
+    expect(extractFabricPrepRows([])).toBeNull()
+    expect(extractFabricPrepRows(null as any)).toBeNull()
+  })
+
+  it('规格区插入新数据行（第二个标题行之前）自动纳入提取', () => {
+    const inserted = [
+      ...STYLE1_DATA.slice(0, 4),
+      ['侧面', 7200, 10, 20, 0, 1, 1, 11, 21, 154, 280, 20, 88.88, 7, 2.1, null],
+      ...STYLE1_DATA.slice(4),
+    ]
+    const rows = extractFabricPrepRows(inserted)!
+    expect(rows).toHaveLength(3)
+    expect(rows[2]).toEqual({ name: '侧面', quantity: 7200, cutWidth: 11, cutHeight: 21, meters: 88.88 })
+  })
+
+  it('列定位回退：标题行无关键字时使用模板默认列（1/7/8/12）', () => {
+    // 标题行关键字全部去除，数据布局与模板一致 → 按默认列提取
+    const data: (string | number | null)[][] = [
+      [null, '列1', '列2', '列3', '列4', '列5', '列6', '列7', '列8', '列9', '列10', '列11', '列12', '列13', '列14', '列15'],
+      ['正反面', 100, null, null, null, null, null, 41, 90, null, null, null, 2160, null, null, null],
+      [null, '成本区', null, null],
+    ]
+    const rows = extractFabricPrepRows(data)!
+    expect(rows).toEqual([{ name: '正反面', quantity: 100, cutWidth: 41, cutHeight: 90, meters: 2160 }])
+  })
+
+  it('数值校验：非法值置 null、数字字符串可解析、米数保留两位小数', () => {
+    const data: (string | number | null)[][] = [
+      [null, '数量 (个)', '宽', '高', '底', '宽出血', '高出血', '切片宽', '切片高', '门幅', '克重', '废料', '布料米数(M)', null, null, null],
+      ['甲', 'abc', null, null, null, null, null, '41', '90', null, null, null, 403.256, null, null, null],
+      ['乙', -5, null, null, null, null, null, null, null, null, null, null, '12.5', null, null, null],
+      [null, '成本区', null, null],
+    ]
+    const rows = extractFabricPrepRows(data)!
+    expect(rows).toHaveLength(2)
+    // 甲：数量非法 → null；切片宽高为数字字符串可解析；米数 round2
+    expect(rows[0]).toEqual({ name: '甲', quantity: null, cutWidth: 41, cutHeight: 90, meters: 403.26 })
+    // 乙：负数数量非法 → null；米数字符串解析
+    expect(rows[1]).toEqual({ name: '乙', quantity: null, cutWidth: null, cutHeight: null, meters: 12.5 })
+  })
+
+  it('名称为空或切片数据全空的行被跳过', () => {
+    const data: (string | number | null)[][] = [
+      [null, '数量 (个)', '宽', '高', '底', '宽出血', '高出血', '切片宽', '切片高', '门幅', '克重', '废料', '布料米数(M)', null, null, null],
+      [null, 100, null, null, null, null, null, 41, 90, null, null, null, 100, null, null, null], // A列空 → 跳过
+      ['成品', 7200, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null], // 切片/米数全空 → 跳过
+      ['丙', 100, null, null, null, null, null, 41, 90, null, null, null, 100, null, null, null],
+      [null, '成本区', null, null],
+    ]
+    const rows = extractFabricPrepRows(data)!
+    expect(rows).toEqual([{ name: '丙', quantity: 100, cutWidth: 41, cutHeight: 90, meters: 100 }])
   })
 })

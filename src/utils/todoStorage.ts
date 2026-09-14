@@ -2,8 +2,9 @@
  * 每日待办事项 — 本地存储层
  *
  * 数据持久化方案：localStorage（键 daily_todos_v1）
- * - 每条待办归属一个日期（date: YYYY-MM-DD），工作台展示"当日"待办
- * - content 为富文本 HTML（编辑器 toolbar 应用字体大小/颜色/粗体/斜体/下划线）
+ * - 每条待办归属一个日期（date: YYYY-MM-DD，记录创建日）
+ * - 待办不按日期自动清空：持续展示直到用户手动删除（跨日保留）
+ * - content 为富文本 HTML（编辑器 toolbar 应用字体大小/颜色/粗体/斜体/下划线/删除线/编号列表）
  * - 存入前经 sanitizeTodoHtml 清洗，防止 script/事件处理器注入
  */
 
@@ -65,10 +66,15 @@ export function sanitizeTodoHtml(html: string): string {
     .replace(/javascript:/gi, '')
 }
 
-/** 从富文本 HTML 提取纯文本（保留换行：<br> 与块级结束标签转为 \n，配合 whitespace-pre-line 展示） */
+/** 从富文本 HTML 提取纯文本（保留换行：<br> 与块级结束标签转为 \n；有序列表加 "1. " 编号前缀） */
 export function extractPlainText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, '\n')
+    // 有序列表：<li> 前插入编号（每个 <ol> 内计数器重置）
+    .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_m, inner: string) => {
+      let i = 0
+      return inner.replace(/<li[^>]*>/gi, () => `${++i}. `)
+    })
     .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/gi, ' ')
@@ -143,14 +149,12 @@ export function deleteTodo(todos: TodoItem[], id: string): TodoItem[] {
   return todos.filter((t) => t.id !== id)
 }
 
-/** 获取指定日期的待办（优先级高在前，同级按创建时间升序） */
-export function getTodosForDate(todos: TodoItem[], date: string): TodoItem[] {
-  return todos
-    .filter((t) => t.date === date)
-    .sort((a, b) => {
-      const pa = PRIORITY_ORDER[a.priority || 'medium']
-      const pb = PRIORITY_ORDER[b.priority || 'medium']
-      if (pa !== pb) return pa - pb
-      return a.created_at.localeCompare(b.created_at)
-    })
+/** 获取全部待办（不按日期过滤、跨日保留，直到手动删除；优先级高在前，同级按创建时间升序） */
+export function getAllTodosSorted(todos: TodoItem[]): TodoItem[] {
+  return [...todos].sort((a, b) => {
+    const pa = PRIORITY_ORDER[a.priority || 'medium']
+    const pb = PRIORITY_ORDER[b.priority || 'medium']
+    if (pa !== pb) return pa - pb
+    return a.created_at.localeCompare(b.created_at)
+  })
 }

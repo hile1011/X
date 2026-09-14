@@ -5,6 +5,7 @@ import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api } from '../api'
 import { fetchStyleOptions, type StyleOption } from '../services/productStyles'
+import { findFabricMetersCol, ceilFabricMeters, FABRIC_METERS_DEFAULT_COL } from '../services/fabricMeters'
 import { OrderStatus } from '../constants/OrderStatus'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
 
@@ -55,6 +56,7 @@ const STATUS_OPTIONS = OrderStatus.getAll()
 
 // 在线表格初始数据（来源：帆布袋价格试算表-规格试算.xlsx sheet1）
 // 根据款式类型定义不同的表格模版
+// 布料米数(M)列公式整体包裹 CEILING(...,1)、静态缓存值同步向上取整（口径见 services/fabricMeters）
 interface SheetTemplate {
   data: (string | number | null)[][]
   formulas: Record<string, string>
@@ -66,7 +68,7 @@ const TEMPLATE_NO_BOTTOM_NO_SIDE: SheetTemplate = {
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', '带刀手提条数'],
     ['成品', 7200, 38, 40, 0, null, null, null, null, null, null, null, null, null, null, null],
     ['正反面', 7200, 38, 40, 0, 3, 10, 41, 90, 154, 280, 31, 2160, 3.7561, 907.2, 12342.8571],
-    ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 403.2, 25.6667, 169.344, null],
+    ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 404, 25.6667, 169.344, null],
     [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '参考卖价', '含税价', '实际卖价', null, null, null, null],
     ['正反面', 0.51, 0.4059, 4.4, 1.4058, 0.05, 0.1, 725.76, 1.03, 2.6467, null, null, null, null, null, null],
     ['手提', null, 0, 4.4, 0.2968, null, null, 135.48, 1.03, 0.3251, null, null, null, null, null, null],
@@ -80,14 +82,14 @@ const TEMPLATE_NO_BOTTOM_NO_SIDE: SheetTemplate = {
     H3: '=F3+C3',
     I3: '=(D3*2+E3+G3)',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B3/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*K3*1.5/1000',
     P3: '=M3*4/(I4/100)',
     // 行3 手提（规格试算）
     B4: '=B2', I4: '=D4',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=I4/100*2*B4/INT(J4/H4)',
+    M4: '=CEILING(I4/100*2*B4/INT(J4/H4),1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*K4*1.5/1000',
     // 行5 正反面（成本核算）
@@ -117,7 +119,7 @@ const TEMPLATE_WITH_BOTTOM_NO_SIDE: SheetTemplate = {
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', '带刀手提条数'],
     ['成品', 7200, 38, 40, 8, null, null, null, null, null, null, null, null, null, null, null],
     ['正反面', 7200, 38, 40, 8, 3, 10, 41, 98, 154, 280, 31, 2160, 3.7561, 907.2, 12342.8571],
-    ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 403.2, 25.6667, 169.344, null],
+    ['手提', 7200, 2.5, 70, 0, null, null, 6, 70, 154, 280, 4, 404, 25.6667, 169.344, null],
     ['底部', 7200, 38, 8, 0, 3, 3, 41, 14, 154, 280, 154, null, 11, null, null],
     [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '参考卖价', '含税价', '实际卖价', null, null, null, null],
     ['正反面', 0.51, 0.4059, 4.4, 1.4058, 0.05, 0.1, 725.76, 1.03, 2.6467, null, null, null, null, null, null],
@@ -133,14 +135,14 @@ const TEMPLATE_WITH_BOTTOM_NO_SIDE: SheetTemplate = {
     H3: '=F3+C3',
     I3: '=(D3*2+E3+G3)',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B3/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B3/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*K3*1.5/1000',
     P3: '=M3*4/(I4/100)',
     // 行3 手提（规格试算）
     B4: '=B2', I4: '=D4',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=I4/100*2*B4/INT(J4/H4)',
+    M4: '=CEILING(I4/100*2*B4/INT(J4/H4),1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*K4*1.5/1000',
     // 行4 底部（规格试算）
@@ -148,7 +150,7 @@ const TEMPLATE_WITH_BOTTOM_NO_SIDE: SheetTemplate = {
     H5: '=F5+C5',
     I5: '=D5+G5*2',
     L5: '=MOD(J5,MIN(H5,I5))',
-    M5: '=CEILING(B5/INT(N5),1)*MAX(H5,I5)/100',
+    M5: '=CEILING(CEILING(B5/INT(N5),1)*MAX(H5,I5)/100,1)',
     N5: '=J5/(MIN(H5,I5))',
     O5: '=M5*K5*1.5/1000',
     // 行6 正反面（成本核算）
@@ -182,8 +184,8 @@ const TEMPLATE_WITH_BOTTOM_AND_SIDE: SheetTemplate = {
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', null],
     ['成品', 300, 40, 35, 12, null, null, null, null, null, null, null, null, null, 96, 320],
     ['正反面', 300, 40, 35, 0, 2, 10, 42, 80, 154, 500, 28, 80, 3.66666666666667, 60, null],
-    ['侧底', 300, 12, 110, 0, 2, 10, 14, 120, 154, 500, 0, 33.6, 11, 25.2, null],
-    ['手提', 300, 3.8, 60, 0, null, null, 6, 60, 154, 500, 4, 14.4, 25.6666666666667, 10.8, null],
+    ['侧底', 300, 12, 110, 0, 2, 10, 14, 120, 154, 500, 0, 34, 11, 25.2, null],
+    ['手提', 300, 3.8, 60, 0, null, null, 6, 60, 154, 500, 4, 15, 25.6666666666667, 10.8, null],
     [null, '加工费(元/个)', '印刷双面（元/个）', '布料价格', '布料成本（元）', '额外工艺成本-打叉', '包装费', '运费单价(元)', '损耗系数', '单个布袋总价（元）', null, null, null, null, null, null],
     ['正反面', 1.5, 0.4032, 7.2, 2.01, 1.25, 0.2, 108, 1.03, 5.888896, null, null, null, null, null, null],
     ['侧底', null, null, 7.2, 0.8964, 0, 0, 45.36, 1.03, 1.079028, null, null, null, null, null, null],
@@ -198,7 +200,7 @@ const TEMPLATE_WITH_BOTTOM_AND_SIDE: SheetTemplate = {
     H3: '=F3+C2',
     I3: '=(D3*2+G3)',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B2/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*1.5*K3/1000',
     // 行3 侧底
@@ -206,13 +208,13 @@ const TEMPLATE_WITH_BOTTOM_AND_SIDE: SheetTemplate = {
     H4: '=E2+F4',
     I4: '=C2+D2*2+G4',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=CEILING(B3/INT(N4),1)*MAX(H4,I4)/100',
+    M4: '=CEILING(CEILING(B3/INT(N4),1)*MAX(H4,I4)/100,1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*1.5*K4/1000',
     // 行4 手提
     B5: '=B2', I5: '=D5',
     L5: '=MOD(J5,MIN(H5,I5))',
-    M5: '=I5/100*2*B2/INT(J5/H5)',
+    M5: '=CEILING(I5/100*2*B2/INT(J5/H5),1)',
     N5: '=J5/(MIN(H5,I5))',
     O5: '=M5*1.5*K5/1000',
     // 汇总行
@@ -243,10 +245,10 @@ const TEMPLATE_HAND_HELD_NORMAL_SPLICING: SheetTemplate = {
   data: [
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', null],
     ['成品', 1000, 40, 35, 10, null, null, null, null, null, null, null, null, null, 212.7873, 212.7873],
-    ['底部', 1000, 40, 5, 10, 4, 3, 44, 23, 148, 340, 10, 73.48, 6.43478260869565, 37.4748, null],
+    ['底部', 1000, 40, 5, 10, 4, 3, 44, 23, 148, 340, 10, 74, 6.43478260869565, 37.4748, null],
     ['正面', 1000, 40, 30, null, 4, 6, 44, 36, 154, 340, 10, 110, 4.27777777777778, 56.1, null],
     ['反面', 1000, 40, 30, null, 4, 6, 44, 36, 154, 340, 10, 110, 4.27777777777778, 56.1, null],
-    ['外口袋', 1000, 17, 17, null, 2, 2, 19, 19, 154, 340, 2, 23.75, 8.10526315789474, 12.1125, null],
+    ['外口袋', 1000, 17, 17, null, 2, 2, 19, 19, 154, 340, 2, 24, 8.10526315789474, 12.1125, null],
     ['手提', 1000, 2.5, 120, 0, null, null, 6, 120, 148, 340, 4, 100, 24.6666666666667, 51, null],
     [null, '加工费(元/个)', '印刷（元/个）', '布料价格', '不同安数布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '单个布袋总价（元）', null, null, null, null, null, null],
     ['底部', 1.8, 0, 9.5, 0.75306, 0.2, 0.15, 29.97984, 1.03, 3.0165310352, null, null, null, null, null, null],
@@ -263,33 +265,33 @@ const TEMPLATE_HAND_HELD_NORMAL_SPLICING: SheetTemplate = {
     B3: '=B2', C3: '=C2', D3: '=E2/2', E3: '=E2',
     H3: '=F3+C3', I3: '=E3*2+G3',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B2/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*K3*1.5/1000',
     // 行3 正面
     B4: '=B2', C4: '=C2', D4: '=D2-D3',
     H4: '=F4+C2', I4: '=G4+D2-E2/2',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100',
+    M4: '=CEILING(CEILING(B2/INT(N4),1)*MAX(H4,I4)/100,1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*K4*1.5/1000',
     // 行4 反面
     B5: '=B2', C5: '=C2', D5: '=D2-D3',
     H5: '=F5+C2', I5: '=G5+D2-E2/2',
     L5: '=MOD(J5,MIN(H5,I5))',
-    M5: '=CEILING(B2/INT(N5),1)*MAX(H5,I5)/100',
+    M5: '=CEILING(CEILING(B2/INT(N5),1)*MAX(H5,I5)/100,1)',
     N5: '=J5/(MIN(H5,I5))',
     O5: '=M5*K5*1.5/1000',
     // 行5 外口袋
     B6: '=B3', H6: '=F6+C6', I6: '=G6+D6-E6/2',
     L6: '=MOD(J6,MIN(H6,I6))',
-    M6: '=CEILING(B3/INT(N6),1)*MAX(H6,I6)/100',
+    M6: '=CEILING(CEILING(B3/INT(N6),1)*MAX(H6,I6)/100,1)',
     N6: '=J6/(MIN(H6,I6))',
     O6: '=M6*K6*1.5/1000',
     // 行6 手提
     B7: '=B2', I7: '=D7',
     L7: '=MOD(J7,MIN(H7,I7))',
-    M7: '=I7/100*2*B2/INT(J7/H7)',
+    M7: '=CEILING(I7/100*2*B2/INT(J7/H7),1)',
     N7: '=J7/(MIN(H7,I7))',
     O7: '=M7*K7*1.5/1000',
     // 汇总行
@@ -329,10 +331,10 @@ const TEMPLATE_HAND_HELD_PREMIUM_SPLICING: SheetTemplate = {
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量(kg)', '单个克重'],
     ['成品', 500, 45, 35, 15, null, null, null, null, null, null, null, null, null, 168.561557142857, 337.123114285714],
     ['底部', 500, 45, 4, 15, 4, 4, 49, 27, 148, 340, 13, 49, 5.48148148148148, 24.99, null],
-    ['正反面', 500, 45, 31, null, 4, 6, 49, 91, 154, 340, 7, 151.97, 3.14285714285714, 77.5047, null],
-    ['包边条', 500, 4, 160, 0, null, null, 4, 160, 154, 340, 2, 22.4, 38.5, 11.424, null],
+    ['正反面', 500, 45, 31, null, 4, 6, 49, 91, 154, 340, 7, 152, 3.14285714285714, 77.5047, null],
+    ['包边条', 500, 4, 160, 0, null, null, 4, 160, 154, 340, 2, 23, 38.5, 11.424, null],
     ['手提', 500, 3.2, 120, 0, null, null, 6, 120, 148, 340, 4, 50, 24.6666666666667, 25.5, null],
-    ['阴阳手提-本色', 500, 3.5, 120, 0, null, null, 7, 120, 148, 340, 1, 57.1428571428571, 21.1428571428571, 29.1428571428571, null],
+    ['阴阳手提-本色', 500, 3.5, 120, 0, null, null, 7, 120, 148, 340, 1, 58, 21.1428571428571, 29.1428571428571, null],
     [null, '加工费(元/个)', '印刷（元/个）', '布料价格', '不同安数布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '单个布袋总价（元）', null, null, null, null, null, null],
     ['底部', 5, 0, 13, 1.344, 0.2, 0.15, 44.982, 1.03, 6.98298292, null, null, null, null, null, null],
     ['正反面', 0, 0.5, 7.5, 2.37955, 0, 0, 139.50846, 1.03, 3.2533239276, null, null, null, null, null, null],
@@ -348,33 +350,33 @@ const TEMPLATE_HAND_HELD_PREMIUM_SPLICING: SheetTemplate = {
     B3: '=B2', C3: '=C2', E3: '=E2',
     H3: '=F3+C3', I3: '=E3+D3*2+G3',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B2/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*K3*1.5/1000',
     // 行3 正反面
     B4: '=B3', C4: '=C2', D4: '=D2-D3',
     H4: '=F4+C2', I4: '=D2*2+E2+G4',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100',
+    M4: '=CEILING(CEILING(B2/INT(N4),1)*MAX(H4,I4)/100,1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*K4*1.5/1000',
     // 行4 包边条
     B5: '=B3', D5: '=(D2+C2)*2',
     H5: '=C5', I5: '=D5',
     L5: '=MOD(J5,MIN(H5,I5))',
-    M5: '=CEILING(B3/INT(N5),1)*MAX(H5,I5)/100',
+    M5: '=CEILING(CEILING(B3/INT(N5),1)*MAX(H5,I5)/100,1)',
     N5: '=J5/(MIN(H5,I5))',
     O5: '=M5*K5*1.5/1000',
     // 行5 手提（原阴阳手提-染色）
     B6: '=B2', I6: '=D6',
     L6: '=MOD(J6,MIN(H6,I6))',
-    M6: '=I6/100*2*B6/INT(J6/H6)',
+    M6: '=CEILING(I6/100*2*B6/INT(J6/H6),1)',
     N6: '=J6/(MIN(H6,I6))',
     O6: '=M6*K6*1.5/1000',
     // 行6 阴阳手提-本色
     B7: '=B2', D7: '=D6', I7: '=D7',
     L7: '=MOD(J7,MIN(H7,I7))',
-    M7: '=I7/100*2*B7/INT(J7/H7)',
+    M7: '=CEILING(I7/100*2*B7/INT(J7/H7),1)',
     N7: '=J7/(MIN(H7,I7))',
     O7: '=M7*K7*1.5/1000',
     // 汇总行
@@ -414,10 +416,10 @@ const TEMPLATE_HAND_HELD_NO_BOTTOM_SPLICING: SheetTemplate = {
   data: [
     [null, '数量 (个)', '宽(CM)', '高(CM)', '底(CM)', '宽出血', '高出血', '切片宽', '切片高', '布料门幅', '克重', '门幅剩余废料', '布料米数(M)', '门幅最大面数(个)', '总重量', null],
     ['成品', 1000, 33, 28, 15, null, null, null, null, null, null, null, null, null, 144.84, 144.84],
-    ['底部', 1000, 33, 7.5, 15, 4, 3, 37, 33, 148, 340, 16, 92.5, 4.48484848484848, 47.175, null],
-    ['正面', 1000, 33, 20.5, null, 4, 3, 37, 23.5, 154, 340, 13, 61.79, 6.5531914893617, 31.5129, null],
-    ['反面', 1000, 33, 20.5, null, 4, 3, 37, 23.5, 154, 340, 13, 61.79, 6.5531914893617, 31.5129, null],
-    ['外口袋', 1000, 14, 14, 0, 2, 2, 16, 16, 154, 340, 10, 17.92, 9.625, 9.1392, null],
+    ['底部', 1000, 33, 7.5, 15, 4, 3, 37, 33, 148, 340, 16, 93, 4.48484848484848, 47.175, null],
+    ['正面', 1000, 33, 20.5, null, 4, 3, 37, 23.5, 154, 340, 13, 62, 6.5531914893617, 31.5129, null],
+    ['反面', 1000, 33, 20.5, null, 4, 3, 37, 23.5, 154, 340, 13, 62, 6.5531914893617, 31.5129, null],
+    ['外口袋', 1000, 14, 14, 0, 2, 2, 16, 16, 154, 340, 10, 18, 9.625, 9.1392, null],
     ['手提', 1000, 2.5, 60, 0, null, null, 6, 60, 148, 340, 4, 50, 24.6666666666667, 25.5, null],
     [null, '加工费(元/个)', '印刷（元/个）', '布料价格', '不同安数布料成本（元）', '额外工艺成本', '包装费', '运费单价(元)', '损耗系数', '单个布袋总价（元）', null, null, null, null, null, null],
     ['底部', 1.3, 0, 9.5, 0.93375, 0.2, 0.15, 84.915, 1.03, 2.74422495, null, null, null, null, null, null],
@@ -434,33 +436,33 @@ const TEMPLATE_HAND_HELD_NO_BOTTOM_SPLICING: SheetTemplate = {
     B3: '=B2', C3: '=C2', D3: '=E2/2', E3: '=E2',
     H3: '=F3+C3', I3: '=E3*2+G3',
     L3: '=MOD(J3,MIN(H3,I3))',
-    M3: '=CEILING(B2/INT(N3),1)*MAX(H3,I3)/100',
+    M3: '=CEILING(CEILING(B2/INT(N3),1)*MAX(H3,I3)/100,1)',
     N3: '=J3/(MIN(H3,I3))',
     O3: '=M3*K3*1.5/1000',
     // 行3 正面
     B4: '=B2', C4: '=C2', D4: '=D2-D3',
     H4: '=F4+C2', I4: '=G4+D2-E2/2',
     L4: '=MOD(J4,MIN(H4,I4))',
-    M4: '=CEILING(B2/INT(N4),1)*MAX(H4,I4)/100',
+    M4: '=CEILING(CEILING(B2/INT(N4),1)*MAX(H4,I4)/100,1)',
     N4: '=J4/(MIN(H4,I4))',
     O4: '=M4*K4*1.5/1000',
     // 行4 反面
     B5: '=B4', C5: '=C2', D5: '=D2-D3',
     H5: '=F5+C2', I5: '=G5+D2-E2/2',
     L5: '=MOD(J5,MIN(H5,I5))',
-    M5: '=CEILING(B2/INT(N5),1)*MAX(H5,I5)/100',
+    M5: '=CEILING(CEILING(B2/INT(N5),1)*MAX(H5,I5)/100,1)',
     N5: '=J5/(MIN(H5,I5))',
     O5: '=M5*K5*1.5/1000',
     // 行5 外口袋
     B6: '=B5', H6: '=F6+C6', I6: '=G6+D6',
     L6: '=MOD(J6,MIN(H6,I6))',
-    M6: '=CEILING(B2/INT(N6),1)*MAX(H6,I6)/100',
+    M6: '=CEILING(CEILING(B2/INT(N6),1)*MAX(H6,I6)/100,1)',
     N6: '=J6/(MIN(H6,I6))',
     O6: '=M6*K6*1.5/1000',
     // 行6 手提
     B7: '=B6', I7: '=D7',
     L7: '=MOD(J7,MIN(H7,I7))',
-    M7: '=I7/100*2*B2/INT(J7/H7)',
+    M7: '=CEILING(I7/100*2*B2/INT(J7/H7),1)',
     N7: '=J7/(MIN(H7,I7))',
     O7: '=M7*K7*1.5/1000',
     // 汇总行
@@ -561,22 +563,33 @@ const getCellStyle = (args: { row: number; col: number; table?: any }): Record<s
 
 const COL_WIDTHS = [100, 90, 80, 80, 80, 90, 90, 90, 90, 90, 80, 120, 110, 130, 100, 120]
 
+// 当前表格的布料米数列索引（创建表格时按表头「布料米数」动态定位，失败回退默认列）
+let sheetMetersCol = FABRIC_METERS_DEFAULT_COL
+
+// 单元格显示格式化：数值默认保留2位小数（右键菜单可覆盖小数位）；
+// 布料米数列先向上取整再显示（业务规则，优先于小数位覆盖；不影响公式计算，引擎读取 data 原始值）
+const formatFieldValue = (value: unknown, col?: number, row?: number) => {
+  if (typeof value === 'number' && !isNaN(value)) {
+    let v = value
+    if (col === sheetMetersCol) {
+      const ceiled = ceilFabricMeters(v)
+      if (typeof ceiled === 'number') v = ceiled
+    }
+    const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
+    if (fmt === -1) return v              // 常规
+    if (fmt === 0) return Math.round(v)   // 整数
+    if (fmt === 4) return v.toFixed(4)    // 4位小数
+    return v.toFixed(2)                    // 默认2位小数
+  }
+  return value
+}
+
 const SHEET_COLUMNS = COL_WIDTHS.map((width, field) => ({
   field,
   width,
   style: getCellStyle,
-  // 数值类型单元格保留2位小数（可通过右键菜单覆盖；不影响公式计算，公式引擎直接读取 data 原始值）
-  fieldFormat: (record: any, col?: number, row?: number) => {
-    const value = record?.[field]
-    if (typeof value === 'number' && !isNaN(value)) {
-      const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
-      if (fmt === -1) return value              // 常规
-      if (fmt === 0) return Math.round(value)   // 整数
-      if (fmt === 4) return value.toFixed(4)    // 4位小数
-      return value.toFixed(2)                    // 默认2位小数
-    }
-    return value
-  },
+  fieldFormat: (record: any, col?: number, row?: number) =>
+    formatFieldValue(record?.[field], col ?? field, row),
 }))
 
 export default function BagQuoteTable() {
@@ -706,7 +719,9 @@ export default function BagQuoteTable() {
     if (!sheetContainerRef.current) return
 
     const template = getTemplateByStyle(orderInfo.productStyle)
-    
+    // 定位布料米数列（表头关键字查找），供显示取整使用
+    sheetMetersCol = findFabricMetersCol(template.data)
+
     const sheet = new VTableSheet(sheetContainerRef.current, {
       showFormulaBar: true,
       undoRedo: { show: true },
@@ -722,6 +737,7 @@ export default function BagQuoteTable() {
           data: template.data,
           formulas: template.formulas,
           showHeader: false,
+          rowCount: 25, // 默认网格行数（数据不足时补空行到 25；数据更多时按数据实际行数展示）
         },
       ],
     })
@@ -785,17 +801,8 @@ export default function BagQuoteTable() {
           key: index,
           width: COL_WIDTHS[index] || 100, // 使用默认宽度
           style: getCellStyle,
-          fieldFormat: (record: any, col?: number, row?: number) => {
-            const value = record?.[index]
-            if (typeof value === 'number' && !isNaN(value)) {
-              const fmt = (col != null && row != null) ? cellFormatOverrides.get(`${col},${row}`) : undefined
-              if (fmt === -1) return value              // 常规
-              if (fmt === 0) return Math.round(value)   // 整数
-              if (fmt === 4) return value.toFixed(4)    // 4位小数
-              return value.toFixed(2)                    // 默认2位小数
-            }
-            return value
-          },
+          fieldFormat: (record: any, col?: number, row?: number) =>
+            formatFieldValue(record?.[index], col ?? index, row),
         }))
         activeTable?.updateColumns(newCols)
       } catch (error) {

@@ -2,6 +2,7 @@ import express from 'express'
 import { db } from '../db.js'
 import { asyncHandler } from '../asyncHandler.js'
 import { requirePermission } from '../middleware/auth.js'
+import { normalizeFabricMeters, logFabricMetersCeil } from '../services/fabricMeters.js'
 
 export const sheetTemplatesRouter = express.Router()
 
@@ -70,8 +71,18 @@ sheetTemplatesRouter.post('/', requirePermission('sheet-templates:edit'), asyncH
   }
   const data = Array.isArray(req.body?.data) && req.body.data.length > 0 ? req.body.data : [[null]]
   const formulas = (req.body?.formulas && typeof req.body.formulas === 'object' && !Array.isArray(req.body.formulas)) ? req.body.formulas : {}
+  // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
+  const norm = normalizeFabricMeters(data, formulas)
   try {
-    const created = await db.sheetTemplates.create(styleCode, name, data, formulas, req.user?.name || '')
+    const created = await db.sheetTemplates.create(styleCode, name, norm.data, norm.formulas ?? formulas, req.user?.name || '')
+    await logFabricMetersCeil({
+      entityType: 'sheet-template',
+      entityId: created.id,
+      entityName: `${created.styleCode}/${created.name}`,
+      operator: req.user?.name || '',
+      ceilChanges: norm.ceilChanges,
+      formulaChanges: norm.formulaChanges,
+    })
     res.status(201).json(created)
   } catch (error: any) {
     // 同款式重名（uk_style_name）等业务校验错误返回 409
@@ -87,11 +98,21 @@ sheetTemplatesRouter.put('/:id', requirePermission('sheet-templates:edit'), asyn
     return res.status(400).json({ error: validated.error })
   }
   const name = typeof req.body?.name === 'string' ? req.body.name : undefined
+  // 布料米数向上取整规范化（前端已处理，后端兜底；审计日志记录原值与取整值）
+  const norm = normalizeFabricMeters(validated.data, validated.formulas)
   try {
-    const saved = await db.sheetTemplates.update(id, name, validated.data, validated.formulas, req.user?.name || '')
+    const saved = await db.sheetTemplates.update(id, name, norm.data, norm.formulas ?? validated.formulas, req.user?.name || '')
     if (!saved) {
       return res.status(404).json({ error: '模板不存在' })
     }
+    await logFabricMetersCeil({
+      entityType: 'sheet-template',
+      entityId: id,
+      entityName: `${saved.styleCode}/${saved.name}`,
+      operator: req.user?.name || '',
+      ceilChanges: norm.ceilChanges,
+      formulaChanges: norm.formulaChanges,
+    })
     res.json(saved)
   } catch (error: any) {
     res.status(409).json({ error: error?.message || '保存模板失败' })
