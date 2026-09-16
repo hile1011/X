@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react'
 import { TreeSelect } from 'antd'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { RotateCcw, TrendingUp, DollarSign, ShoppingBag, Image as ImageIcon, Upload, X, ClipboardList, Table2, Save, ArrowLeft, CheckCircle, ChevronRight, ChevronLeft, Square, Circle, CircleDot, Play, Flag, Download, Loader2, Printer, Edit, Copy, Info } from 'lucide-react'
@@ -1314,6 +1314,56 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     setProductImages((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // === 收货地址/备注框动态高度：基础 4 行紧凑布局，内容超出时自动垂直拉伸完整展示（无滚动条） ===
+  const shippingAddressRef = useRef<HTMLTextAreaElement>(null)
+  const remarkTextareaRef = useRef<HTMLTextAreaElement>(null)
+
+  /** 按内容重算 textarea 高度：auto → 测量 scrollHeight → 取 max(内容高, 4 行基础高)，同步完成无闪烁 */
+  const resizeTextarea = useCallback((el: HTMLTextAreaElement | null) => {
+    if (!el) return
+    const styles = window.getComputedStyle(el)
+    const lineHeight = parseFloat(styles.lineHeight) || (parseFloat(styles.fontSize) || 14) * 1.5
+    const paddingY = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0)
+    const borderY = (parseFloat(styles.borderTopWidth) || 0) + (parseFloat(styles.borderBottomWidth) || 0)
+    const baseHeight = lineHeight * 4 + paddingY + borderY // 与 rows={4} 基础布局一致
+    el.style.height = 'auto'
+    // scrollHeight 含 padding 不含 border，补 border 后即为 border-box 高度
+    const contentHeight = el.scrollHeight + borderY
+    el.style.height = `${Math.max(contentHeight, baseHeight)}px`
+  }, [])
+
+  // 内容变化（输入/订单加载/客户带出地址/AI草稿填充/重置）时自适应；useLayoutEffect 绘制前完成，避免初始高度跳变
+  useLayoutEffect(() => {
+    resizeTextarea(shippingAddressRef.current)
+  }, [orderInfo.shippingAddress, resizeTextarea])
+  useLayoutEffect(() => {
+    resizeTextarea(remarkTextareaRef.current)
+  }, [orderInfo.remark, resizeTextarea])
+
+  // 容器宽度变化导致换行数变化时重算（只响应宽度变化，避免高度回环触发）
+  useEffect(() => {
+    const els = [shippingAddressRef.current, remarkTextareaRef.current].filter(Boolean) as HTMLTextAreaElement[]
+    if (els.length === 0) return
+    if (typeof ResizeObserver === 'undefined') {
+      const onWinResize = () => els.forEach((el) => resizeTextarea(el))
+      window.addEventListener('resize', onWinResize)
+      return () => window.removeEventListener('resize', onWinResize)
+    }
+    const lastWidths = new Map<HTMLTextAreaElement, number>()
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const el = entry.target as HTMLTextAreaElement
+        const width = entry.contentRect.width
+        const last = lastWidths.get(el) ?? 0
+        if (last !== 0 && Math.abs(width - last) < 1) continue
+        lastWidths.set(el, width)
+        resizeTextarea(el)
+      }
+    })
+    els.forEach((el) => observer.observe(el))
+    return () => observer.disconnect()
+  }, [resizeTextarea])
+
   // === 图片拖拽排序（原生 HTML5 Drag & Drop） ===
   const handleImageDragStart = (index: number) => {
     setDraggedIndex(index)
@@ -2179,21 +2229,23 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
                 <div className="col-span-2 md:col-span-2 lg:col-span-3">
                   <label className="block text-xs text-gray-400 mb-0.5">收货地址</label>
                   <textarea
+                    ref={shippingAddressRef}
                     value={orderInfo.shippingAddress}
                     onChange={(e) => updateOrderField('shippingAddress', e.target.value)}
                     placeholder="请输入收货地址"
-                    rows={3}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none"
+                    rows={4}
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none overflow-y-hidden"
                   />
                 </div>
                 <div className="col-span-2 md:col-span-2 lg:col-span-3">
                   <label className="block text-xs text-gray-400 mb-0.5">备注</label>
                   <textarea
+                    ref={remarkTextareaRef}
                     value={orderInfo.remark}
                     onChange={(e) => updateOrderField('remark', e.target.value)}
                     placeholder="请输入备注信息"
-                    rows={3}
-                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none"
+                    rows={4}
+                    className="w-full px-2 py-1 text-sm font-medium text-blue-600 bg-blue-50/40 border border-blue-200 rounded hover:border-blue-400 focus:border-blue-500 focus:bg-blue-100/60 focus:outline-none transition-colors resize-none overflow-y-hidden"
                   />
                 </div>
               </div>
