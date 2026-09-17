@@ -7,6 +7,7 @@ import { VTableSheet } from '@visactor/vtable-sheet'
 import { TableExportPlugin, ExcelImportPlugin } from '@visactor/vtable-plugins'
 import { api, downloadBlob } from '../api'
 import { useHasPermission } from '../hooks/usePermission'
+import { BatchBadge } from '../components/BatchBadge'
 import CustomerSelect from '../components/CustomerSelect'
 import SelectionSummaryBar from '../components/SelectionSummaryBar'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
@@ -300,6 +301,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const sellPriceRowRef = useRef<HTMLDivElement>(null)
   const imagesEndRef = useRef<HTMLDivElement>(null)
   const [quoteNumber, setQuoteNumber] = useState<string>('')
+  // 批次号（v36）：只读展示，由订单列表多选统一设置/移出，编辑保存不改批次
+  const [batchNumber, setBatchNumber] = useState<string | null>(null)
   const [createdAt, setCreatedAt] = useState<string>('')
   const [printQuote, setPrintQuote] = useState<Quote | null>(null)
   // 打印布局（v34）：打开打印预览时从表格实例读取的实际列宽/行高，随 printQuote 一起更新
@@ -338,6 +341,10 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   const sheetInstanceRef = useRef<VTableSheet | null>(null)
   // 新增保存后切换到编辑模式时，跳过 loadQuote（数据刚保存，无需重新加载）
   const skipNextLoadRef = useRef(false)
+  // 当前路由 id 的最新值：批次内快速切换订单（BatchBadge replace 导航）时丢弃过期请求响应，
+  // 防止旧订单数据异步返回后覆盖当前选中订单的内容
+  const currentIdRef = useRef(id)
+  currentIdRef.current = id
   // 从数据库加载的在线表格二维数据（编辑已有订单时使用，覆盖模板默认值）。
   // 新增订单时为 null，使用模板数据初始化。
   const loadedTableDataRef = useRef<(string | number | null)[][] | null>(null)
@@ -469,7 +476,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
   // 用 useLayoutEffect 在浏览器绘制前同步滚回顶部，避免视觉闪烁。
   useLayoutEffect(() => {
     window.scrollTo(0, 0)
-  }, [])
+    // 依赖 id：批次内跳转到另一订单时组件不重挂载，需同步回顶避免停留在旧订单的滚动位置
+  }, [id])
 
   useEffect(() => {
     if (hasQuoteId) {
@@ -483,7 +491,9 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
       // 从客户详情跳转过来，预填充客户信息
       loadCustomerInfo()
     }
-  }, [hasQuoteId, customerId])
+    // 依赖 id：批次内跳转（BatchBadge replace 导航 /quotes/:id/edit）时组件不重挂载，
+    // id 变化必须触发重新加载，否则页面内容停留在旧订单、与 URL/批次号不匹配
+  }, [hasQuoteId, id, customerId])
 
   const loadCustomerInfo = async () => {
     try {
@@ -502,10 +512,15 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
 
   const loadQuote = async () => {
     setLoading(true)
+    const targetId = id!
     try {
-      const data = await api.quotes.getById(id!)
+      const data = await api.quotes.getById(targetId)
+      // 批次内快速切换守卫：响应返回时已跳转到其他订单，丢弃过期数据，
+      // 防止旧订单内容覆盖当前选中订单（loading 由最新一次请求负责收尾）
+      if (targetId !== currentIdRef.current) return
       if (data) {
         setQuoteNumber(data.quote_number || '')
+        setBatchNumber((data as any).batchNumber ?? null)
         setCreatedAt(data.created_at || '')
         setOrderInfo({
           unitPrice: data.unitPrice || '',
@@ -2053,9 +2068,18 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
               同行规则：客户+打样费+箱规 / 大货日期+天数 / 面料+工艺+手提 / 收货地址+备注 */}
               <div className={`grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-x-3 gap-y-1.5 ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>
                 {/* 行1：订单号(只读) + 客户名称 + 订单状态(只读) + 打样费/天 + 箱规 */}
-                {/* 订单号：16位随机数字（系统生成，全局唯一，只读），置于客户名称之前 */}
+                {/* 订单号：16位随机数字（系统生成，全局唯一，只读），置于客户名称之前；批次号徽标（v36）紧跟订单号标题显示 */}
                 <div className="col-span-1 md:col-span-1 lg:col-span-1">
-                  <label className="block text-xs text-gray-400 mb-0.5">订单号</label>
+                  <div className="flex items-center gap-1 mb-0.5 min-h-[16px]">
+                    <label className="block text-xs text-gray-400">订单号</label>
+                    {/* 批次号徽标（v36）：点击展开同批次订单浮层，快速跳转。
+                        pointer-events-auto：穿透查看模式的表单遮罩（pointer-events-none），保证只读态仍可点击跳转 */}
+                    {batchNumber && (
+                      <span className="pointer-events-auto">
+                        <BatchBadge batchNumber={batchNumber} currentId={id || ''} canEdit={canEdit} />
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={quoteNumber}

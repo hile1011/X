@@ -310,6 +310,8 @@ function parseLargeFields(row: any) {
   ;(c as any).rowHeightConfig = parse((c as any).rowHeightConfig, '[]')
   // 模板关联（v23）：数据库列为 snake_case，统一映射为业务侧 templateId（空 = 内置默认模板）
   ;(c as any).templateId = (c as any).template_id ?? ''
+  // 批次号（v36）：数据库列为 batch_number，统一映射为业务侧 batchNumber（NULL = 未分批）
+  ;(c as any).batchNumber = (c as any).batch_number ?? null
   // 收款字段（v17/v18）：mysql2 将 DECIMAL 返回为字符串，TINYINT 返回 0/1，统一转为业务类型
   if (typeof (c as any).receivableSampleFee === 'string') (c as any).receivableSampleFee = Number((c as any).receivableSampleFee)
   if (typeof (c as any).actualSampleFee === 'string') (c as any).actualSampleFee = Number((c as any).actualSampleFee)
@@ -581,14 +583,14 @@ export const dbApi = {
   quotes: {
     /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取） */
     getAll: async () => {
-      const rows = await dbConn.prepare(`SELECT id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
+      const rows = await dbConn.prepare(`SELECT id, user_id, created_by, updated_by, customer_id, quote_number, batch_number, customerName, shippingAddress,
         productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax,
         receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime,
         sampleCompletedTime, productionStartTime, shippingTime, paymentTime, reconciledTime, endTime, created_at, updated_at
-        FROM quotes ORDER BY updated_at DESC`).all()
+        FROM quotes ORDER BY batch_number DESC, updated_at DESC`).all()
       return rows.map((r) => parseLargeFields(r)) as Quote[]
     },
     getById: async (id: string) => {
@@ -693,6 +695,8 @@ export const dbApi = {
 
       // 订单号为16位随机数字（全局唯一），创建后不再随客户名称/款式变化
       updatedQuote.quote_number = existing.quote_number
+      // 批次号（v36）只经批量设批次端点变更：普通编辑保持库值，忽略请求体传入（同批次订单号一致性）
+      ;(updatedQuote as any).batchNumber = (existing as any).batch_number ?? null
 
       if (data.images !== undefined) {
         updatedQuote.images = data.images
@@ -814,6 +818,18 @@ export const dbApi = {
     delete: async (id: string) => {
       const info = await dbConn.prepare('DELETE FROM quotes WHERE id = ?').run(id)
       return info.changes > 0
+    },
+    /** 批量设置批次号（v36）：同一批次订单写入同一批次号；batchNumber 传 null 表示清除批次。返回成功更新的条数 */
+    assignBatch: async (ids: string[], batchNumber: string | null, updatedBy: string) => {
+      if (!Array.isArray(ids) || ids.length === 0) return 0
+      const now = timeNow()
+      const stmt = dbConn.prepare('UPDATE quotes SET batch_number=?, updated_at=?, updated_by=? WHERE id=?')
+      let updated = 0
+      for (const id of ids) {
+        const info = await stmt.run(batchNumber, now, updatedBy, id)
+        if (info.changes > 0) updated++
+      }
+      return updated
     },
     /** 获取所有订单的图片数量（用于列表显示图片图标，不加载大字段） */
     getAllImageFlags: async () => {

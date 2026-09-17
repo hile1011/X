@@ -245,6 +245,15 @@ export const api = {
       return qs ? `${url}?${qs}` : url
     },
     getById: (id: string) => authFetch(`${API_BASE}/quotes/${id}`).then(handleResponse),
+    /**
+     * 批量设置批次号（v36）：多选订单统一归入同一批次。
+     * batchNumber 不传 = 后端生成 PN-秒级时间戳；传既有批次号 = 并入该批次；传 null = 移出批次
+     */
+    batchAssign: (ids: string[], batchNumber?: string | null) => authFetch(`${API_BASE}/quotes/batch-assign`, {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify({ ids, batchNumber }),
+    }).then(handleResponse),
     /** 做货流程任务（v24 甘特图数据） */
     getProductionTasks: (id: string) => authFetch(`${API_BASE}/quotes/${id}/production-tasks`).then(handleResponse),
     /** 做货流程跟踪表：全部订单的任务总览（含订单摘要，做货跟踪页用） */

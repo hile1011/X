@@ -1,6 +1,6 @@
 import { normalizeFabricMeters, parseColFromAddress } from '../services/fabricMeters.js'
 
-export const CURRENT_SCHEMA_VERSION = 35
+export const CURRENT_SCHEMA_VERSION = 36
 
 export interface Migration {
   version: number
@@ -1980,6 +1980,47 @@ export const migrations: Migration[] = [
       await db.prepare(
         `DELETE FROM permissions WHERE id IN (${permIds.map(() => '?').join(', ')})`
       ).run(...permIds)
+    },
+  },
+  {
+    version: 36,
+    name: 'quote-batch-number',
+    description: 'V0.28：订单表新增批次号字段 batch_number（格式 PN-YYYYMMDDHHmmss 秒级时间戳，同一批次订单共享同一批次号，由订单列表多选统一设置），配套索引 idx_quotes_batch_number 支持批次筛选。创建/复制订单不携带批次（避免误归批）',
+    up: async (db: any) => {
+      // MySQL 8 不支持 ADD/DROP COLUMN IF NOT EXISTS，通过 information_schema 判断实现幂等
+      const colExists = async (table: string, col: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        ).all(table, col) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      if (!(await colExists('quotes', 'batch_number'))) {
+        await db.exec(
+          "ALTER TABLE `quotes` ADD COLUMN `batch_number` VARCHAR(30) DEFAULT NULL COLLATE utf8mb4_unicode_ci COMMENT '批次号（PN-YYYYMMDDHHmmss，同批次订单共享；订单列表多选统一设置）'"
+        )
+      }
+      // 索引幂等（CREATE INDEX IF NOT EXISTS 需 MySQL 8.0.29+，用 information_schema 兼容判断）
+      const idxRows = await db.prepare(
+        'SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+      ).all('quotes', 'idx_quotes_batch_number') as Array<{ cnt: number }>
+      if (Number(idxRows[0]?.cnt ?? 0) === 0) {
+        await db.exec('CREATE INDEX idx_quotes_batch_number ON quotes (batch_number)')
+      }
+    },
+    down: async (db: any) => {
+      // 逆序撤销：先删索引再删列（存在才删，幂等）
+      const idxRows = await db.prepare(
+        'SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+      ).all('quotes', 'idx_quotes_batch_number') as Array<{ cnt: number }>
+      if (Number(idxRows[0]?.cnt ?? 0) > 0) {
+        await db.exec('DROP INDEX idx_quotes_batch_number ON quotes')
+      }
+      const colRows = await db.prepare(
+        'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+      ).all('quotes', 'batch_number') as Array<{ cnt: number }>
+      if (Number(colRows[0]?.cnt ?? 0) > 0) {
+        await db.exec('ALTER TABLE `quotes` DROP COLUMN `batch_number`')
+      }
     },
   },
 ]

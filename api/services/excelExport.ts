@@ -60,6 +60,7 @@ const GROUP_COLORS: Record<string, string> = {
 
 const ORDER_COLUMNS: ExportColumn[] = [
   // 基本信息
+  { header: '批次号', key: 'batchNumber', width: 22, type: 'text', group: '基本信息', groupColor: GROUP_COLORS['基本信息'] },
   { header: '订单号', key: 'quote_number', width: 28, type: 'text', group: '基本信息', groupColor: GROUP_COLORS['基本信息'] },
   { header: '客户名称', key: 'customerName', width: 16, type: 'text', group: '基本信息', groupColor: GROUP_COLORS['基本信息'] },
   { header: '订单状态', key: 'status', width: 10, type: 'status', group: '基本信息', groupColor: GROUP_COLORS['基本信息'] },

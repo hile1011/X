@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Select as AntSelect } from 'antd'
 import { api, downloadBlob } from '../api'
-import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X, Sparkles } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X, Sparkles, Layers, Tags, Wrench, Shirt, SlidersHorizontal, Ruler, Grip, Expand, Package, MapPin, FileText } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
 import { TooltipCell } from '../components/TooltipCell'
@@ -39,6 +39,8 @@ export interface Quote {
   sellPriceNoTax: number
   sellPriceWithTax: number
   status: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+  /** 批次号（v36，PN-YYYYMMDDHHmmss 秒级时间戳；同批次订单共享，列表多选统一设置，创建/复制不携带） */
+  batchNumber?: string | null
   quoteTime: string
   sampleTime: string
   sampleCompletedTime: string
@@ -93,13 +95,47 @@ const getPageNumbers = (current: number, total: number): (number | 'ellipsis')[]
 // 订单列表查询条件持久化：离开列表页（进入详情/编辑）后返回时恢复查询条件
 const QUOTES_FILTERS_KEY = 'quotes_filters'
 
+/** 「更多」扩展查询条件（订单其他字段模糊匹配，空串 = 不筛选） */
+interface MoreFilters {
+  /** 产品规格 */
+  productSpec: string
+  /** 手提材质 */
+  handleMaterial: string
+  /** 手提规格 */
+  handleSpec: string
+  /** 箱规 */
+  boxSpec: string
+  /** 收货地址 */
+  shippingAddress: string
+  /** 备注 */
+  remark: string
+}
+
+const EMPTY_MORE_FILTERS: MoreFilters = {
+  productSpec: '',
+  handleMaterial: '',
+  handleSpec: '',
+  boxSpec: '',
+  shippingAddress: '',
+  remark: '',
+}
+
+/** 模糊匹配：筛选词为空（或纯空白）时不筛选；否则字段值包含筛选词（忽略大小写）即命中 */
+const fuzzyMatch = (value: string | null | undefined, filter: string): boolean => {
+  const keyword = filter.trim().toLowerCase()
+  if (!keyword) return true
+  return (value ?? '').toLowerCase().includes(keyword)
+}
+
 interface SavedFilters {
   searchTerm: string
   statusFilters: string[]
   customerFilters: string[]
   styleFilter: string
-  productionDateStart: string
-  productionDateEnd: string
+  batchFilter: string
+  processFilter: string
+  fabricFilter: string
+  moreFilters: MoreFilters
   currentPage: number
   pageSize: number
 }
@@ -116,13 +152,24 @@ const getInitialFilters = (): SavedFilters => {
     const saved = sessionStorage.getItem(QUOTES_FILTERS_KEY)
     if (saved) {
       const parsed = JSON.parse(saved)
+      // 旧版持久化数据含做货日期筛选（productionDateStart/End），已按需求移除该字段，读取时忽略
+      const savedMore = parsed.moreFilters ?? {}
       return {
         searchTerm: parsed.searchTerm ?? '',
         statusFilters: toStringArray(parsed.statusFilters ?? parsed.statusFilter, ['active']),
         customerFilters: toStringArray(parsed.customerFilters ?? parsed.customerFilter, []),
         styleFilter: parsed.styleFilter ?? '',
-        productionDateStart: parsed.productionDateStart ?? '',
-        productionDateEnd: parsed.productionDateEnd ?? '',
+        batchFilter: parsed.batchFilter ?? '',
+        processFilter: parsed.processFilter ?? '',
+        fabricFilter: parsed.fabricFilter ?? '',
+        moreFilters: {
+          productSpec: savedMore.productSpec ?? '',
+          handleMaterial: savedMore.handleMaterial ?? '',
+          handleSpec: savedMore.handleSpec ?? '',
+          boxSpec: savedMore.boxSpec ?? '',
+          shippingAddress: savedMore.shippingAddress ?? '',
+          remark: savedMore.remark ?? '',
+        },
         currentPage: parsed.currentPage ?? 1,
         pageSize: parsed.pageSize ?? 20,
       }
@@ -135,8 +182,10 @@ const getInitialFilters = (): SavedFilters => {
     statusFilters: ['active'],
     customerFilters: [],
     styleFilter: '',
-    productionDateStart: '',
-    productionDateEnd: '',
+    batchFilter: '',
+    processFilter: '',
+    fabricFilter: '',
+    moreFilters: { ...EMPTY_MORE_FILTERS },
     currentPage: 1,
     pageSize: 20,
   }
@@ -150,9 +199,15 @@ export default function Quotes() {
   const [statusFilters, setStatusFilters] = useState<string[]>(initialFilters.statusFilters)
   const [customerFilters, setCustomerFilters] = useState<string[]>(initialFilters.customerFilters)
   const [styleFilter, setStyleFilter] = useState(initialFilters.styleFilter)
-  // 做货日期范围筛选：值为 'YYYY-MM-DD' 字符串，空串表示未选
-  const [productionDateStart, setProductionDateStart] = useState(initialFilters.productionDateStart)
-  const [productionDateEnd, setProductionDateEnd] = useState(initialFilters.productionDateEnd)
+  // 批次号筛选（v36）：模糊匹配批次号前缀/全值，如 PN-20260917
+  const [batchFilter, setBatchFilter] = useState(initialFilters.batchFilter)
+  // 工艺/面料筛选：模糊匹配（输入部分关键词即命中，忽略大小写）
+  const [processFilter, setProcessFilter] = useState(initialFilters.processFilter)
+  const [fabricFilter, setFabricFilter] = useState(initialFilters.fabricFilter)
+  // 「更多」扩展查询条件：订单其他字段模糊匹配，与主栏条件 AND 组合
+  const [moreFilters, setMoreFilters] = useState<MoreFilters>(initialFilters.moreFilters)
+  // 「更多」扩展条件面板展开状态（默认收起，不持久化）
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [printTarget, setPrintTarget] = useState<Quote | null>(null)
@@ -212,15 +267,17 @@ export default function Quotes() {
         statusFilters,
         customerFilters,
         styleFilter,
-        productionDateStart,
-        productionDateEnd,
+        batchFilter,
+        processFilter,
+        fabricFilter,
+        moreFilters,
         currentPage,
         pageSize,
       }))
     } catch {
       // sessionStorage 不可用，忽略
     }
-  }, [searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd, currentPage, pageSize])
+  }, [searchTerm, statusFilters, customerFilters, styleFilter, batchFilter, processFilter, fabricFilter, moreFilters, currentPage, pageSize])
 
   // 从 URL 读取业绩明细筛选条件（工作台双击业绩卡片跳转携带）
   useEffect(() => {
@@ -242,11 +299,11 @@ export default function Quotes() {
       return
     }
     setCurrentPage(1)
-  }, [searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd])
+  }, [searchTerm, statusFilters, customerFilters, styleFilter, batchFilter, processFilter, fabricFilter, moreFilters])
 
   useEffect(() => {
     groupQuotes()
-  }, [quotes, searchTerm, statusFilters, customerFilters, styleFilter, productionDateStart, productionDateEnd, products, currentPage, pageSize, productionTimeFilter])
+  }, [quotes, searchTerm, statusFilters, customerFilters, styleFilter, batchFilter, processFilter, fabricFilter, moreFilters, products, currentPage, pageSize, productionTimeFilter])
 
   // 组件卸载时保存滚动位置（用户导航到详情/编辑页时触发）
   useEffect(() => {
@@ -294,7 +351,16 @@ export default function Quotes() {
       const matchesSearch =
         quote.quote_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (quote.batchNumber ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         getStyleLabelFromProducts(products, quote.productStyle).toLowerCase().includes(searchTerm.toLowerCase())
+
+      // 批次号筛选（v36）：模糊匹配（大小写不敏感，支持前缀如 PN-202609）
+      const matchesBatch = !batchFilter ||
+        (quote.batchNumber ?? '').toLowerCase().includes(batchFilter.trim().toLowerCase())
+
+      // 工艺/面料筛选：模糊匹配（输入部分关键词即命中，忽略大小写）
+      const matchesProcess = fuzzyMatch(quote.process, processFilter)
+      const matchesFabric = fuzzyMatch(quote.fabricMaterial, fabricFilter)
 
       // 多选状态筛选：空数组 = 全部状态；'active' = 进行中（除已取消外的全部）；其余为具体状态值，任一命中即匹配
       const matchesStatus =
@@ -336,30 +402,97 @@ export default function Quotes() {
         }
       })()
 
-      // 做货日期范围筛选：基于做货开始时间(productionStartTime || productionTimeStart)
-      // 仅设置开始日期 -> 筛选该日期及之后的订单；仅设置结束日期 -> 筛选该日期及之前的订单；
-      // 同时设置 -> 筛选区间内的订单（区间两端包含当天）；均未设置 -> 不筛选
-      const matchesProductionDateRange = (() => {
-        if (!productionDateStart && !productionDateEnd) return true
-        const productionDateStr = quote.productionStartTime || quote.productionTimeStart
-        if (!productionDateStr) return false
-        const productionDate = new Date(productionDateStr)
-        if (isNaN(productionDate.getTime())) return false
-        if (productionDateStart) {
-          const start = new Date(productionDateStart)
-          start.setHours(0, 0, 0, 0)
-          if (productionDate < start) return false
-        }
-        if (productionDateEnd) {
-          const end = new Date(productionDateEnd)
-          end.setHours(23, 59, 59, 999)
-          if (productionDate > end) return false
-        }
-        return true
-      })()
+      // 「更多」扩展查询条件：订单其他字段模糊匹配，全部条件 AND 组合（空串 = 不筛选）
+      const matchesMore =
+        fuzzyMatch(quote.productSpec, moreFilters.productSpec) &&
+        fuzzyMatch(quote.handleMaterial, moreFilters.handleMaterial) &&
+        fuzzyMatch(quote.handleSpec, moreFilters.handleSpec) &&
+        fuzzyMatch(quote.boxSpec, moreFilters.boxSpec) &&
+        fuzzyMatch(quote.shippingAddress, moreFilters.shippingAddress) &&
+        fuzzyMatch(quote.remark, moreFilters.remark)
 
-      return matchesSearch && matchesStatus && matchesCustomer && matchesStyle && matchesProductionTime && matchesProductionDateRange
+      return matchesSearch && matchesBatch && matchesStatus && matchesCustomer && matchesStyle && matchesProcess && matchesFabric && matchesProductionTime && matchesMore
     })
+  }
+
+  // === 订单多选与批次号操作（v36） ===
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [batchAssigning, setBatchAssigning] = useState(false)
+  const [batchToast, setBatchToast] = useState('')
+
+  // 「更多」扩展条件已启用数量（按钮徽标提示，避免收起后遗忘生效中的条件）
+  const activeMoreCount = Object.values(moreFilters).filter((v) => v.trim() !== '').length
+
+  /** 更新单个「更多」扩展条件 */
+  const updateMoreFilter = (key: keyof MoreFilters, value: string) => {
+    setMoreFilters((prev) => ({ ...prev, [key]: value }))
+  }
+
+  // 轻提示（与收款单导出提示同款，3 秒自动消失）
+  useEffect(() => {
+    if (!batchToast) return
+    const timer = setTimeout(() => setBatchToast(''), 3000)
+    return () => clearTimeout(timer)
+  }, [batchToast])
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // 全选范围 = 当前筛选后的全部订单（不受分组展开/分页影响）
+  const getFilteredIds = () => getFilteredQuotes().map((q) => q.id)
+  const isAllSelected = selectedIds.size > 0 && getFilteredIds().every((id) => selectedIds.has(id))
+  const isSomeSelected = selectedIds.size > 0
+
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      if (isAllSelected) return new Set()
+      return new Set([...prev, ...getFilteredIds()])
+    })
+  }
+
+  // 所选订单中含已设置批次的（用于显示「移出批次」按钮）
+  const selectedHasBatch = quotes.some((q) => selectedIds.has(q.id) && q.batchNumber)
+
+  /** 批量设置批次：后端生成 PN-秒级时间戳，同一批次订单共享同一批次号 */
+  const handleBatchAssign = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0 || batchAssigning) return
+    if (!window.confirm(`将所选 ${ids.length} 个订单设置为同一批次？`)) return
+    setBatchAssigning(true)
+    try {
+      const result = await api.quotes.batchAssign(ids) as { batchNumber: string; count: number }
+      setBatchToast(`已设置批次：${result.batchNumber}（${result.count} 个订单）`)
+      setSelectedIds(new Set())
+      await fetchQuotes()
+    } catch (error) {
+      console.error('设置批次失败:', error)
+      setBatchToast(`设置批次失败：${(error as Error).message || '请稍后重试'}`)
+    }
+    setBatchAssigning(false)
+  }
+
+  /** 批量移出批次：清除所选订单的批次号 */
+  const handleBatchClear = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0 || batchAssigning) return
+    if (!window.confirm(`将所选 ${ids.length} 个订单移出批次？`)) return
+    setBatchAssigning(true)
+    try {
+      await api.quotes.batchAssign(ids, null)
+      setBatchToast(`已将 ${ids.length} 个订单移出批次`)
+      setSelectedIds(new Set())
+      await fetchQuotes()
+    } catch (error) {
+      console.error('移出批次失败:', error)
+      setBatchToast(`移出批次失败：${(error as Error).message || '请稍后重试'}`)
+    }
+    setBatchAssigning(false)
   }
 
   const groupQuotes = () => {
@@ -576,6 +709,31 @@ export default function Quotes() {
           <p className="text-gray-500 mt-1">管理所有订单</p>
         </div>
         <div className="flex flex-wrap gap-2 sm:gap-3">
+          {/* 批次号多选操作（v36）：选中订单后显示，复用 quotes:edit 权限 */}
+          {hasPermission('quotes:edit') && isSomeSelected && (
+            <>
+              <button
+                onClick={handleBatchAssign}
+                disabled={batchAssigning}
+                className="flex items-center gap-2 px-4 py-2 border border-amber-300 text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="将所选订单统一设置同一批次号（PN-秒级时间戳），订单列表按批次号优先排序"
+              >
+                {batchAssigning ? <Loader2 size={18} className="animate-spin" /> : <Layers size={18} />}
+                设为同一批次（{selectedIds.size}）
+              </button>
+              {selectedHasBatch && (
+                <button
+                  onClick={handleBatchClear}
+                  disabled={batchAssigning}
+                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-600 bg-white rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="清除所选订单的批次号"
+                >
+                  <Tags size={18} />
+                  移出批次
+                </button>
+              )}
+            </>
+          )}
           {hasPermission('quotes:export') && (
             <button
               onClick={() => { setExportError(''); setShowExportDialog(true) }}
@@ -620,17 +778,39 @@ export default function Quotes() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col min-h-[60vh] flex-none sm:flex-1 sm:min-h-0">
-        <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 flex-shrink-0">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 flex-1">
+        <div className="p-4 border-b border-gray-100 flex-shrink-0">
+          <div className="flex flex-col lg:flex-row gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3 flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="搜索客户/款式/订单号..."
+                placeholder="搜索客户/款式/订单号/批次..."
                 className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
               />
+            </div>
+            {/* 批次号筛选（v36）：模糊匹配，支持前缀如 PN-202609 */}
+            <div className="relative">
+              <Layers className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                value={batchFilter}
+                onChange={(e) => setBatchFilter(e.target.value)}
+                placeholder="批次号（如 PN-20260917）"
+                title="按批次号筛选订单（支持前缀模糊匹配）；同批次订单在列表中相邻显示"
+                className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+              />
+              {batchFilter && (
+                <button
+                  onClick={() => setBatchFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors"
+                  title="清除批次号筛选"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
             {/* 客户名称多选筛选：支持输入关键字实时模糊检索 + 下拉多选 */}
             <div className="relative quotes-filter-wrap">
@@ -683,37 +863,191 @@ export default function Quotes() {
                 style={{ width: '100%' }}
               />
             </div>
-            {/* 做货日期范围筛选：基于做货开始时间，支持单日期或日期范围 */}
+            {/* 工艺筛选：模糊匹配（输入部分关键词即命中，忽略大小写） */}
             <div className="relative">
-              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-              <div className="w-full pl-9 pr-1 py-1 border border-gray-200 rounded-lg flex items-center gap-1 focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500">
-                <input
-                  type="date"
-                  value={productionDateStart}
-                  onChange={(e) => setProductionDateStart(e.target.value)}
-                  title="做货开始日期（起）"
-                  className="flex-1 min-w-0 px-1 py-1 text-sm text-gray-700 outline-none bg-transparent"
-                />
-                <span className="text-gray-400 text-xs">至</span>
-                <input
-                  type="date"
-                  value={productionDateEnd}
-                  onChange={(e) => setProductionDateEnd(e.target.value)}
-                  title="做货开始日期（止）"
-                  className="flex-1 min-w-0 px-1 py-1 text-sm text-gray-700 outline-none bg-transparent"
-                />
-                {(productionDateStart || productionDateEnd) && (
-                  <button
-                    onClick={() => { setProductionDateStart(''); setProductionDateEnd('') }}
-                    className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors"
-                    title="清除做货日期筛选"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
+              <Wrench className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                value={processFilter}
+                onChange={(e) => setProcessFilter(e.target.value)}
+                placeholder="工艺（模糊匹配）"
+                title="按工艺筛选订单（模糊匹配，输入部分关键词即可）"
+                className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+              />
+              {processFilter && (
+                <button
+                  onClick={() => setProcessFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors"
+                  title="清除工艺筛选"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
+            {/* 面料筛选：模糊匹配（输入部分关键词即命中，忽略大小写） */}
+            <div className="relative">
+              <Shirt className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+              <input
+                type="text"
+                value={fabricFilter}
+                onChange={(e) => setFabricFilter(e.target.value)}
+                placeholder="面料（模糊匹配）"
+                title="按面料材质筛选订单（模糊匹配，输入部分关键词即可）"
+                className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+              />
+              {fabricFilter && (
+                <button
+                  onClick={() => setFabricFilter('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors"
+                  title="清除面料筛选"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            </div>
+            {/* 「更多」扩展查询条件按钮：展开/收起订单其他字段的查询面板 */}
+            <button
+              onClick={() => setShowMoreFilters((v) => !v)}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors lg:self-start whitespace-nowrap ${
+                activeMoreCount > 0
+                  ? 'text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100'
+                  : 'text-gray-600 bg-white border-gray-200 hover:bg-gray-50'
+              }`}
+              title={showMoreFilters ? '收起扩展查询条件' : '展开更多订单字段查询条件（产品规格、手提材质、手提规格、箱规、收货地址、备注）'}
+            >
+              <SlidersHorizontal size={16} />
+              <span>更多</span>
+              {activeMoreCount > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white text-[10px] leading-[18px] text-center font-semibold">
+                  {activeMoreCount}
+                </span>
+              )}
+              <ChevronDown size={14} className={`transition-transform ${showMoreFilters ? 'rotate-180' : ''}`} />
+            </button>
           </div>
+
+          {/* 「更多」扩展查询条件面板：与主栏条件 AND 组合，全部模糊匹配（空 = 不筛选） */}
+          {showMoreFilters && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {/* 产品规格 */}
+                <div className="relative">
+                  <Ruler className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.productSpec}
+                    onChange={(e) => updateMoreFilter('productSpec', e.target.value)}
+                    placeholder="产品规格（模糊匹配）"
+                    title="按产品规格筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.productSpec && (
+                    <button onClick={() => updateMoreFilter('productSpec', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除产品规格筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* 手提材质 */}
+                <div className="relative">
+                  <Grip className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.handleMaterial}
+                    onChange={(e) => updateMoreFilter('handleMaterial', e.target.value)}
+                    placeholder="手提材质（模糊匹配）"
+                    title="按手提材质筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.handleMaterial && (
+                    <button onClick={() => updateMoreFilter('handleMaterial', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除手提材质筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* 手提规格 */}
+                <div className="relative">
+                  <Expand className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.handleSpec}
+                    onChange={(e) => updateMoreFilter('handleSpec', e.target.value)}
+                    placeholder="手提规格（模糊匹配）"
+                    title="按手提规格筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.handleSpec && (
+                    <button onClick={() => updateMoreFilter('handleSpec', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除手提规格筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* 箱规 */}
+                <div className="relative">
+                  <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.boxSpec}
+                    onChange={(e) => updateMoreFilter('boxSpec', e.target.value)}
+                    placeholder="箱规（模糊匹配）"
+                    title="按箱规筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.boxSpec && (
+                    <button onClick={() => updateMoreFilter('boxSpec', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除箱规筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* 收货地址 */}
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.shippingAddress}
+                    onChange={(e) => updateMoreFilter('shippingAddress', e.target.value)}
+                    placeholder="收货地址（模糊匹配）"
+                    title="按收货地址筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.shippingAddress && (
+                    <button onClick={() => updateMoreFilter('shippingAddress', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除收货地址筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                {/* 备注 */}
+                <div className="relative">
+                  <FileText className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input
+                    type="text"
+                    value={moreFilters.remark}
+                    onChange={(e) => updateMoreFilter('remark', e.target.value)}
+                    placeholder="备注（模糊匹配）"
+                    title="按备注筛选订单（模糊匹配）"
+                    className="w-full pl-9 pr-8 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                  />
+                  {moreFilters.remark && (
+                    <button onClick={() => updateMoreFilter('remark', '')} className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-gray-400 hover:text-red-500 rounded transition-colors" title="清除备注筛选">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {activeMoreCount > 0 && (
+                <div className="mt-2 flex justify-end">
+                  <button
+                    onClick={() => setMoreFilters({ ...EMPTY_MORE_FILTERS })}
+                    className="flex items-center gap-1 px-2 py-1 text-xs text-gray-500 hover:text-red-500 rounded transition-colors"
+                    title="一键清空全部扩展查询条件"
+                  >
+                    <X size={12} />
+                    清空扩展条件（{activeMoreCount}）
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -742,11 +1076,21 @@ export default function Quotes() {
             </div>
           )}
           <div ref={scrollContainerRef} className="flex-1 overflow-auto min-h-0">
-            <div className="min-w-[2200px]">
+            <div className="min-w-[2422px]">
               {/* 表头 */}
               <div className="sticky top-0 z-10 bg-gray-50 border-b border-gray-200">
                 <div className="flex">
+                  {/* 多选列（v36 批次号操作） */}
+                  <div className="w-10 pl-4 py-3 flex-shrink-0 flex items-center" title="全选/清空当前筛选结果的订单">
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 accent-amber-600 cursor-pointer"
+                    />
+                  </div>
                   <div className="w-16 px-4 py-3 flex-shrink-0"></div>
+                  <div className="w-48 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0" title="批次号（PN-秒级时间戳），同批次订单相邻显示">批次号</div>
                   <div className="w-44 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">订单号</div>
                   <div className="w-40 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">款式</div>
                   <div className="w-36 px-4 py-3 text-left text-sm font-semibold text-gray-600 flex-shrink-0">产品规格</div>
@@ -777,6 +1121,8 @@ export default function Quotes() {
                       className="flex items-center hover:bg-gray-50 cursor-pointer transition-colors bg-gray-50/50"
                       onClick={() => toggleGroup(group.customerName)}
                     >
+                      {/* 多选列占位（v36，与表头对齐） */}
+                      <div className="w-10 pl-4 py-4 flex-shrink-0"></div>
                       <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">
                         <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary-500 to-blue-600 flex items-center justify-center text-white font-bold text-sm">
                           {group.customerName.charAt(0)}
@@ -806,6 +1152,15 @@ export default function Quotes() {
                             onDoubleClick={() => navigate(canQuickEdit ? `/quotes/${quote.id}/edit` : `/quotes/${quote.id}`)}
                             title={canQuickEdit ? '双击进入编辑模式' : '双击查看订单详情'}
                           >
+                            {/* 多选框（v36 批次号操作；阻止冒泡避免触发行点击） */}
+                            <div className="w-10 pl-4 py-4 flex-shrink-0 flex items-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(quote.id)}
+                                onChange={() => toggleSelect(quote.id)}
+                                className="w-4 h-4 accent-amber-600 cursor-pointer"
+                              />
+                            </div>
                             {/* 产品图 */}
                             <div className="w-16 px-4 py-4 flex-shrink-0 flex items-center justify-center">
                               {imageFlags[quote.id] ? (
@@ -832,6 +1187,23 @@ export default function Quotes() {
                                 <Image className="text-gray-400" size={18} />
                               </div>
                             </div>
+
+                            {/* 批次号（v36）：同批次订单共享，点击批次号快速筛选该批次 */}
+                            <TooltipCell
+                              className="w-48 px-4 py-4 text-sm"
+                              tooltip={quote.batchNumber ? `批次 ${quote.batchNumber}（点击筛选该批次）` : ''}
+                            >
+                              {quote.batchNumber ? (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setBatchFilter(quote.batchNumber || '') }}
+                                  className="px-2 py-0.5 text-xs font-mono font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded hover:bg-amber-100 transition-colors"
+                                >
+                                  {quote.batchNumber}
+                                </button>
+                              ) : (
+                                <span className="text-gray-300 text-xs">—</span>
+                              )}
+                            </TooltipCell>
 
                             {/* 订单号（16位随机数字，创建后不变） */}
                             <TooltipCell
@@ -1043,7 +1415,7 @@ export default function Quotes() {
               {groupedQuotes.length === 0 && (
                 <div className="p-8 text-center">
                   <p className="text-gray-500">
-                    {(searchTerm || statusFilters.length > 0 || customerFilters.length > 0 || styleFilter || productionDateStart || productionDateEnd || productionTimeFilter)
+                    {(searchTerm || statusFilters.length > 0 || customerFilters.length > 0 || styleFilter || batchFilter || processFilter || fabricFilter || activeMoreCount > 0 || productionTimeFilter)
                       ? '没有符合当前查询条件的订单，请调整筛选条件后重试'
                       : '暂无订单记录'}
                   </p>
@@ -1340,6 +1712,13 @@ export default function Quotes() {
       {paymentToast && (
         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 text-white px-5 py-2.5 rounded-lg shadow-lg text-sm whitespace-nowrap">
           {paymentToast}
+        </div>
+      )}
+
+      {/* 批次号操作：轻提示（设置/移出成功或失败，自动消失） */}
+      {batchToast && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[70] bg-gray-800 text-white px-5 py-2.5 rounded-lg shadow-lg text-sm whitespace-nowrap">
+          {batchToast}
         </div>
       )}
     </div>

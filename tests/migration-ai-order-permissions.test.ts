@@ -192,7 +192,7 @@ describe('迁移 v35 - 回滚（down）', () => {
 // 版本号
 // ============================================================
 describe('迁移 v35 - 版本号', () => {
-  it('CURRENT_SCHEMA_VERSION 为 35', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(35)
+  it('CURRENT_SCHEMA_VERSION 不低于 35（v35 及之后均包含本迁移）', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(35)
   })
 })

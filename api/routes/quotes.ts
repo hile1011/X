@@ -7,6 +7,7 @@ import { requirePermission, requireAnyPermission } from '../middleware/auth.js'
 import { normalizeFabricMeters, logFabricMetersCeil, type FabricMetersChange } from '../services/fabricMeters.js'
 import { sanitizeSheetLayoutFields } from '../services/sheetLayout.js'
 import { detectQuoteDataReset, QUOTE_DATA_RESET_CODE } from '../services/quoteDataGuard.js'
+import { generateBatchNumber, isValidBatchNumber } from '../services/batchNumber.js'
 
 export const quotesRouter = express.Router()
 
@@ -45,6 +46,31 @@ quotesRouter.get('/', requirePermission('quotes:view'), asyncHandler(async (_req
 quotesRouter.get('/image-flags', requirePermission('quotes:view'), asyncHandler(async (_req, res) => {
   const flags = await db.quotes.getAllImageFlags()
   res.json(flags)
+}))
+
+/**
+ * 批量设置批次号（v36）：订单列表多选订单统一归入同一批次。
+ * body: { ids: string[], batchNumber?: string }
+ *   - 未传 batchNumber：后端生成 PN-秒级时间戳（同一请求共用同一批次号，保证同批次一致）
+ *   - 传 batchNumber：校验格式（PN-14位数字）后并入既有批次
+ *   - 传 null：清除所选订单批次
+ * 权限：复用 quotes:edit（订单编辑操作的批量形态）
+ */
+quotesRouter.post('/batch-assign', requirePermission('quotes:edit'), asyncHandler(async (req, res) => {
+  const { ids, batchNumber } = req.body ?? {}
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: '请先选择订单' })
+  }
+  if (ids.length > 200) {
+    return res.status(400).json({ error: '单次最多设置 200 个订单' })
+  }
+  if (batchNumber !== undefined && batchNumber !== null && !isValidBatchNumber(batchNumber)) {
+    return res.status(400).json({ error: '批次号格式不正确（应为 PN-14位数字时间戳）' })
+  }
+  const operator = req.user?.name || ''
+  const finalBatchNumber = batchNumber === null ? null : (batchNumber ?? generateBatchNumber())
+  const count = await db.quotes.assignBatch(ids, finalBatchNumber, operator)
+  res.json({ success: true, batchNumber: finalBatchNumber, count })
 }))
 
 // 获取单个订单的缩略图（80x80 JPEG，内存缓存）

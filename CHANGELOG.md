@@ -6,6 +6,33 @@
 
 ---
 
+## [v1.7.0] - 2026-09-17
+
+### 🎯 核心主题：订单批次号 + 订单列表筛选优化
+
+### ✨ 新增功能
+
+#### 订单批次号（DB v36）
+- **多选统一设批次**：订单列表多选订单 → 统一设置批次；同一请求内所有订单写入同一批次号，保证同批次一致
+- **格式**：`PN-YYYYMMDDHHmmss`（秒级时间戳，显式 UTC+8 北京时间，不受服务器时区影响），前后端共用同一生成/校验规则（`batchNumber.ts`）
+- **并入既有批次**：设置时可传已有批次号并入（格式校验 PN-14 位数字）；传 null 清除批次
+- **创建/复制订单不携带批次**：避免误归批
+- **批次徽标点击跳转**：订单列表批次徽标（[BatchBadge](file:///Users/hile/Documents/work/projects/X/src/components/BatchBadge.tsx)）点击跳转列表并按该批次筛选；订单编辑页只读展示批次徽标（同样可跳转）
+- **批次筛选**：列表新增批次号筛选条件，入库/导出/筛选全链路打通（Excel 导出含批次号列）
+
+#### 订单列表筛选优化
+- 筛选交互与性能优化（详见 [quotes-filter-optimization.test.tsx](file:///Users/hile/Documents/work/projects/X/tests/quotes-filter-optimization.test.tsx)）
+
+### 🗄️ 数据库变更
+
+- **v36** `quote-batch-number`：quotes 新增 `batch_number` VARCHAR(30) + 索引 `idx_quotes_batch_number`（information_schema 幂等 + 可回滚，逆序先删索引再删列）
+
+### ✅ 测试
+
+- 新增 4 个测试文件：batchNumber（生成/校验/时区）、batch-badge-navigation（徽标跳转）、migration-quote-batch-number（表结构/幂等/回滚/批次接口）、quotes-filter-optimization（筛选优化）；既有迁移测试适配 v36、orderExport 适配批次列
+
+---
+
 ## [v1.6.1] - 2026-09-16
 
 ### 🎨 体验优化

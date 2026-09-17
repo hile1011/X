@@ -331,49 +331,51 @@ describe('generateOrdersExcel - 订单列表导出', () => {
     // 数据从第3行开始（第1行分组标题，第2行列标题）
     const dataRow = sheet.getRow(3)
 
-    // 订单号（第1列）
-    expect(dataRow.getCell(1).value).toBe('导出测试-001')
-    // 客户名称（第2列）
-    expect(dataRow.getCell(2).value).toBe('导出测试客户')
-    // 订单状态（第3列）→ 标签
-    expect(dataRow.getCell(3).value).toBe('做货中')
-    // 款式（第4列）→ 标签
-    expect(dataRow.getCell(4).value).toBe('无底无侧普通袋')
-    // 数量（第10列）→ 数字
-    expect(dataRow.getCell(10).value).toBe(7200)
-    // 成本价（第12列）→ 数字
-    expect(dataRow.getCell(12).value).toBe(2.97)
-    // 含税价（第13列）→ 数字
-    expect(dataRow.getCell(13).value).toBe(3.27)
-    // 单个卖价不含税（第14列）
-    expect(dataRow.getCell(14).value).toBe(3.42)
-    // 单个卖价含税（第15列）
-    expect(dataRow.getCell(15).value).toBe(3.76)
-    // 单个利润(不含税)（第16列）= 单个卖价不含税 - 成本价 = 3.42 - 2.97 = 0.45
-    expect(dataRow.getCell(16).value).toBe(0.45)
-    // 单个利润(含税)（第17列）= 单个卖价含税 - 含税价 = 3.76 - 3.27 = 0.49
-    expect(dataRow.getCell(17).value).toBe(0.49)
-    // 销售总额(不含税)（第18列）= 数量 × 单个卖价不含税 = 7200 × 3.42 = 24624
-    expect(dataRow.getCell(18).value).toBe(24624)
-    // 销售总额(含税)（第19列）= 数量 × 单个卖价含税 = 7200 × 3.76 = 27072
-    expect(dataRow.getCell(19).value).toBe(27072)
-    // 利润总额(不含税)（第20列）= 单个利润(不含税) × 数量 = 0.45 × 7200 = 3240
-    expect(dataRow.getCell(20).value).toBe(3240)
-    // 利润总额(含税)（第21列）= 单个利润(含税) × 数量 = 0.49 × 7200 = 3528
-    expect(dataRow.getCell(21).value).toBe(3528)
+    // 批次号（第1列，未分批为空串）
+    expect(dataRow.getCell(1).value).toBe('')
+    // 订单号（第2列）
+    expect(dataRow.getCell(2).value).toBe('导出测试-001')
+    // 客户名称（第3列）
+    expect(dataRow.getCell(3).value).toBe('导出测试客户')
+    // 订单状态（第4列）→ 标签
+    expect(dataRow.getCell(4).value).toBe('做货中')
+    // 款式（第5列）→ 标签
+    expect(dataRow.getCell(5).value).toBe('无底无侧普通袋')
+    // 数量（第11列）→ 数字
+    expect(dataRow.getCell(11).value).toBe(7200)
+    // 成本价（第13列）→ 数字
+    expect(dataRow.getCell(13).value).toBe(2.97)
+    // 含税价（第14列）→ 数字
+    expect(dataRow.getCell(14).value).toBe(3.27)
+    // 单个卖价不含税（第15列）
+    expect(dataRow.getCell(15).value).toBe(3.42)
+    // 单个卖价含税（第16列）
+    expect(dataRow.getCell(16).value).toBe(3.76)
+    // 单个利润(不含税)（第17列）= 单个卖价不含税 - 成本价 = 3.42 - 2.97 = 0.45
+    expect(dataRow.getCell(17).value).toBe(0.45)
+    // 单个利润(含税)（第18列）= 单个卖价含税 - 含税价 = 3.76 - 3.27 = 0.49
+    expect(dataRow.getCell(18).value).toBe(0.49)
+    // 销售总额(不含税)（第19列）= 数量 × 单个卖价不含税 = 7200 × 3.42 = 24624
+    expect(dataRow.getCell(19).value).toBe(24624)
+    // 销售总额(含税)（第20列）= 数量 × 单个卖价含税 = 7200 × 3.76 = 27072
+    expect(dataRow.getCell(20).value).toBe(27072)
+    // 利润总额(不含税)（第21列）= 单个利润(不含税) × 数量 = 0.45 × 7200 = 3240
+    expect(dataRow.getCell(21).value).toBe(3240)
+    // 利润总额(含税)（第22列）= 单个利润(含税) × 数量 = 0.49 × 7200 = 3528
+    expect(dataRow.getCell(22).value).toBe(3528)
   })
 
   it('货币格式应用于价格列', async () => {
     const workbook = await generateOrdersExcel([createTestQuote()])
     const sheet = workbook.getWorksheet('订单明细')!
-    // 数据从第3行开始；成本价=12，含税价=13，单个卖价(不含税)=14，利润总额(含税)=21
-    const costCell = sheet.getRow(3).getCell(12) // 成本价列
+    // 数据从第3行开始；成本价=13，含税价=14，单个卖价(不含税)=15，利润总额(含税)=22（批次号为第1列）
+    const costCell = sheet.getRow(3).getCell(13) // 成本价列
     expect(costCell.numFmt).toBe('¥#,##0.00')
-    const priceWithTaxCell = sheet.getRow(3).getCell(13) // 含税价列
+    const priceWithTaxCell = sheet.getRow(3).getCell(14) // 含税价列
     expect(priceWithTaxCell.numFmt).toBe('¥#,##0.00')
-    const sellNoTaxCell = sheet.getRow(3).getCell(14) // 单个卖价(不含税)列
+    const sellNoTaxCell = sheet.getRow(3).getCell(15) // 单个卖价(不含税)列
     expect(sellNoTaxCell.numFmt).toBe('¥#,##0.00')
-    const profitTotalWithTaxCell = sheet.getRow(3).getCell(21) // 利润总额(含税)列
+    const profitTotalWithTaxCell = sheet.getRow(3).getCell(22) // 利润总额(含税)列
     expect(profitTotalWithTaxCell.numFmt).toBe('¥#,##0.00')
   })
 
@@ -688,8 +690,8 @@ describe('公式与数据一致性', () => {
     const workbook = await generateOrdersExcel(orders)
     const sheet = workbook.getWorksheet('订单明细')!
     for (let i = 0; i < 6; i++) {
-      // 数据从第3行开始；订单状态=第3列
-      const statusCell = sheet.getRow(i + 3).getCell(3)
+      // 数据从第3行开始；订单状态=第4列（批次号/订单号/客户名称之后）
+      const statusCell = sheet.getRow(i + 3).getCell(4)
       expect(statusCell.value).toBe(getStatusLabel(i + 1))
     }
   })
@@ -1183,33 +1185,45 @@ describe('generateOrdersExcel - convertFieldValue 边界', () => {
   it('styleLabelResolver 返回标签时优先使用', async () => {
     const workbook = await generateOrdersExcel([createTestQuote()], (code) => `自定义-${code}`)
     const sheet = workbook.getWorksheet('订单明细')!
-    // 款式列是第 4 列（订单号/客户名称/订单状态之后），首个数据行是第 3 行
-    expect(sheet.getCell(3, 4).value).toBe('自定义-1')
+    // 款式列是第 5 列（批次号/订单号/客户名称/订单状态之后），首个数据行是第 3 行
+    expect(sheet.getCell(3, 5).value).toBe('自定义-1')
   })
 
   it('styleLabelResolver 返回空串时回退默认款式标签', async () => {
     const workbook = await generateOrdersExcel([createTestQuote()], () => '')
     const sheet = workbook.getWorksheet('订单明细')!
-    expect(sheet.getCell(3, 4).value).toBe('无底无侧普通袋')
+    expect(sheet.getCell(3, 5).value).toBe('无底无侧普通袋')
   })
 
   it('字符串状态 "3" 导出为做货中', async () => {
     const workbook = await generateOrdersExcel([createTestQuote({ status: '3' as unknown as number })])
     const sheet = workbook.getWorksheet('订单明细')!
-    // 订单状态列是第 3 列
-    expect(sheet.getCell(3, 3).value).toBe('做货中')
+    // 订单状态列是第 4 列（批次号/订单号/客户名称之后）
+    expect(sheet.getCell(3, 4).value).toBe('做货中')
   })
 
   it('非法字符串状态导出为未知', async () => {
     const workbook = await generateOrdersExcel([createTestQuote({ status: '??' as unknown as number })])
     const sheet = workbook.getWorksheet('订单明细')!
-    expect(sheet.getCell(3, 3).value).toBe('未知')
+    expect(sheet.getCell(3, 4).value).toBe('未知')
   })
 
   it('未知款式导出原值编码', async () => {
     const workbook = await generateOrdersExcel([createTestQuote({ productStyle: '99' })])
     const sheet = workbook.getWorksheet('订单明细')!
-    expect(sheet.getCell(3, 4).value).toBe('99')
+    expect(sheet.getCell(3, 5).value).toBe('99')
+  })
+
+  it('批次号列为第 1 列，未分批订单导出空串', async () => {
+    const workbook = await generateOrdersExcel([
+      createTestQuote({ id: 'batch-001', batchNumber: 'PN-20260917153000' } as Partial<Quote>),
+      createTestQuote({ id: 'batch-002' } as Partial<Quote>),
+    ])
+    const sheet = workbook.getWorksheet('订单明细')!
+    // 第2行是列标题行，批次号为第 1 列；首个数据行是第 3 行
+    expect(sheet.getCell(2, 1).value).toBe('批次号')
+    expect(sheet.getCell(3, 1).value).toBe('PN-20260917153000')
+    expect(sheet.getCell(4, 1).value).toBe('')
   })
 
   it('价格字段缺失时导出 0（货币列）', async () => {
@@ -1222,8 +1236,8 @@ describe('generateOrdersExcel - convertFieldValue 边界', () => {
       }),
     ])
     const sheet = workbook.getWorksheet('订单明细')!
-    // 成本价列是第 12 列（3 基本信息 + 9 产品信息之后）
-    expect(sheet.getCell(3, 12).value).toBe(0)
+    // 成本价列是第 13 列（4 基本信息 + 9 产品信息之后）
+    expect(sheet.getCell(3, 13).value).toBe(0)
   })
 
   it('非法日期字符串导出为空串', async () => {
@@ -1231,7 +1245,7 @@ describe('generateOrdersExcel - convertFieldValue 边界', () => {
       createTestQuote({ quoteTime: 'not-a-date', sampleTime: '' }),
     ])
     const sheet = workbook.getWorksheet('订单明细')!
-    // 报价时间列：3+9+8+6 价格列之后为第 27 列附近，直接按列定义数核对
+    // 报价时间列：4 基本信息 + 9 产品信息 + 8 价格列 + 6 生产周期之后，直接按列定义数核对
     const headerLabels: string[] = []
     sheet.getRow(2).eachCell({ includeEmpty: false }, (cell) => {
       headerLabels.push(String(cell.value))

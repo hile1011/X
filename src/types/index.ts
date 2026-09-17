@@ -129,6 +129,8 @@ export interface Quote {
   /** 待收总金额 = 销售总额(不含税) - (抵扣时的打样费) - 定金 */
   pendingAmount: number
   status: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+  /** 批次号（v36，PN-YYYYMMDDHHmmss 秒级时间戳；同批次订单共享，列表多选统一设置，创建/复制不携带） */
+  batchNumber?: string | null
   quoteTime: string
   sampleTime: string
   sampleCompletedTime: string
