@@ -9,6 +9,7 @@ import { findFabricMetersCol, ceilFabricMeters, FABRIC_METERS_DEFAULT_COL } from
 import { OrderStatus } from '../constants/OrderStatus'
 import { TableConstants } from '../constants/TableConstants'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { setupDeleteRowsFix } from '../utils/sheetDeleteRowsFix'
 import { extractImageFilesFromDataTransfer } from '../utils/dropImageExtract'
 
 interface OrderInfo {
@@ -789,6 +790,8 @@ export default function BagQuoteTable() {
     const activeTable = activeWs?.tableInstance as any
     // 复制功能增强：让纯文本模式也带公式 + HTTP 环境下接管剪贴板写入
     const cleanupCopyEnhancer = setupCopyFormulaEnhancement(sheet, activeTable, SHEET_KEY)
+    // 多行删除修复：修正 vtable 多行删除时公式引用调整错误（尾部/非连续选区错乱）
+    const cleanupDeleteRowsFix = setupDeleteRowsFix(sheet, activeWs, SHEET_KEY)
     const onCellChange = () => syncFromTable()
     if (activeTable?.on) {
       activeTable.on('change_cell_value', onCellChange)
@@ -841,6 +844,7 @@ export default function BagQuoteTable() {
         activeTable.off('add_column', onAddColumn)
       }
       cleanupCopyEnhancer()
+      cleanupDeleteRowsFix()
       resizeObserver.disconnect()
       menuObserver.disconnect()
       sheet.release()

@@ -414,7 +414,7 @@ export default function Quotes() {
 
       return matchesSearch && matchesBatch && matchesStatus && matchesCustomer && matchesStyle && matchesProcess && matchesFabric && matchesProductionTime && matchesMore
     })
-    // 列表排序：客户名称 → 批次号分组（同批次连续）→ 修改时间降序（组间按组内最新时间、组内按最新在前）
+    // 列表排序：批次分组（同批次连续）→ 组间按组内最新修改时间降序 → 组内修改时间降序
     return sortOrdersForList(filtered)
   }
 

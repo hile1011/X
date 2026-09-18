@@ -6,6 +6,35 @@
 
 ---
 
+## [v1.8.0] - 2026-09-19
+
+### 🎯 核心主题：订单客户外键关联 + 列表排序优化 + 表格多行删除修复
+
+### ✨ 新增功能
+
+#### 订单表客户外键关联重构（DB v37）
+- quotes.customer_id 与 customers.id 建立外键关联，数据完整性由数据库保障
+- 配套迁移测试 [migration-quote-customer-fk.test.ts](file:///Users/hile/Documents/work/projects/X/tests/migration-quote-customer-fk.test.ts)（表结构/幂等/回滚/存量数据）
+
+#### 订单列表排序优化
+- **批次分组 → 修改时间多级排序**：同批次订单严格连续排列；组间按「组内最新修改时间」降序（最近有活动的批次排最前）；组内按修改时间降序（最新修改在前）
+- 边界兜底：组间同时间按批次号降序、组内同时间按 id 降序；无批次订单各自独立成组按自身修改时间参与排序
+
+#### 在线表格多行删除修复（VTABLE WORKAROUND）
+- **问题**：多选行右键「删除行」后公式计算异常、内容错乱（单行正常）
+- **根因**：vtable `deleteRecords` 用删除前旧索引到新索引数组反查（尾部行返回 -1）+ vtable-sheet `handleDataRecordsChanged` 把任意多行删除坍缩为「minIndex 起连续区间」
+- **修复**：[sheetDeleteRowsFix.ts](file:///Users/hile/Documents/work/projects/X/src/utils/sheetDeleteRowsFix.ts) 覆写 delete 分支——recordIndexs 还原真实视觉行号，先同步公式引擎数据，再按行号降序逐行 removeRows（等价 Excel 逐行删除语义，连续/非连续/尾部选区全部正确）；订单编辑页/表格组件/模板页三处接线；官方修复后整体移除（文件头含移除步骤）
+
+### 🗄️ 数据库变更
+
+- **v37**：订单表客户外键关联重构（含 schema_v37.sql 全量脚本与迁移测试）
+
+### ✅ 测试
+
+- 新增 sheet-delete-rows-fix.test.ts（多行删除修复）；quote-list-sort.test.ts 适配新排序规则；既有迁移测试适配 v37
+
+---
+
 ## [v1.7.0] - 2026-09-17
 
 ### 🎯 核心主题：订单批次号 + 订单列表筛选优化

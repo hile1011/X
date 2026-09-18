@@ -12,6 +12,7 @@ import { TableConstants } from '../constants/TableConstants'
 import { StyleConstants } from '../constants/StyleConstants'
 import { ExcelUtils } from '../utils/ExcelUtils'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { setupDeleteRowsFix } from '../utils/sheetDeleteRowsFix'
 import { collectSheetLayout, applySheetLayout, filterRowHeightConfigForSave } from '../utils/sheetLayout'
 
 /** 数据库模板记录（后端 SheetTemplateRecord 的前端形态，一对多） */
@@ -536,6 +537,8 @@ function TemplateEditor({ record, styleName, isNewTemplate, onBack, onSaved, onD
     const activeTable = activeWs?.tableInstance as any
     // 复制功能增强：让纯文本模式也带公式 + HTTP 环境下接管剪贴板写入（与 BagQuote 一致）
     const cleanupCopyEnhancer = setupCopyFormulaEnhancement(sheet, activeTable, TableConstants.SHEET_KEY)
+    // 多行删除修复：修正 vtable 多行删除时公式引用调整错误（尾部/非连续选区错乱）
+    const cleanupDeleteRowsFix = setupDeleteRowsFix(sheet, activeWs, TableConstants.SHEET_KEY)
 
     // 公式重算：覆盖模板 data 中公式单元格的静态默认值（与 BagQuote 一致）
     const recalculateFormulas = () => {
@@ -571,6 +574,7 @@ function TemplateEditor({ record, styleName, isNewTemplate, onBack, onSaved, onD
     return () => {
       if (activeTable?.off) activeTable.off('change_cell_value', onCellChange)
       cleanupCopyEnhancer()
+      cleanupDeleteRowsFix()
       clearTimeout(initTimer1)
       clearTimeout(initTimer2)
       clearTimeout(sivTimer)

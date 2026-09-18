@@ -27,6 +27,7 @@ import { DateUtils } from '../utils/DateUtils'
 import { SheetTemplateManager } from '../templates/SheetTemplateManager'
 import { computeSelectionSummary, type SelectionSummary, type CellRangeLike } from '../utils/SelectionSummary'
 import { setupCopyFormulaEnhancement } from '../utils/clipboardCopyEnhancer'
+import { setupDeleteRowsFix } from '../utils/sheetDeleteRowsFix'
 import { collectSheetLayout, applySheetLayout, filterRowHeightConfigForSave, resolveActualSizes } from '../utils/sheetLayout'
 import { extractImageFilesFromDataTransfer } from '../utils/dropImageExtract'
 
@@ -994,6 +995,8 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
     const activeTable = activeWs?.tableInstance as any
     // 复制功能增强：让纯文本模式也带公式 + HTTP 环境下接管剪贴板写入
     const cleanupCopyEnhancer = setupCopyFormulaEnhancement(sheet, activeTable, TableConstants.SHEET_KEY)
+    // 多行删除修复：修正 vtable 多行删除时公式引用调整错误（尾部/非连续选区错乱）
+    const cleanupDeleteRowsFix = setupDeleteRowsFix(sheet, activeWs, TableConstants.SHEET_KEY)
     const syncFromTable = () => {
       const fm = (sheet as any).formulaManager
       if (!fm) return
@@ -1202,6 +1205,7 @@ export default function BagQuote({ readOnly = false }: BagQuoteProps) {
         activeTable.off('add_column', onAddColumn)
       }
       cleanupCopyEnhancer()
+      cleanupDeleteRowsFix()
       clearTimeout(initTimer1)
       clearTimeout(initTimer2)
       clearTimeout(sivTimer)
