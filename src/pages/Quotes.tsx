@@ -5,6 +5,7 @@ import { api, downloadBlob } from '../api'
 import { Search, Plus, Edit, Trash2, Eye, Filter, Calendar, Building, Clock, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Image, Copy, Download, Loader2, AlertCircle, Printer, Receipt, X, Sparkles, Layers, Tags, Wrench, Shirt, SlidersHorizontal, Ruler, Grip, Expand, Package, MapPin, FileText } from 'lucide-react'
 import { fetchStyleOptions, getStyleLabelFromProducts, type StyleOption } from '../services/productStyles'
 import { OrderStatus } from '../constants/OrderStatus'
+import { sortOrdersForList } from '../utils/quoteSort'
 import { TooltipCell } from '../components/TooltipCell'
 import { DeleteConfirmDialog } from '../components/DeleteConfirmDialog'
 import { PrintPreviewModal } from '../components/PrintPreviewModal'
@@ -347,7 +348,7 @@ export default function Quotes() {
 
   // 筛选逻辑（不含分页）：返回所有符合条件的订单
   const getFilteredQuotes = () => {
-    return quotes.filter((quote) => {
+    const filtered = quotes.filter((quote) => {
       const matchesSearch =
         quote.quote_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
         quote.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -413,6 +414,8 @@ export default function Quotes() {
 
       return matchesSearch && matchesBatch && matchesStatus && matchesCustomer && matchesStyle && matchesProcess && matchesFabric && matchesProductionTime && matchesMore
     })
+    // 列表排序：客户名称 → 批次号分组（同批次连续）→ 修改时间降序（组间按组内最新时间、组内按最新在前）
+    return sortOrdersForList(filtered)
   }
 
   // === 订单多选与批次号操作（v36） ===
