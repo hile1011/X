@@ -233,7 +233,7 @@ describe('迁移 v28：订单对账管理', () => {
       const quoteId = await createQuoteAtStatus(5)
       await db.reconciliation.replaceCosts(quoteId, [{ name: '烫金', cost: 66 }])
       const [rows] = await pool.query(
-        `SELECT c.name, q.customerName FROM quote_reconciliation_costs c JOIN quotes q ON q.id = c.quote_id WHERE c.quote_id = ?`,
+        `SELECT c.name, cust.name AS customerName FROM quote_reconciliation_costs c JOIN quotes q ON q.id = c.quote_id LEFT JOIN customers cust ON q.customer_id = cust.id WHERE c.quote_id = ?`,
         [quoteId],
       )
       const row = (rows as any[])[0]

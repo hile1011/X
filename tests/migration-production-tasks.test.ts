@@ -138,9 +138,9 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
       } as any)
       // 空状态订单
       expect(await db.productionTasks.getByQuoteId(empty.id)).toHaveLength(0)
-      // 损坏 JSON 订单（上一用例造的）
+      // 损坏 JSON 订单（上一用例造的，v37 起 customerName 列已删除，按固定 id 查询）
       const [rows] = await pool.query(
-        `SELECT id FROM quotes WHERE customerName = '损坏数据客户'`
+        `SELECT id FROM quotes WHERE id = 'quote-v24-broken-seed'`
       )
       const broken = (rows as any[])[0]
       expect(await db.productionTasks.getByQuoteId(broken.id)).toHaveLength(0)
@@ -231,7 +231,10 @@ describe('迁移 v24：quote_production_tasks 做货流程任务', () => {
       expect(await tableExists('quote_production_tasks')).toBe(true)
       expect(await db.getSchemaVersion()).toBe(CURRENT_SCHEMA_VERSION)
 
-      const [rows] = await pool.query(`SELECT id FROM quotes WHERE customerName = '回滚客户'`)
+      // v37 起 customerName 列已删除，改按客户关联查询
+      const [rows] = await pool.query(
+        `SELECT q.id FROM quotes q JOIN customers c ON q.customer_id = c.id WHERE c.name = '回滚客户'`
+      )
       const q = (rows as any[])[0]
       const tasks = await db.productionTasks.getByQuoteId(q.id)
       // 从恢复的 productionStepStatus 重建：3 个有状态 + 3 个默认 pending

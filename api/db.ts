@@ -356,6 +356,38 @@ export async function generateUniqueQuoteNumber(): Promise<string> {
   return `${Date.now()}${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
 }
 
+/**
+ * 客户引用解析（v37：quotes 不再落库 customerName，统一通过 customer_id 关联）
+ * - 传入有效且存在的 customer_id → 直接使用
+ * - 否则按 customerName 匹配客户表：存在取其 id，不存在自动创建客户（与前端自由输入新客户名的交互一致）
+ * - 都无 → null（未关联客户）
+ * 返回 { id, name }：id 为解析后的 customer_id（可为 null），name 为对应客户名称（用于返回体显示）
+ */
+async function resolveCustomerRef(customerId?: string | null, customerName?: string | null): Promise<{ id: string | null; name: string }> {
+  const cid = (customerId || '').trim()
+  if (cid) {
+    const row = await dbConn.prepare('SELECT id, name FROM customers WHERE id = ?').get(cid)
+    if (row) return { id: row.id, name: String(row.name ?? '') }
+  }
+  const cname = (customerName || '').trim()
+  if (cname) {
+    const existing = await dbConn.prepare('SELECT id, name FROM customers WHERE name = ?').get(cname)
+    if (existing) return { id: existing.id, name: String(existing.name ?? cname) }
+    // 自动建客户（仅名称，其余资料后续在客户管理中补全）
+    const newId = `cust-${Date.now()}`
+    await dbConn.prepare('INSERT INTO customers (id, name) VALUES (?, ?)').run(newId, cname)
+    return { id: newId, name: cname }
+  }
+  return { id: null, name: '' }
+}
+
+/** 查询单个订单原始行（JOIN 客户表取名称，v37：customerName 由 customers.name 提供） */
+async function getQuoteRowWithCustomer(id: string): Promise<Record<string, any> | null> {
+  return await dbConn.prepare(
+    'SELECT q.*, c.name AS customerName FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ?'
+  ).get(id)
+}
+
 export const dbApi = {
   db: dbConn,
   runner,
@@ -581,41 +613,43 @@ export const dbApi = {
   },
 
   quotes: {
-    /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取） */
+    /** 列表查询：只查基本字段，不加载 longtext 大字段（images 通过 thumbnails API 单独获取）。v37：customerName 由 JOIN customers 提供 */
     getAll: async () => {
-      const rows = await dbConn.prepare(`SELECT id, user_id, created_by, updated_by, customer_id, quote_number, batch_number, customerName, shippingAddress,
-        productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
-        sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
-        costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax,
-        receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
-        status, quoteTime, sampleTime,
-        sampleCompletedTime, productionStartTime, shippingTime, paymentTime, reconciledTime, endTime, created_at, updated_at
-        FROM quotes ORDER BY batch_number DESC, updated_at DESC`).all()
-      return rows.map((r) => parseLargeFields(r)) as Quote[]
+      const rows = await dbConn.prepare(`SELECT q.id, q.user_id, q.created_by, q.updated_by, q.customer_id, q.quote_number, q.batch_number, c.name AS customerName, q.shippingAddress,
+        q.productStyle, q.template_id, q.productSpec, q.fabricMaterial, q.process, q.handleMaterial, q.handleSpec, q.quantity, q.boxSpec, q.remark,
+        q.sampleFee, q.sampleDays, q.massDays, q.unitPrice, q.productionTimeStart, q.productionTimeEnd,
+        q.costPrice, q.priceWithTax, q.sellPriceNoTax, q.sellPriceWithTax,
+        q.receivableSampleFee, q.actualSampleFee, q.sampleFeeDeduct, q.deposit, q.pendingAmount,
+        q.status, q.quoteTime, q.sampleTime,
+        q.sampleCompletedTime, q.productionStartTime, q.shippingTime, q.paymentTime, q.reconciledTime, q.endTime, q.created_at, q.updated_at
+        FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id
+        ORDER BY q.batch_number DESC, q.updated_at DESC`).all()
+      return rows.map((r) => ({ ...parseLargeFields(r), customerName: String(r.customerName ?? '') })) as Quote[]
     },
     getById: async (id: string) => {
-      const row = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
+      const row = await getQuoteRowWithCustomer(id)
       if (!row) return null
-      return parseLargeFields(row) as Quote
+      return { ...parseLargeFields(row), customerName: String(row.customerName ?? '') } as Quote
     },
     create: async (data: Partial<Quote>) => {
       const now = new Date()
       const today = now.toISOString().split('T')[0]
-      const customerName = data.customerName || ''
+      // 客户关联（v37）：按 id/名称解析客户，名称不存在时自动建客户，均无则不关联
+      const customerRef = await resolveCustomerRef(data.customer_id, data.customerName)
       const productStyle = data.productStyle || '1'
       // 订单号：16位随机数字（全局唯一，含防重复校验；客户/款式信息不再编入订单号）
       const quoteNumber = await generateUniqueQuoteNumber()
       const id = `quote-${Date.now()}`
 
-      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, shippingAddress,
         productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus,
         columnWidthConfig, rowHeightConfig)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        id, data.user_id || '', data.created_by || '', data.updated_by || '', data.customer_id || '', quoteNumber, customerName,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        id, data.user_id || '', data.created_by || '', data.updated_by || '', customerRef.id, quoteNumber,
         data.shippingAddress || '', productStyle, (data as any).templateId || '', data.productSpec || '',
         data.fabricMaterial || '10安涤棉新本色', data.process || '单面数码uv印刷+口头2.5cm',
         data.handleMaterial || '帆布手提', data.handleSpec || '',
@@ -636,8 +670,8 @@ export const dbApi = {
       )
 
       return {
-        id, quote_number: quoteNumber, customerName,
-        customer_id: data.customer_id || '', user_id: data.user_id || '',
+        id, quote_number: quoteNumber, customerName: customerRef.name,
+        customer_id: customerRef.id || '', user_id: data.user_id || '',
         created_by: data.created_by || '', updated_by: data.updated_by || '',
         shippingAddress: data.shippingAddress || '', productStyle,
         templateId: (data as any).templateId || '',
@@ -676,9 +710,11 @@ export const dbApi = {
       }
     },
     update: async (id: string, data: Partial<Quote>) => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       const existingParsed = toCamelRow(existing) as Quote
+      // 客户名称（v37）：来自 JOIN customers 的别名，兜底空串
+      ;(existingParsed as any).customerName = String((existing as any).customerName ?? '')
       existingParsed.images = typeof (existingParsed as any).images === 'string' ? JSON.parse((existingParsed as any).images || '[]') : (existingParsed.images || [])
       existingParsed.tableData = typeof (existingParsed as any).tableData === 'string' ? JSON.parse((existingParsed as any).tableData || '[]') : (existingParsed.tableData || [])
       existingParsed.removedFormulaAddresses = typeof (existingParsed as any).removedFormulaAddresses === 'string' ? JSON.parse((existingParsed as any).removedFormulaAddresses || '[]') : ((existingParsed as any).removedFormulaAddresses || [])
@@ -697,6 +733,15 @@ export const dbApi = {
       updatedQuote.quote_number = existing.quote_number
       // 批次号（v36）只经批量设批次端点变更：普通编辑保持库值，忽略请求体传入（同批次订单号一致性）
       ;(updatedQuote as any).batchNumber = (existing as any).batch_number ?? null
+      // 客户关联（v37）：请求携带 customer_id/customerName 时重新解析（名称不存在自动建客户）；
+      // 局部更新（如仅改状态）不带客户字段时保持库中关联
+      let resolvedCustomerId = ((existing as any).customer_id ?? null) as string | null
+      let resolvedCustomerName = (existingParsed as any).customerName
+      if (data.customer_id !== undefined || data.customerName !== undefined) {
+        const ref = await resolveCustomerRef(data.customer_id, data.customerName)
+        resolvedCustomerId = ref.id
+        resolvedCustomerName = ref.name
+      }
 
       if (data.images !== undefined) {
         updatedQuote.images = data.images
@@ -709,7 +754,7 @@ export const dbApi = {
       const columnWidthConfigJson = JSON.stringify((updatedQuote as any).columnWidthConfig || [])
       const rowHeightConfigJson = JSON.stringify((updatedQuote as any).rowHeightConfig || [])
 
-      await dbConn.prepare(`UPDATE quotes SET customerName=?, quote_number=?, customer_id=?, user_id=?, updated_by=?, shippingAddress=?,
+      await dbConn.prepare(`UPDATE quotes SET quote_number=?, customer_id=?, user_id=?, updated_by=?, shippingAddress=?,
         productStyle=?, template_id=?, productSpec=?, fabricMaterial=?, process=?, handleMaterial=?, handleSpec=?,
         quantity=?, boxSpec=?, remark=?, sampleFee=?, sampleDays=?, massDays=?, unitPrice=?,
         productionTimeStart=?, productionTimeEnd=?, costPrice=?, priceWithTax=?, sellPriceNoTax=?, sellPriceWithTax=?,
@@ -717,7 +762,7 @@ export const dbApi = {
         status=?, sampleTime=?, sampleCompletedTime=?, productionStartTime=?, shippingTime=?, paymentTime=?, reconciledTime=?, endTime=?,
         images=?, tableData=?, removedFormulaAddresses=?, modifiedFormulas=?, allFormulas=?, productionStepStatus=?,
         columnWidthConfig=?, rowHeightConfig=?, updated_at=? WHERE id=?`).run(
-        updatedQuote.customerName, updatedQuote.quote_number, updatedQuote.customer_id, updatedQuote.user_id, updatedQuote.updated_by,
+        updatedQuote.quote_number, resolvedCustomerId, updatedQuote.user_id, updatedQuote.updated_by,
         updatedQuote.shippingAddress, updatedQuote.productStyle, (updatedQuote as any).templateId || '', updatedQuote.productSpec,
         updatedQuote.fabricMaterial, updatedQuote.process, updatedQuote.handleMaterial, updatedQuote.handleSpec,
         updatedQuote.quantity, updatedQuote.boxSpec, updatedQuote.remark,
@@ -731,10 +776,13 @@ export const dbApi = {
         JSON.stringify(updatedQuote.images || []), tableDataJson, removedFormulaAddressesJson, modifiedFormulasJson, allFormulasJson, productionStepStatusJson,
         columnWidthConfigJson, rowHeightConfigJson, updatedQuote.updated_at, id
       )
+      // 返回体使用解析后的客户关联（v37）
+      ;(updatedQuote as any).customerName = resolvedCustomerName
+      ;(updatedQuote as any).customer_id = resolvedCustomerId || ''
       return updatedQuote
     },
     nextStatus: async (id: string) => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       const today = new Date().toISOString().split('T')[0]
       let newStatus = existing.status
@@ -776,7 +824,7 @@ export const dbApi = {
       return updated
     },
     prevStatus: async (id: string) => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       let newStatus = existing.status
       switch (existing.status) {
@@ -807,7 +855,7 @@ export const dbApi = {
       return updated
     },
     endQuote: async (id: string) => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       if (existing.status !== 1 && existing.status !== 2 && existing.status !== 7) return toCamelRow(existing) as Quote
       const today = new Date().toISOString().split('T')[0]
@@ -852,26 +900,27 @@ export const dbApi = {
       }
     },
     copy: async (id: string, operator: string = '') => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id)
+      const existing = await getQuoteRowWithCustomer(id)
       if (!existing) return null
 
       const now = new Date()
       const today = now.toISOString().split('T')[0]
-      const customerName = existing.customerName || ''
+      // 客户关联（v37）：直接继承原订单的 customer_id；名称取 JOIN 结果（仅用于返回体显示）
+      const customerName = String((existing as any).customerName ?? '')
       const productStyle = existing.productStyle || '1'
       // 复制订单：订单号不复用原订单，自动生成全新 16 位随机订单号
       const quoteNumber = await generateUniqueQuoteNumber()
       const newId = `quote-${Date.now()}`
 
-      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, customerName, shippingAddress,
+      await dbConn.prepare(`INSERT INTO quotes (id, user_id, created_by, updated_by, customer_id, quote_number, shippingAddress,
         productStyle, template_id, productSpec, fabricMaterial, process, handleMaterial, handleSpec, quantity, boxSpec, remark,
         sampleFee, sampleDays, massDays, unitPrice, productionTimeStart, productionTimeEnd,
         costPrice, priceWithTax, sellPriceNoTax, sellPriceWithTax, receivableSampleFee, actualSampleFee, sampleFeeDeduct, deposit, pendingAmount,
         status, quoteTime, sampleTime, sampleCompletedTime, productionStartTime,
         shippingTime, paymentTime, endTime, images, tableData, removedFormulaAddresses, modifiedFormulas, allFormulas, productionStepStatus,
         columnWidthConfig, rowHeightConfig)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
-        newId, existing.user_id || '', operator, operator, existing.customer_id || '', quoteNumber, customerName,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        newId, existing.user_id || '', operator, operator, existing.customer_id || null, quoteNumber,
         existing.shippingAddress || '', productStyle, (existing as any).template_id || '', existing.productSpec || '',
         existing.fabricMaterial || '10安涤棉新本色', existing.process || '单面数码uv印刷+口头2.5cm',
         existing.handleMaterial || '帆布手提', existing.handleSpec || '',
@@ -1288,9 +1337,10 @@ export const dbApi = {
      */
     getAllWithQuoteInfo: async (): Promise<ProductionTaskOverviewRow[]> => {
       const rows = await dbConn.prepare(`
-        SELECT t.*, q.quote_number, q.customerName, q.quantity, q.status AS order_status, q.updated_at AS quote_updated_at
+        SELECT t.*, q.quote_number, c.name AS customerName, q.quantity, q.status AS order_status, q.updated_at AS quote_updated_at
         FROM quote_production_tasks t
         JOIN quotes q ON q.id = t.quote_id
+        LEFT JOIN customers c ON q.customer_id = c.id
       `).all()
       return rows.map((row) => ({
         ...parseProductionTaskRow(row),
@@ -1401,7 +1451,7 @@ export const dbApi = {
      * 非 5 状态时原样返回（不流转）
      */
     reconcileQuote: async (id: string): Promise<Quote | null> => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       if ((existing as any).status !== 5) return toCamelRow(existing) as Quote
       const today = new Date().toISOString().split('T')[0]
@@ -1419,7 +1469,7 @@ export const dbApi = {
      * 非 8 状态时原样返回（不流转）
      */
     unreconcileQuote: async (id: string): Promise<Quote | null> => {
-      const existing = await dbConn.prepare('SELECT * FROM quotes WHERE id = ?').get(id) as Quote | null
+      const existing = await getQuoteRowWithCustomer(id) as Quote | null
       if (!existing) return null
       if ((existing as any).status !== 8) return toCamelRow(existing) as Quote
       await dbConn.prepare(

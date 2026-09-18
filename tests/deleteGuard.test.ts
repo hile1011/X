@@ -395,7 +395,7 @@ describe('实体详情字段缺失回退', () => {
   it('报价单订单号与客户名为空串时名称回退 id', async () => {
     const quote = await db.quotes.create({ customerName: '回退客户', productStyle: '1' })
     await pool.execute(
-      "UPDATE quotes SET quote_number = '', customerName = '' WHERE id = ?",
+      "UPDATE quotes SET quote_number = '', customer_id = NULL WHERE id = ?",
       [quote.id]
     )
     const result = await checkQuoteDelete(quote.id)

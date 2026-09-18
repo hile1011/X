@@ -1,6 +1,6 @@
 import { normalizeFabricMeters, parseColFromAddress } from '../services/fabricMeters.js'
 
-export const CURRENT_SCHEMA_VERSION = 36
+export const CURRENT_SCHEMA_VERSION = 37
 
 export interface Migration {
   version: number
@@ -2021,6 +2021,205 @@ export const migrations: Migration[] = [
       if (Number(colRows[0]?.cnt ?? 0) > 0) {
         await db.exec('ALTER TABLE `quotes` DROP COLUMN `batch_number`')
       }
+    },
+  },
+  {
+    version: 37,
+    name: 'quote-customer-fk',
+    description: 'V0.29：订单表客户关联规范化——quotes.customer_id 外键关联 customers.id（ON DELETE SET NULL），存量客户名称按名称回填/自动建客户，删除冗余 customerName 列（显示改由 JOIN customers.name 获取），配套索引 idx_quotes_customer_id，审计触发器移除 customerName 追踪',
+    up: async (db: any) => {
+      // ---- 幂等辅助 ----
+      const colExists = async (table: string, col: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        ).all(table, col) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const idxExists = async (table: string, index: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+        ).all(table, index) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const fkExists = async (constraint: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?'
+        ).all('quotes', constraint) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+
+      // ---- v37 触发器追踪字段（基于 v36 最新版，移除已删除的 customerName）----
+      const TRACKED_FIELDS_V37 = [
+        'user_id', 'customer_id', 'quote_number', 'shippingAddress',
+        'productStyle', 'productSpec', 'fabricMaterial', 'process', 'handleMaterial',
+        'handleSpec', 'quantity', 'boxSpec', 'remark', 'sampleFee', 'sampleDays',
+        'massDays', 'unitPrice', 'productionTimeStart', 'productionTimeEnd',
+        'sellPriceNoTax', 'sellPriceWithTax', 'actualSampleFee', 'sampleFeeDeduct', 'deposit', 'pendingAmount',
+        'status', 'quoteTime', 'sampleTime', 'sampleCompletedTime', 'productionStartTime',
+        'shippingTime', 'paymentTime', 'endTime', 'costPrice', 'priceWithTax',
+      ]
+      const rebuildTriggers = async (fields: string[]) => {
+        const oldJson = fields.map((f) => `'${f}', OLD.\`${f}\``).join(', ')
+        const newJson = fields.map((f) => `'${f}', NEW.\`${f}\``).join(', ')
+        const changedExpr = fields
+          .map((f) => `IF(NOT(OLD.\`${f}\` <=> NEW.\`${f}\`), '${f}', NULL)`)
+          .join(', ')
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_insert')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (NEW.id, 'insert', NULL, JSON_OBJECT(${newJson}), NULL, COALESCE(@app_operator, CURRENT_USER()))
+        `)
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_update')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (NEW.id, 'update', JSON_OBJECT(${oldJson}), JSON_OBJECT(${newJson}), CONCAT_WS(',', ${changedExpr}), COALESCE(@app_operator, CURRENT_USER()))
+        `)
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_delete')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (OLD.id, 'delete', JSON_OBJECT(${oldJson}), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))
+        `)
+      }
+
+      // 幂等入口：customerName 列已删除则跳过（重复执行安全）
+      if (await colExists('quotes', 'customerName')) {
+        // 1. 先移除审计触发器：避免数据回填 UPDATE 产生大量审计记录，且触发器引用将被删除的列
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_insert')
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_update')
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_delete')
+
+        // 2. 清洗脏数据：customer_id 为空串（v36 语义的"无客户"）或指向不存在的客户 → 统一置 NULL
+        //    （外键把空串当有效值校验，'' 不在 customers 表中会导致 ADD CONSTRAINT 失败）
+        await db.exec(
+          "UPDATE quotes SET customer_id = NULL WHERE customer_id IS NOT NULL AND (customer_id = '' OR customer_id NOT IN (SELECT id FROM customers))"
+        )
+
+        // 3. 自动建客户：订单上存在但客户表没有的名称（确定性 id，INSERT IGNORE 幂等；
+        //    本地 MySQL 9.7 无 MD5 函数，统一用 SHA2 前 32 位保证跨环境一致）
+        await db.exec(`
+          INSERT IGNORE INTO customers (id, name)
+          SELECT CONCAT('cust-mig-', SUBSTRING(SHA2(t.name, 256), 1, 32)), t.name
+          FROM (SELECT DISTINCT customerName AS name FROM quotes WHERE customerName IS NOT NULL AND customerName <> '') t
+          WHERE NOT EXISTS (SELECT 1 FROM customers c WHERE c.name = t.name)
+        `)
+
+        // 4. 回填 customer_id：按名称匹配客户表（同名多条时取其一，语义一致）
+        await db.exec(`
+          UPDATE quotes q JOIN customers c ON q.customerName = c.name
+          SET q.customer_id = c.id
+          WHERE q.customer_id IS NULL OR q.customer_id = ''
+        `)
+
+        // 5. 结构变更：列改为可 NULL（外键 SET NULL 语义需要）+ 索引 + 外键 + 删冗余列
+        await db.exec('ALTER TABLE `quotes` MODIFY COLUMN `customer_id` VARCHAR(64) DEFAULT NULL')
+        if (!(await idxExists('quotes', 'idx_quotes_customer_id'))) {
+          await db.exec('CREATE INDEX idx_quotes_customer_id ON quotes (customer_id)')
+        }
+        if (!(await fkExists('fk_quotes_customer'))) {
+          await db.exec(
+            'ALTER TABLE `quotes` ADD CONSTRAINT `fk_quotes_customer` FOREIGN KEY (`customer_id`) REFERENCES `customers` (`id`) ON DELETE SET NULL ON UPDATE CASCADE'
+          )
+        }
+        if (await idxExists('quotes', 'idx_quotes_customerName')) {
+          await db.exec('DROP INDEX idx_quotes_customerName ON quotes')
+        }
+        await db.exec('ALTER TABLE `quotes` DROP COLUMN `customerName`')
+      }
+
+      // 6. 重建审计触发器（无 customerName 追踪；幂等场景下也确保触发器与新表结构一致）
+      await rebuildTriggers(TRACKED_FIELDS_V37)
+    },
+    down: async (db: any) => {
+      // ---- 幂等辅助（与 up 对称）----
+      const colExists = async (table: string, col: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+        ).all(table, col) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const idxExists = async (table: string, index: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?'
+        ).all(table, index) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+      const fkExists = async (constraint: string): Promise<boolean> => {
+        const rows = await db.prepare(
+          'SELECT COUNT(*) AS cnt FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?'
+        ).all('quotes', constraint) as Array<{ cnt: number }>
+        return Number(rows[0]?.cnt ?? 0) > 0
+      }
+
+      // ---- v36 触发器追踪字段（恢复 customerName 追踪）----
+      const TRACKED_FIELDS_V36 = [
+        'user_id', 'customer_id', 'quote_number', 'customerName', 'shippingAddress',
+        'productStyle', 'productSpec', 'fabricMaterial', 'process', 'handleMaterial',
+        'handleSpec', 'quantity', 'boxSpec', 'remark', 'sampleFee', 'sampleDays',
+        'massDays', 'unitPrice', 'productionTimeStart', 'productionTimeEnd',
+        'sellPriceNoTax', 'sellPriceWithTax', 'actualSampleFee', 'sampleFeeDeduct', 'deposit', 'pendingAmount',
+        'status', 'quoteTime', 'sampleTime', 'sampleCompletedTime', 'productionStartTime',
+        'shippingTime', 'paymentTime', 'endTime', 'costPrice', 'priceWithTax',
+      ]
+      const rebuildTriggers = async (fields: string[]) => {
+        const oldJson = fields.map((f) => `'${f}', OLD.\`${f}\``).join(', ')
+        const newJson = fields.map((f) => `'${f}', NEW.\`${f}\``).join(', ')
+        const changedExpr = fields
+          .map((f) => `IF(NOT(OLD.\`${f}\` <=> NEW.\`${f}\`), '${f}', NULL)`)
+          .join(', ')
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_insert')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_insert AFTER INSERT ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (NEW.id, 'insert', NULL, JSON_OBJECT(${newJson}), NULL, COALESCE(@app_operator, CURRENT_USER()))
+        `)
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_update')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_update AFTER UPDATE ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (NEW.id, 'update', JSON_OBJECT(${oldJson}), JSON_OBJECT(${newJson}), CONCAT_WS(',', ${changedExpr}), COALESCE(@app_operator, CURRENT_USER()))
+        `)
+        await db.exec('DROP TRIGGER IF EXISTS quotes_audit_delete')
+        await db.exec(`
+          CREATE TRIGGER quotes_audit_delete AFTER DELETE ON quotes FOR EACH ROW
+          INSERT INTO quote_history (quote_id, action, old_values, new_values, changed_fields, operator)
+          VALUES (OLD.id, 'delete', JSON_OBJECT(${oldJson}), NULL, NULL, COALESCE(@app_operator, CURRENT_USER()))
+        `)
+      }
+
+      // 1. 先移除触发器（引用 customerName 的重建版本）
+      await db.exec('DROP TRIGGER IF EXISTS quotes_audit_insert')
+      await db.exec('DROP TRIGGER IF EXISTS quotes_audit_update')
+      await db.exec('DROP TRIGGER IF EXISTS quotes_audit_delete')
+
+      // 2. 恢复 customerName 列与索引（幂等）
+      if (!(await colExists('quotes', 'customerName'))) {
+        await db.exec("ALTER TABLE `quotes` ADD COLUMN `customerName` VARCHAR(255) NOT NULL DEFAULT ''")
+      }
+      if (!(await idxExists('quotes', 'idx_quotes_customerName'))) {
+        await db.exec('CREATE INDEX idx_quotes_customerName ON quotes (customerName)')
+      }
+
+      // 3. 回填客户名称（customer_id 关联获取；无关联的保持空串）
+      await db.exec(`
+        UPDATE quotes q JOIN customers c ON q.customer_id = c.id
+        SET q.customerName = c.name
+      `)
+
+      // 4. 移除外键与索引，恢复列默认值语义（NULL → ''，与 v36 一致）
+      if (await fkExists('fk_quotes_customer')) {
+        await db.exec('ALTER TABLE `quotes` DROP FOREIGN KEY `fk_quotes_customer`')
+      }
+      if (await idxExists('quotes', 'idx_quotes_customer_id')) {
+        await db.exec('DROP INDEX idx_quotes_customer_id ON quotes')
+      }
+      await db.exec("UPDATE quotes SET customer_id = '' WHERE customer_id IS NULL")
+      await db.exec("ALTER TABLE `quotes` MODIFY COLUMN `customer_id` VARCHAR(64) DEFAULT ''")
+
+      // 5. 重建触发器（恢复 customerName 追踪）
+      await rebuildTriggers(TRACKED_FIELDS_V36)
     },
   },
 ]

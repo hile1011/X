@@ -30,7 +30,7 @@ export interface DeleteCheckResult {
 
 /**
  * 检查客户是否可删除
- * 关联：quotes.customerName → customers.name, orders.customer_id → customers.id
+ * 关联：quotes.customer_id → customers.id（v37 外键，ON DELETE SET NULL）, orders.customer_id → customers.id
  */
 export async function checkCustomerDelete(id: string): Promise<DeleteCheckResult> {
   // 获取客户信息
@@ -50,20 +50,20 @@ export async function checkCustomerDelete(id: string): Promise<DeleteCheckResult
 
   const relationships: RelationshipCheck[] = []
 
-  // 检查 quotes 中引用了该客户名称的报价单
+  // 检查 quotes 中引用了该客户的报价单（v37：customer_id 外键关联，名称由 JOIN 提供）
   const [quoteRows] = await pool.execute(
-    'SELECT id, quote_number, customerName, status FROM quotes WHERE customerName = ? LIMIT 3',
-    [customer.name]
+    'SELECT q.id, q.quote_number, c.name AS customerName, q.status FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.customer_id = ? LIMIT 3',
+    [id]
   )
   const [quoteCount] = await pool.execute(
-    'SELECT COUNT(*) as cnt FROM quotes WHERE customerName = ?',
-    [customer.name]
+    'SELECT COUNT(*) as cnt FROM quotes WHERE customer_id = ?',
+    [id]
   )
   const quoteCnt = (quoteCount as any[])[0].cnt
   if (quoteCnt > 0) {
     relationships.push({
       table: 'quotes',
-      description: `有 ${quoteCnt} 个报价/订单引用了该客户（通过客户名称"${customer.name}"）`,
+      description: `有 ${quoteCnt} 个报价/订单引用了该客户`,
       count: quoteCnt,
       samples: quoteRows as any[],
     })
@@ -146,7 +146,7 @@ export async function checkProductDelete(id: string): Promise<DeleteCheckResult>
   // 检查 quotes 中引用了该产品（通过 productStyle = code 或 id）
   const styleValue = product.code || product.id
   const [quoteRows] = await pool.execute(
-    'SELECT id, quote_number, customerName, productStyle, status FROM quotes WHERE productStyle = ? LIMIT 3',
+    'SELECT q.id, q.quote_number, c.name AS customerName, q.productStyle, q.status FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.productStyle = ? LIMIT 3',
     [styleValue]
   )
   const [quoteCount] = await pool.execute(
@@ -200,7 +200,7 @@ export async function checkProductDelete(id: string): Promise<DeleteCheckResult>
  */
 export async function checkQuoteDelete(id: string): Promise<DeleteCheckResult> {
   const [quoteRows] = await pool.execute(
-    'SELECT id, quote_number, customerName, productStyle, status FROM quotes WHERE id = ?',
+    'SELECT q.id, q.quote_number, c.name AS customerName, q.productStyle, q.status FROM quotes q LEFT JOIN customers c ON q.customer_id = c.id WHERE q.id = ?',
     [id]
   )
   const quote = (quoteRows as any[])[0]

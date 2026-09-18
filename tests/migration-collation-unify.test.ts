@@ -95,13 +95,18 @@ describe('迁移 v26：统一表排序规则为 utf8mb4_unicode_ci', () => {
     })
 
     it('插入数据后 JOIN 正确关联', async () => {
-      // 准备一个订单 + 一个任务行，验证 JOIN 数据链路
+      // 准备一个客户 + 一个订单 + 一个任务行，验证 JOIN 数据链路
+      const customerId = 'test-collation-customer'
       const quoteId = 'test-collation-quote'
       const taskId = 'test-collation-task'
       await pool.query(
-        `INSERT IGNORE INTO quotes (id, quote_number, customerName, quantity, status, productionTimeStart, productionTimeEnd, sampleTime, productStyle, created_at, updated_at)
-         VALUES (?, '2026091012345678', '排序规则测试客户', '100', 3, '2026-09-01', '2026-09-10', '2026-08-01', '1', NOW(), NOW())`,
-        [quoteId],
+        `INSERT IGNORE INTO customers (id, name) VALUES (?, '排序规则测试客户')`,
+        [customerId],
+      )
+      await pool.query(
+        `INSERT IGNORE INTO quotes (id, quote_number, customer_id, quantity, status, productionTimeStart, productionTimeEnd, sampleTime, productStyle, created_at, updated_at)
+         VALUES (?, '2026091012345678', ?, '100', 3, '2026-09-01', '2026-09-10', '2026-08-01', '1', NOW(), NOW())`,
+        [quoteId, customerId],
       )
       await pool.query(
         `INSERT IGNORE INTO quote_production_tasks (id, quote_id, step_order, name, status, remark, materials, created_at, updated_at)
@@ -109,7 +114,7 @@ describe('迁移 v26：统一表排序规则为 utf8mb4_unicode_ci', () => {
         [taskId, quoteId],
       )
       const [rows] = await pool.query(
-        `SELECT t.name, q.customerName FROM quote_production_tasks t JOIN quotes q ON q.id = t.quote_id WHERE t.id = ?`,
+        `SELECT t.name, c.name AS customerName FROM quote_production_tasks t JOIN quotes q ON q.id = t.quote_id LEFT JOIN customers c ON q.customer_id = c.id WHERE t.id = ?`,
         [taskId],
       )
       const row = (rows as any[])[0]
@@ -119,6 +124,7 @@ describe('迁移 v26：统一表排序规则为 utf8mb4_unicode_ci', () => {
       // 清理
       await pool.query('DELETE FROM quote_production_tasks WHERE id = ?', [taskId])
       await pool.query('DELETE FROM quotes WHERE id = ?', [quoteId])
+      await pool.query('DELETE FROM customers WHERE id = ?', [customerId])
     })
   })
 

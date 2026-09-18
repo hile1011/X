@@ -135,7 +135,9 @@ describe('触发器自动记录订单变更', () => {
     expect(history[0].changed_fields).toBeNull()
 
     const newValues = JSON.parse(history[0].new_values)
-    expect(newValues.customerName).toBe('审计客户')
+    // v37：customerName 不再落库，审计快照记录 customer_id（解析后的客户关联）
+    expect(newValues.customer_id).toBeTruthy()
+    expect(newValues).not.toHaveProperty('customerName')
     expect(newValues.productStyle).toBe('1')
     expect(newValues.status).toBe(1)
   })
@@ -156,7 +158,8 @@ describe('触发器自动记录订单变更', () => {
     expect(updateRec.action).toBe('update')
 
     const changed = (updateRec.changed_fields || '').split(',').filter(Boolean)
-    expect(changed).toContain('customerName')
+    // v37：改名体现为 customer_id 变更（原客户名/新客户名解析为不同客户）
+    expect(changed).toContain('customer_id')
     expect(changed).toContain('sellPriceNoTax')
     expect(changed).toContain('status')
     // 未修改的字段不应出现在变更列表
@@ -165,8 +168,9 @@ describe('触发器自动记录订单变更', () => {
 
     const oldValues = JSON.parse(updateRec.old_values)
     const newValues = JSON.parse(updateRec.new_values)
-    expect(oldValues.customerName).toBe('原客户名')
-    expect(newValues.customerName).toBe('新客户名')
+    expect(oldValues.customer_id).toBeTruthy()
+    expect(newValues.customer_id).toBeTruthy()
+    expect(oldValues.customer_id).not.toBe(newValues.customer_id)
     expect(oldValues.status).toBe(1)
     expect(newValues.status).toBe(2)
   })
@@ -198,7 +202,7 @@ describe('触发器自动记录订单变更', () => {
     expect(deleteRec.changed_fields).toBeNull()
 
     const oldValues = JSON.parse(deleteRec.old_values)
-    expect(oldValues.customerName).toBe('待删除客户')
+    expect(oldValues.customer_id).toBeTruthy()
   })
 
   it('快照排除 LONGTEXT 大字段（images/tableData/allFormulas 等不进入 new_values）', async () => {
@@ -218,8 +222,8 @@ describe('触发器自动记录订单变更', () => {
     expect(newValues).not.toHaveProperty('modifiedFormulas')
     expect(newValues).not.toHaveProperty('removedFormulaAddresses')
     expect(newValues).not.toHaveProperty('productionStepStatus')
-    // 业务字段在快照中
-    expect(newValues).toHaveProperty('customerName')
+    // 业务字段在快照中（v37：customerName 已由 customer_id 替代）
+    expect(newValues).toHaveProperty('customer_id')
     expect(newValues).toHaveProperty('status')
   })
 
@@ -268,7 +272,8 @@ describe('触发器自动记录订单变更', () => {
     expect(sourceHistory).toHaveLength(1)
     expect(copiedHistory).toHaveLength(1)
     expect(copiedHistory[0].action).toBe('insert')
-    expect(JSON.parse(copiedHistory[0].new_values).customerName).toBe('复制源客户')
+    // v37：复制继承原订单的 customer_id 关联
+    expect(JSON.parse(copiedHistory[0].new_values).customer_id).toBeTruthy()
   })
 })
 
